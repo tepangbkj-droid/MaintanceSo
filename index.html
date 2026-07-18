@@ -1003,8 +1003,19 @@ const { useState, useEffect } = React;
     // Minta izin notifikasi browser (dipanggil sekali saat user berhasil login)
     const requestNotificationPermission = () => {
       if (typeof Notification === 'undefined') return;
-      if (Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
+      try {
+        // BUGFIX (2026-07-18): di sebagian WebView/browser embedded, fitur Notifikasi
+        // di-blokir sepenuhnya (mis. lewat Permissions-Policy internal WebView-nya), dan
+        // Notification.requestPermission() melempar SecurityError SECARA SINKRON —
+        // bukan promise yang reject. `.catch()` saja TIDAK menangkap error sinkron ini,
+        // makanya error "SecurityError: The operation is insecure." tetap lolos ke
+        // console walau sudah ada .catch(). Harus dibungkus try/catch di luar juga.
+        if (Notification.permission === 'default') {
+          Notification.requestPermission().catch(() => {});
+        }
+      } catch (err) {
+        // Diam-diam saja: notifikasi browser cuma fitur pelengkap, tidak boleh sampai
+        // mengganggu/menghentikan alur login toko/admin kalau browsernya tidak mendukung.
       }
     };
 
@@ -1812,13 +1823,20 @@ const { useState, useEffect } = React;
       );
       const handleEnableNotif = () => {
         if (typeof Notification === 'undefined') return;
-        Notification.requestPermission().then((perm) => {
-          setNotifPermission(perm);
-          if (perm === 'granted') {
-            showAdminToast('🔔 Notifikasi browser diaktifkan');
-            playNotificationSound();
-          }
-        }).catch(() => {});
+        try {
+          // Sama seperti requestNotificationPermission(): panggilan ini bisa melempar
+          // SecurityError secara sinkron di browser/WebView yang memblokir fitur
+          // Notifikasi, jadi try/catch di luar tetap perlu walau sudah ada .catch().
+          Notification.requestPermission().then((perm) => {
+            setNotifPermission(perm);
+            if (perm === 'granted') {
+              showAdminToast('🔔 Notifikasi browser diaktifkan');
+              playNotificationSound();
+            }
+          }).catch(() => {});
+        } catch (err) {
+          showAdminToast('⚠️ Browser ini tidak mendukung notifikasi');
+        }
       };
 
       const showAdminToast = (message) => {
@@ -7118,7 +7136,16 @@ root.render(<AppErrorBoundary><AppRoot /></AppErrorBoundary>);
   <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW gagal:', err));
+      try {
+        // BUGFIX (2026-07-18): sama seperti Notification.requestPermission(), di
+        // sebagian WebView pendaftaran Service Worker juga bisa gagal SECARA SINKRON
+        // (bukan cuma promise reject), jadi .catch() saja tidak cukup — dibungkus
+        // try/catch juga. Kalau gagal, cukup diam saja; app tetap jalan normal tanpa
+        // fitur offline/notifikasi push, tidak menghalangi apa pun yang lain.
+        navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW gagal:', err));
+      } catch (err) {
+        console.log('SW gagal (sinkron):', err);
+      }
     });
   }
 </script>

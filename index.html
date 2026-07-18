@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <title>Tarobun So Mandiri Hub</title>
+  <title>Tarobun Green Pramuka Hub</title>
 
-  <meta name="description" content="Aplikasi internal Tarobun Hub untuk pencatatan penjualan, stok inventory, laporan suhu, dan koordinasi pusat.">
+  <meta name="description" content="Aplikasi internal Tarobun Green Pramuka Hub untuk pencatatan penjualan, stok inventory, laporan suhu, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
@@ -4680,6 +4680,17 @@ Daily inventory done✅
           let loaded = 0;
           base64List.forEach((src, idx) => {
             const img = new Image();
+            // BUGFIX (2026-07-18): foto yang sudah ter-upload ke R2 sumbernya adalah URL
+            // https://.../api/media/file/... (beda origin dari halaman index.html ini),
+            // BUKAN base64 lagi walau nama variabelnya "base64List". Tanpa crossOrigin =
+            // 'anonymous', <canvas> yang menggambar foto cross-origin dianggap "tainted"
+            // oleh browser, dan canvas.toDataURL() di bawah langsung melempar
+            // "SecurityError: The operation is insecure." — inilah penyebab gagal kirim/
+            // gabung foto. Worker sudah mengirim header Access-Control-Allow-Origin yang
+            // benar di /api/media/file/, jadi cukup minta gambarnya dalam mode CORS di sini.
+            // Untuk data: URL (foto yang belum sempat ter-upload) baris ini aman diabaikan
+            // browser, tidak menimbulkan efek samping apa pun.
+            img.crossOrigin = 'anonymous';
             img.onload = () => {
               imgs[idx] = img;
               loaded++;

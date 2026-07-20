@@ -385,7 +385,18 @@ const { useState, useEffect } = React;
       const cleanPath = String(rawPath || '').replace(/^\/+|\/+$/g, '');
       const doFetch = async (p, rawRowLimit) => {
         const qs = rawRowLimit ? `&limit=${encodeURIComponent(rawRowLimit)}` : '';
-        const res = await __fetchOrThrow(`${WORKER_BASE}/api/rtdb/get?path=${encodeURIComponent(p)}${qs}`, { headers: __authHeaders() });
+        // BUGFIX (2026-07-20): endpoint ini (khususnya 'storeDirectory' & katalog produk)
+        // dibalas server dengan header Cache-Control: public, max-age=300 supaya Cloudflare
+        // edge cache hemat baca D1. Masalahnya header itu juga otomatis dipatuhi oleh cache
+        // HTTP bawaan BROWSER pengguna sendiri — jadi walau server sudah membersihkan cache
+        // edge-nya begitu Admin membuat toko baru (lihat purgeDerivedCachesIfNeeded di
+        // worker.js), browser Admin/Toko yang sama tetap bisa menyajikan data LAMA dari cache
+        // lokalnya sendiri sampai 5 menit tanpa sempat menyentuh jaringan sama sekali. Inilah
+        // penyebab keluhan "toko baru dibuat, datanya lama sekali muncul/loading". Fix: paksa
+        // fetch ini SELALU tembus ke jaringan (cache: 'no-store') supaya browser tidak pernah
+        // menyajikan jawaban basi miliknya sendiri — permintaan tetap ringan buat server karena
+        // edge cache Cloudflare (di sisi server) masih tetap jalan seperti biasa.
+        const res = await __fetchOrThrow(`${WORKER_BASE}/api/rtdb/get?path=${encodeURIComponent(p)}${qs}`, { headers: __authHeaders(), cache: 'no-store' });
         const data = await res.json();
         return data.value;
       };
@@ -630,12 +641,19 @@ const { useState, useEffect } = React;
     // begitu heartbeat terakhir kedaluwarsa — tanpa perlu event "disconnect" apa pun.
     // OPTIMASI (2026-07-18): dinaikkan dari 20s -> 30s. Dengan 100 toko aktif bersamaan,
     // tiap heartbeat = 1 D1 write per toko. 20s = ~4.3 juta write/bulan; 30s = ~2.9 juta
-    // write/bulan. Timeout offline ikut dinaikkan proporsional (2.5x interval) supaya
-    // toleransi jaringan lambat tetap sama seperti sebelumnya, status online/offline
-    // masih terasa responsif untuk Admin.
-    // Presence lewat Durable Object (memori, 0 biaya D1) — aman heartbeat sesering ini.
-    const PRESENCE_HEARTBEAT_MS = 30 * 1000;       // toko lapor "online" tiap 30 detik
-    const PRESENCE_ONLINE_TIMEOUT_MS = 75 * 1000;  // dianggap offline kalau tak ada kabar > 75 detik
+    // write/bulan. Presence lewat Durable Object (memori, 0 biaya D1) — aman heartbeat
+    // sesering ini.
+    // BUGFIX (2026-07-20): timeout offline sebelumnya cuma 2.5x interval (75 detik). Di HP,
+    // begitu layar dikunci / app dipindah ke background, OS/browser sering MENAHAN
+    // (throttle) timer setInterval selama puluhan detik agar hemat baterai — jadi heartbeat
+    // berikutnya bisa telat lebih dari 75 detik walau toko sebenarnya masih login & aktif.
+    // Akibatnya Admin melihat status "berkedip" balik ke Offline padahal sebelumnya online,
+    // lalu balik lagi Online begitu HP dibuka (heartbeat langsung dikirim ulang lewat
+    // listener visibilitychange/focus). Timeout dinaikkan jadi 4x interval (120 detik) supaya
+    // ada ruang toleransi untuk throttling ini, tanpa membuat deteksi offline SUNGGUHAN
+    // (tab benar-benar ditutup) jadi terasa lambat bagi Admin.
+    const PRESENCE_HEARTBEAT_MS = 30 * 1000;        // toko lapor "online" tiap 30 detik
+    const PRESENCE_ONLINE_TIMEOUT_MS = 120 * 1000;  // dianggap offline kalau tak ada kabar > 120 detik
 
     const storeIdToEmail = (storeId) => `store-${storeId}${STORE_EMAIL_DOMAIN}`;
 

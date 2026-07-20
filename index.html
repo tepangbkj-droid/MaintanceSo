@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <title>Tarobun Green Pramuka Hub</title>
+  <title>Tarobun SO Mandiri Hub</title>
 
-  <meta name="description" content="Aplikasi internal Tarobun Green Pramuka Hub untuk pencatatan penjualan, stok inventory, laporan suhu, dan koordinasi pusat.">
+  <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, laporan suhu, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
@@ -308,10 +308,84 @@ const { useState, useEffect } = React;
       return res;
     };
 
+    // OPTIMASI BESAR (2026-07-19): sebelumnya SETIAP listener .on('value', ...) di app ini
+    // (riwayat, chat, waste, suhu, katalog, storeDirectory, dst — ada ~19 titik) polling
+    // GET ke Worker/D1 tiap 4 DETIK, TERUS-MENERUS selama halaman terbuka. Dengan banyak
+    // listener aktif bersamaan per sesi (toko/admin bisa punya 6-8 sekaligus), 1 toko saja
+    // bisa menghasilkan puluhan ribu Rows Read/hari — dikali 100 toko, ini JAUH melewati
+    // limit gratis 5 juta Rows Read/hari D1. Diperlambat jadi 15 detik (masih terasa "live"
+    // untuk dashboard toko/kasir, bukan aplikasi trading), DAN di-skip total selagi
+    // tab/app di-background (user tidak sedang melihatnya) — kombinasi keduanya memangkas
+    // total Rows Read sistem secara drastis tanpa mengubah pengalaman pengguna yang terlihat.
+    const LIVE_POLL_INTERVAL_MS = 25000;
+
+    // ===== CHAT REALTIME (2026-07-20) — HTTP long-polling, SENGAJA BUKAN WebSocket =====
+    // WebSocket sering diblokir/diputus oleh proxy kantor/sekolah atau operator seluler
+    // tertentu (banyak yang menolak/mem-buang request "Connection: Upgrade"), jadi kalau
+    // dipaksa pakai WS, chat bisa malah TIDAK JALAN SAMA SEKALI di jaringan seperti itu.
+    // Long-polling di bawah ini murni request GET biasa (persis seperti fetch() lain di
+    // app ini) — dari sudut pandang proxy/firewall manapun TIDAK ADA BEDANYA dengan
+    // request API biasa, cuma "dibalas belakangan" oleh server (lihat /api/chat/wait di
+    // worker.js). Begitu server ada kabar baru, request langsung dibalas SAAT ITU JUGA,
+    // lalu kode di bawah langsung buka request berikutnya tanpa jeda — hasilnya terasa
+    // real-time walau bukan WebSocket.
+    //
+    // storeId: null/undefined = pantau SEMUA toko sekaligus (dipakai Admin untuk badge
+    //          unread di halaman daftar chat). Diisi storeId = pantau 1 toko spesifik
+    //          (dipakai toko untuk chat-nya sendiri, dan Admin saat sedang buka 1 jendela
+    //          chat toko tertentu).
+    // onChange({ event, storeId, version }) dipanggil setiap ada pesan baru.
+    //
+    // FALLBACK OTOMATIS: kalau long-poll gagal berturut-turut (mis. ada jaringan yang
+    // ternyata tetap memotong koneksi HTTP yang "digantung" lama, walau itu jarang),
+    // otomatis mundur ke jeda LIVE_POLL_INTERVAL_MS antar percobaan — jadi paling buruk
+    // perilakunya sama seperti polling lama (15 detik), TIDAK PERNAH membuat chat berhenti
+    // total.
+    function createChatLongPoll({ storeId, onChange }) {
+      let stopped = false;
+      let version = 0;
+      let consecutiveErrors = 0;
+      const FALLBACK_AFTER = 3;
+
+      const loop = async () => {
+        if (stopped) return;
+        let timeoutId;
+        try {
+          const qs = storeId ? `storeId=${encodeURIComponent(storeId)}&v=${version}` : `v=${version}`;
+          const controller = new AbortController();
+          // Sedikit lebih lama dari WAIT_TIMEOUT_MS di server (30 detik), supaya browser
+          // yang membatalkan request bukan karena server-nya lambat balas.
+          timeoutId = setTimeout(() => controller.abort(), 40000);
+          const res = await fetch(`${WORKER_BASE}/api/chat/wait?${qs}`, { headers: __authHeaders(), signal: controller.signal });
+          clearTimeout(timeoutId);
+          const data = await res.json();
+          consecutiveErrors = 0;
+          if (data && typeof data.version === 'number') version = data.version;
+          if (data && data.changed) onChange(data);
+        } catch (e) {
+          consecutiveErrors++;
+        } finally {
+          clearTimeout(timeoutId);
+          if (!stopped) {
+            // Sukses (berubah ATAU timeout kosong dari server) -> langsung sambung lagi
+            // TANPA jeda. Gagal (network error) -> mundur sebentar dulu, makin lama makin
+            // jarang kalau terus gagal, sampai akhirnya "menyerah" ke jeda polling biasa.
+            const delay = consecutiveErrors === 0 ? 0
+              : consecutiveErrors >= FALLBACK_AFTER ? LIVE_POLL_INTERVAL_MS
+              : 1000 * consecutiveErrors;
+            setTimeout(loop, delay);
+          }
+        }
+      };
+      loop();
+      return { stop: () => { stopped = true; } };
+    }
+
     function dbRef(rawPath) {
       const cleanPath = String(rawPath || '').replace(/^\/+|\/+$/g, '');
-      const doFetch = async (p) => {
-        const res = await __fetchOrThrow(`${WORKER_BASE}/api/rtdb/get?path=${encodeURIComponent(p)}`, { headers: __authHeaders() });
+      const doFetch = async (p, rawRowLimit) => {
+        const qs = rawRowLimit ? `&limit=${encodeURIComponent(rawRowLimit)}` : '';
+        const res = await __fetchOrThrow(`${WORKER_BASE}/api/rtdb/get?path=${encodeURIComponent(p)}${qs}`, { headers: __authHeaders() });
         const data = await res.json();
         return data.value;
       };
@@ -349,11 +423,18 @@ const { useState, useEffect } = React;
           let stopped = false;
           const poll = async () => {
             if (stopped) return;
+            // Kalau tab/app sedang di-background, skip fetch-nya sama sekali, cuma
+            // jadwalkan cek lagi nanti — user tidak melihat datanya kok, jadi tidak perlu
+            // ditarik terus dari server. Begitu tab aktif lagi, poll berikutnya jalan normal.
+            if (typeof document !== 'undefined' && document.hidden) {
+              setTimeout(poll, LIVE_POLL_INTERVAL_MS);
+              return;
+            }
             try {
               const value = await doFetch(cleanPath);
               if (!stopped) cb(__makeSnapshot(value));
             } catch (e) { if (errCb) errCb(e); }
-            if (!stopped) setTimeout(poll, 4000);
+            if (!stopped) setTimeout(poll, LIVE_POLL_INTERVAL_MS);
           };
           poll();
           cb.__stop = () => { stopped = true; };
@@ -361,17 +442,46 @@ const { useState, useEffect } = React;
         },
         off: (eventType, cb) => { if (cb && cb.__stop) cb.__stop(); },
         limitToLast: (n) => {
-          const trim = (value) => {
+          // BUGFIX (2026-07-19): sebelumnya ini KOSMETIK — server tetap kirim SELURUH isi
+          // node, baru dipotong ke N di HP. Sekarang beneran dibatasi di server lewat
+          // ?limit=. Karena 1 "record" logis bisa tersebar ke beberapa baris D1 (lihat
+          // rtdbReadPathLimited di worker.js), dipakai faktor aman 15x supaya record
+          // ber-field banyak (mis. riwayat penjualan dengan rincian item) tetap tercakup
+          // penuh. Dibatasi maksimal 3000 baris mentah supaya tetap ada plafon jelas.
+          const rawRowLimit = Math.min(n * 15, 3000);
+          const limitedFetch = (p) => doFetch(p, rawRowLimit);
+          const trimToN = (value) => {
+            // Jaring pengaman tambahan: kalau raw-row-limit di atas kebetulan masih
+            // menyisakan sedikit lebih dari N record, tetap dipotong ke N di HP juga,
+            // supaya perilaku yang terlihat oleh user identik seperti sebelumnya.
             if (!value || typeof value !== 'object') return value;
             const keys = Object.keys(value).sort();
+            if (keys.length <= n) return value;
             const out = {};
             keys.slice(-n).forEach(k => out[k] = value[k]);
             return out;
           };
           return {
-            once: async () => __makeSnapshot(trim(await doFetch(cleanPath))),
-            on: (eventType, cb, errCb) => refObj.on(eventType, (snap) => cb(__makeSnapshot(trim(snap.val()))), errCb),
-            off: (eventType, cb) => refObj.off(eventType, cb),
+            once: async () => __makeSnapshot(trimToN(await limitedFetch(cleanPath))),
+            on: (eventType, cb, errCb) => {
+              let stopped = false;
+              const poll = async () => {
+                if (stopped) return;
+                if (typeof document !== 'undefined' && document.hidden) {
+                  setTimeout(poll, LIVE_POLL_INTERVAL_MS);
+                  return;
+                }
+                try {
+                  const value = await limitedFetch(cleanPath);
+                  if (!stopped) cb(__makeSnapshot(trimToN(value)));
+                } catch (e) { if (errCb) errCb(e); }
+                if (!stopped) setTimeout(poll, LIVE_POLL_INTERVAL_MS);
+              };
+              poll();
+              cb.__stop = () => { stopped = true; };
+              return cb;
+            },
+            off: (eventType, cb) => { if (cb && cb.__stop) cb.__stop(); },
           };
         },
       };
@@ -523,6 +633,7 @@ const { useState, useEffect } = React;
     // write/bulan. Timeout offline ikut dinaikkan proporsional (2.5x interval) supaya
     // toleransi jaringan lambat tetap sama seperti sebelumnya, status online/offline
     // masih terasa responsif untuk Admin.
+    // Presence lewat Durable Object (memori, 0 biaya D1) — aman heartbeat sesering ini.
     const PRESENCE_HEARTBEAT_MS = 30 * 1000;       // toko lapor "online" tiap 30 detik
     const PRESENCE_ONLINE_TIMEOUT_MS = 75 * 1000;  // dianggap offline kalau tak ada kabar > 75 detik
 
@@ -1000,8 +1111,69 @@ const { useState, useEffect } = React;
       }
     };
 
+    // OPTIMASI (2026-07-19): pruneOldEntries() di atas membaca SELURUH isi node tanpa batas
+    // (perlu, supaya tahu persis mana yang usianya >30 hari). Ini dipanggil tiap kali dashboard
+    // toko/admin dibuka — kalau staff refresh/login-ulang berkali-kali sehari, biaya baca
+    // penuh ini ikut berkali-kali juga, padahal cukup dijalankan SEKALI SEHARI (data yang
+    // usianya >30 hari tidak berubah drastis dalam hitungan jam). Guard ini membatasi
+    // eksekusi nyata cuma 1x per 24 jam per key, sisanya di-skip (return langsung).
+    const shouldRunPruneNow = (key) => {
+      try {
+        const last = parseInt(localStorage.getItem(`tarobun_last_prune_${key}`) || '0', 10);
+        if (Date.now() - last < 24 * 60 * 60 * 1000) return false;
+        localStorage.setItem(`tarobun_last_prune_${key}`, Date.now().toString());
+        return true;
+      } catch (e) {
+        return true; // kalau localStorage bermasalah, tetap jalankan (aman, cuma tidak hemat)
+      }
+    };
+
+    // ===== PUSH NOTIFICATION NATIF (APK Capacitor) — ditambahkan 2026-07-18 =====
+    // Kalau app ini dibuka LEWAT APK hasil bungkus Capacitor, window.Capacitor akan ada
+    // (di-inject otomatis oleh native shell-nya). Kalau dibuka lewat browser biasa (HP/PC),
+    // window.Capacitor tidak ada, jadi tetap pakai jalur Notification API web yang lama.
+    const isNativeApp = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
+    // Minta izin + daftar device ke Firebase Cloud Messaging, lalu kirim token-nya ke
+    // Worker (disimpan di D1) supaya backend tahu ke device mana push harus dikirim.
+    const registerNativePush = async () => {
+      try {
+        const PushNotifications = window.Capacitor?.Plugins?.PushNotifications;
+        if (!PushNotifications) { console.log('Plugin PushNotifications belum terpasang.'); return; }
+        const perm = await PushNotifications.requestPermissions();
+        if (perm.receive !== 'granted') return;
+        await PushNotifications.register();
+
+        PushNotifications.addListener('registration', async (token) => {
+          try {
+            await fetch(`${WORKER_BASE}/api/push/register`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+              body: JSON.stringify({ fcmToken: token.value, platform: 'android' }),
+            });
+          } catch (e) { console.log('Gagal daftar push token ke server:', e); }
+        });
+        PushNotifications.addListener('registrationError', (err) => {
+          console.log('Registrasi push notification gagal:', err);
+        });
+        // Notifikasi masuk SAAT app sedang dibuka: sistem TIDAK menampilkan pop-up otomatis
+        // (perilaku standar Android), jadi kalau mau tetap kelihatan sebagai toast di dalam
+        // app, tangani di sini. Kalau app di-background/ditutup, sistem yang menampilkan
+        // pop-up otomatis tanpa perlu kode tambahan di sini.
+        PushNotifications.addListener('pushNotificationReceived', (n) => {
+          console.log('Push diterima (app sedang terbuka):', n);
+        });
+        PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+          console.log('User tap notifikasi:', action);
+        });
+      } catch (e) {
+        console.log('registerNativePush error:', e);
+      }
+    };
+
     // Minta izin notifikasi browser (dipanggil sekali saat user berhasil login)
     const requestNotificationPermission = () => {
+      if (isNativeApp()) { registerNativePush(); return; }
       if (typeof Notification === 'undefined') return;
       try {
         // BUGFIX (2026-07-18): di sebagian WebView/browser embedded, fitur Notifikasi
@@ -1174,7 +1346,7 @@ const { useState, useEffect } = React;
             className="tarobun-splash-logo w-28 h-28 sm:w-32 sm:h-32 rounded-3xl shadow-2xl object-contain bg-white/5"
           />
           <div className="tarobun-splash-text mt-5 text-center">
-            <h1 className="text-white font-display font-extrabold text-lg tracking-wide">TAROBUN Green Pramuka Hub</h1>
+            <h1 className="text-white font-display font-extrabold text-lg tracking-wide">TAROBUN SO Mandiri Hub</h1>
             <p className="text-purple-200 text-xs mt-1">Memuat aplikasi...</p>
           </div>
         </div>
@@ -1407,7 +1579,7 @@ const { useState, useEffect } = React;
                 alt="Logo Tarobun"
                 className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-contain shadow-md mb-3"
               />
-              <h1 className="font-display font-extrabold text-slate-800 text-lg">TAROBUN Green Pramuka Hub</h1>
+              <h1 className="font-display font-extrabold text-slate-800 text-lg">TAROBUN SO Mandiri Hub</h1>
               <p className="text-xs text-slate-600 text-center mt-1">Masuk sebagai toko atau admin pusat</p>
             </div>
 
@@ -1822,6 +1994,11 @@ const { useState, useEffect } = React;
         typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
       );
       const handleEnableNotif = () => {
+        if (isNativeApp()) {
+          registerNativePush();
+          showAdminToast('🔔 Meminta izin notifikasi...');
+          return;
+        }
         if (typeof Notification === 'undefined') return;
         try {
           // Sama seperti requestNotificationPermission(): panggilan ini bisa melempar
@@ -1848,12 +2025,27 @@ const { useState, useEffect } = React;
         scheduleLucideIcons();
       });
 
-      // Data toko: pakai helper bindLiveValue supaya tampilan awal instan lewat REST,
-      // lalu tetap live-update lewat listener realtime seperti biasa.
+      // Data toko: dulu pakai db.ref('stores') yang membaca SELURUH data semua toko
+      // (termasuk histori, foto waste, dst — bukan cuma info dasarnya). Sekarang pakai
+      // /api/stores-summary yang HANYA membaca stores/{id}/info per toko (kecil &
+      // bertarget) — lihat catatan detail di worker.js.
       useEffect(() => {
-        const toList = (data) => Object.keys(data || {}).map(id => ({ id, ...((data || {})[id].info || {}) })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        const ref = db.ref('stores');
-        return bindLiveValue(ref, (snap) => setStores(toList(snap.val())));
+        let stopped = false;
+        const poll = async () => {
+          if (stopped) return;
+          if (!document.hidden) {
+            try {
+              const res = await fetch(`${WORKER_BASE}/api/stores-summary`, { headers: __authHeaders() });
+              const data = await res.json();
+              const map = data.stores || {};
+              const list = Object.keys(map).map(id => ({ id, ...map[id] })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+              if (!stopped) setStores(list);
+            } catch (e) { /* coba lagi di poll berikutnya */ }
+          }
+          if (!stopped) setTimeout(poll, LIVE_POLL_INTERVAL_MS);
+        };
+        poll();
+        return () => { stopped = true; };
       }, []);
 
       // ==========================================
@@ -1861,8 +2053,24 @@ const { useState, useEffect } = React;
       // ==========================================
       const [storesPresence, setStoresPresence] = useState({});
       useEffect(() => {
-        const ref = db.ref('storesPresence');
-        return bindLiveValue(ref, (snap) => setStoresPresence(snap.val() || {}));
+        // OPTIMASI (2026-07-19): sebelumnya lewat db.ref('storesPresence').on(...) yang
+        // numpang ke D1 (rtdb generic path) tiap 15 detik. Sekarang presence sepenuhnya
+        // ditangani Durable Object (0 Rows D1), jadi aman di-poll lebih sering (8 detik)
+        // untuk status online/offline yang terasa lebih real-time, tanpa risiko kena limit.
+        let stopped = false;
+        const poll = async () => {
+          if (stopped) return;
+          if (!document.hidden) {
+            try {
+              const res = await fetch(`${WORKER_BASE}/api/presence/status`, { headers: __authHeaders() });
+              const data = await res.json();
+              if (!stopped) setStoresPresence(data || {});
+            } catch (e) { /* diam-diam, coba lagi di poll berikutnya */ }
+          }
+          if (!stopped) setTimeout(poll, 8000);
+        };
+        poll();
+        return () => { stopped = true; };
       }, []);
 
       // Status online dihitung dari KESEGARAN heartbeat (lastSeen), bukan cuma dari
@@ -1890,8 +2098,8 @@ const { useState, useEffect } = React;
         setDetailData(null);
         setDetailLoading(true);
         const storeId = detailStore.id;
-        const historyRef = db.ref(`stores/${storeId}/history`);
-        const wasteRef = db.ref(`stores/${storeId}/wasteFotos`);
+        const historyRef = db.ref(`stores/${storeId}/history`).limitToLast(150);
+        const wasteRef = db.ref(`stores/${storeId}/wasteFotos`).limitToLast(150);
         const tgRef = db.ref(`stores/${storeId}/telegramConfig`);
 
         let historyList = [];
@@ -1906,7 +2114,15 @@ const { useState, useEffect } = React;
         };
         const historyHandler = (snap) => {
           const data = snap.val() || {};
-          historyList = Object.keys(data).map(key => ({ id: key, ...data[key] })).sort((a, b) => (b.tanggal || '').localeCompare(a.tanggal || ''));
+          // BUGFIX (2026-07-20): sebelumnya `{ id: key, ...data[key] }` — karena field
+          // `id` di dalam payload (lihat handleSaveToDevice: `id: Date.now().toString()`)
+          // ikut ter-spread SETELAH `id: key`, field itu MENIMPA `id: key`. Akibatnya
+          // `h.id` yang dipakai untuk hapus laporan bukan key asli di database (yang
+          // sebenarnya = tanggal, mis. "2026-07-20"), melainkan id internal yang salah —
+          // sehingga tombol hapus laporan selalu menghapus path yang TIDAK ADA (sukses
+          // tanpa efek, laporan aslinya tidak pernah kehapus). Taruh `id: key` SETELAH
+          // spread supaya key asli selalu menang.
+          historyList = Object.keys(data).map(key => ({ ...data[key], id: key })).sort((a, b) => (b.tanggal || '').localeCompare(a.tanggal || ''));
           gotHistory = true;
           pushUpdate();
         };
@@ -1934,15 +2150,20 @@ const { useState, useEffect } = React;
 
       // Bersihkan otomatis data seluruh toko yang usianya lebih dari 30 hari setiap kali admin membuka panel.
       // Ini pelengkap pembersihan di sisi toko, memastikan data tetap ringan walau toko jarang login.
+      // Dibatasi maksimal 1x per 24 jam (lihat shouldRunPruneNow) — tidak perlu baca ulang
+      // SELURUH riwayat 100 toko setiap kali admin refresh/buka dashboard di hari yang sama.
       useEffect(() => {
         if (stores.length === 0) return;
+        if (!shouldRunPruneNow('admin_bulk')) return;
         stores.forEach((store) => {
           const base = `stores/${store.id}`;
           pruneOldEntries(db.ref(`${base}/history`), (item) => item.tanggal ? new Date(item.tanggal).getTime() : (item.createdAt || 0));
           pruneOldEntries(db.ref(`${base}/wasteFotos`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => item.fotoKey ? [item.fotoKey] : []);
           pruneOldEntries(db.ref(`${base}/kedatanganBarang`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
           pruneOldEntries(db.ref(`${base}/suhuReports`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => (item.fotos || []).map(f => f.fotoKey).filter(Boolean));
-          pruneOldEntries(db.ref(`chats/${store.id}/messages`), (item) => item.timestamp || 0);
+          // Chat sudah tidak lewat rtdb generic path lagi (pindah ke /api/chat, D1) — retensi
+          // 30 harinya sekarang otomatis di server (lihat worker.js), jadi baris prune di sini
+          // sudah tidak relevan lagi dan dihapus.
         });
       }, [stores.length]);
 
@@ -1963,42 +2184,54 @@ const { useState, useEffect } = React;
       const storesRef = React.useRef(stores);
       useEffect(() => { storesRef.current = stores; }, [stores]);
       useEffect(() => {
-        const ref = db.ref('chats');
-        const handler = (snapshot) => {
-          const data = snapshot.val() || {};
-          const counts = {};
-          Object.keys(data).forEach((sid) => {
-            const msgsObj = (data[sid] && data[sid].messages) || {};
-            const msgs = Object.keys(msgsObj).map(k => ({ id: k, ...msgsObj[k] })).sort((a, b) => a.timestamp - b.timestamp);
-            const lastRead = parseInt(localStorage.getItem(`tarobun_chat_lastread_admin_${sid}`) || '0', 10);
-            const unread = msgs.filter(m => m.sender === 'store' && m.timestamp > lastRead).length;
-            if (unread > 0) counts[sid] = unread;
+        // OPTIMASI KRITIS (2026-07-19): sebelumnya listener ini baca db.ref('chats') —
+        // SELURUH riwayat pesan SEMUA toko — tiap 15 detik, cuma buat hitung badge unread.
+        // Untuk 100 toko dengan histori 30 hari, ini bisa belasan JUTA rows read/hari
+        // SENDIRIAN. Sekarang cukup poll /api/chat/summary: ~1 baris ringkas PER TOKO
+        // (bukan per pesan), jadi maksimal ~100 baris dibaca per poll, seberapa pun
+        // panjang riwayat pesan sebenarnya.
+        let stopped = false;
+        const refreshSummary = async () => {
+          if (stopped) return;
+          try {
+            const res = await fetch(`${WORKER_BASE}/api/chat/summary`, { headers: __authHeaders() });
+            const data = await res.json();
+            const summaryMap = data.summary || {};
+            const counts = {};
+            Object.keys(summaryMap).forEach((sid) => {
+              const s = summaryMap[sid];
+              if (s.unread_for_admin > 0) counts[sid] = s.unread_for_admin;
 
-            const newestMsg = msgs[msgs.length - 1];
-            if (adminChatInitRef.current && newestMsg && newestMsg.sender === 'store' && newestMsg.id !== adminLastSeenMsgRef.current[sid]) {
-              const storeName = (storesRef.current.find(s => s.id === sid) || {}).name || sid;
-              const isViewingThisChat = tabRef.current === 'chat' && activeChatStoreRef.current && activeChatStoreRef.current.id === sid;
-              if (!isViewingThisChat) {
-                showAdminToast(`💬 Pesan baru dari ${storeName}: "${newestMsg.text.slice(0, 60)}${newestMsg.text.length > 60 ? '…' : ''}"`);
+              if (adminChatInitRef.current && s.last_sender === 'store' && s.last_message_id !== adminLastSeenMsgRef.current[sid]) {
+                const storeName = (storesRef.current.find(x => x.id === sid) || {}).name || sid;
+                const isViewingThisChat = tabRef.current === 'chat' && activeChatStoreRef.current && activeChatStoreRef.current.id === sid;
+                if (!isViewingThisChat) {
+                  showAdminToast(`💬 Pesan baru dari ${storeName}: "${(s.last_text || '').slice(0, 60)}${(s.last_text || '').length > 60 ? '…' : ''}"`);
+                }
+                playNotificationSound();
+                sendBrowserNotification(`Pesan baru dari ${storeName}`, s.last_text || '');
               }
-              playNotificationSound();
-              sendBrowserNotification(`Pesan baru dari ${storeName}`, newestMsg.text);
+              if (s.last_message_id) adminLastSeenMsgRef.current[sid] = s.last_message_id;
+            });
+            if (!stopped) {
+              setUnreadByStore(counts);
+              adminChatInitRef.current = true;
+              setChatListenerError(null);
             }
-            if (newestMsg) adminLastSeenMsgRef.current[sid] = newestMsg.id;
-          });
-          setUnreadByStore(counts);
-          adminChatInitRef.current = true;
-          setChatListenerError(null);
+          } catch (err) {
+            console.error('Gagal memuat ringkasan chat untuk notifikasi admin:', err);
+            if (!stopped) setChatListenerError('Gagal memuat notifikasi chat. Coba refresh halaman.');
+          }
         };
-        // errHandler: kalau listener 'chats' gagal (mis. Firebase Rules memblokir baca node
-        // 'chats' secara keseluruhan), tampilkan pesan yang JELAS ke admin alih-alih gagal diam-diam.
-        // Sebelumnya kalau ini gagal, badge unread & notifikasi berhenti bekerja TANPA ada
-        // tanda apapun di layar, sehingga sulit disadari kalau chat baru tidak lagi terdeteksi.
-        const errHandler = (err) => {
-          console.error('Gagal memuat data chat untuk notifikasi admin:', err);
-          setChatListenerError('Gagal memuat notifikasi chat (kemungkinan izin akses Firebase). Coba refresh halaman.');
-        };
-        return bindLiveValue(ref, handler, errHandler);
+        refreshSummary(); // muat langsung saat pertama render
+        // REAL-TIME (bukan lagi nunggu 15 detik): begitu toko manapun kirim pesan, worker
+        // langsung "membangunkan" long-poll ini lewat ChatHub, lalu kita refresh ringkasan
+        // (murah, ~1 baris per toko) untuk update badge + toast + suara.
+        const poller = createChatLongPoll({ storeId: null, onChange: refreshSummary });
+        // Jaring pengaman: tetap refresh berkala (jarang, 60 detik) untuk jaga-jaga kalau
+        // Durable Object sempat direstart Cloudflare dan "kelewat" 1 momen bangun-tidur.
+        const safetyInterval = setInterval(refreshSummary, 60000);
+        return () => { stopped = true; poller.stop(); clearInterval(safetyInterval); };
       }, []);
 
       const totalAdminUnread = Object.values(unreadByStore).reduce((a, b) => a + b, 0);
@@ -2164,18 +2397,18 @@ const { useState, useEffect } = React;
           // Kirim notifikasi otomatis ke toko lewat Chat, sebagai pemberitahuan laporan 7 hari lalu
           // telah dibersihkan oleh Admin.
           const notifText = `🧹 ${oldEntries.length} laporan penjualan & stok yang usianya sudah 7 hari atau lebih telah dibersihkan oleh Admin dari sistem, untuk menjaga performa aplikasi.`;
-          await restPush(db.ref(`chats/${detailStore.id}/messages`), {
-            sender: 'admin',
-            senderLabel: 'Sistem (Otomatis)',
-            text: notifText,
-            timestamp: Date.now(),
+          await fetch(`${WORKER_BASE}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId: detailStore.id, senderLabel: 'Sistem (Otomatis)', text: notifText }),
           });
 
           setConfirmDeleteOldReports(false);
           showAdminToast(`🧹 ${oldEntries.length} laporan lama toko "${detailStore.name}" dihapus & toko sudah diberi tahu.`);
         } catch (err) {
           console.error('Gagal menghapus laporan lama:', err);
-          alert('Gagal menghapus laporan lama: periksa koneksi internet Anda.');
+          const detail = (err && err.message) ? err.message : 'Kesalahan tidak diketahui';
+          alert(`Gagal menghapus laporan lama: ${detail}`);
         } finally {
           setDeletingOldReports(false);
         }
@@ -2192,7 +2425,8 @@ const { useState, useEffect } = React;
           showAdminToast(`🗑️ Laporan tanggal ${confirmDeleteReport.tanggal} berhasil dihapus.`);
         } catch (err) {
           console.error('Gagal menghapus laporan:', err);
-          alert('Gagal menghapus laporan: periksa koneksi internet Anda.');
+          const detail = (err && err.message) ? err.message : 'Kesalahan tidak diketahui';
+          alert(`Gagal menghapus laporan: ${detail}`);
         } finally {
           setDeletingReportId(null);
         }
@@ -2211,7 +2445,8 @@ const { useState, useEffect } = React;
           showAdminToast('🗑️ Foto berhasil dihapus permanen.');
         } catch (err) {
           console.error('Gagal menghapus foto:', err);
-          alert('Gagal menghapus foto: periksa koneksi internet Anda.');
+          const detail = (err && err.message) ? err.message : 'Kesalahan tidak diketahui';
+          alert(`Gagal menghapus foto: ${detail}`);
         } finally {
           setDeletingWasteFotoKey(null);
         }
@@ -3183,10 +3418,10 @@ const { useState, useEffect } = React;
         // Bukan satu-satunya jaring pengaman — kalau ini gagal (mis. jaringan putus),
         // status tetap otomatis jadi Offline lewat mekanisme kedaluwarsa heartbeat.
         if (session && session.role === 'store' && session.storeId) {
-          restSet(db.ref(`storesPresence/${session.storeId}`), {
-            isOnline: false,
-            lastSeen: firebase.database.ServerValue.TIMESTAMP,
-            storeName: session.storeName || ''
+          fetch(`${WORKER_BASE}/api/presence/offline`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId: session.storeId }),
           }).catch(() => {});
         }
         await auth.signOut();
@@ -3205,10 +3440,10 @@ const { useState, useEffect } = React;
         const doInactivityLogout = async () => {
           try {
             if (session.role === 'store' && session.storeId) {
-              await restSet(db.ref(`storesPresence/${session.storeId}`), {
-                isOnline: false,
-                lastSeen: firebase.database.ServerValue.TIMESTAMP,
-                storeName: session.storeName || ''
+              await fetch(`${WORKER_BASE}/api/presence/offline`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+                body: JSON.stringify({ storeId: session.storeId }),
               }).catch(() => {});
             }
           } finally {
@@ -3320,13 +3555,16 @@ const { useState, useEffect } = React;
       // otomatis "meluruh" jadi Offline dengan sendirinya di sisi Admin — tanpa
       // perlu event disconnect apa pun dari Firebase.
       useEffect(() => {
-        const presenceRef = db.ref(`storesPresence/${storeId}`);
-
+        // OPTIMASI (2026-07-19): sebelumnya restSet ke db.ref('storesPresence/...') yang
+        // menulis ke D1 tiap heartbeat — untuk 100 toko ini gampang lewat limit gratis
+        // 100.000 Rows Written/hari. Sekarang heartbeat langsung ke Durable Object
+        // (in-memory, 0 Rows D1), jadi seberapa pun sering/banyak toko, tidak numpang ke
+        // limit D1 sama sekali.
         const sendHeartbeat = () => {
-          restSet(presenceRef, {
-            isOnline: true,
-            lastSeen: firebase.database.ServerValue.TIMESTAMP,
-            storeName
+          fetch(`${WORKER_BASE}/api/presence/ping`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId, storeName }),
           }).catch((err) => console.error('Gagal update status online toko:', err));
         };
 
@@ -3667,7 +3905,7 @@ useEffect(() => {
       // Menggantikan proses pembacaan localstorage agar sinkron antar user secara live!
       useEffect(() => {
         // 1. Tarik Data History secara Real-time dari Node 'history'
-        const historyRef = db.ref(`${storeBase}/history`);
+        const historyRef = db.ref(`${storeBase}/history`).limitToLast(150);
         const unbindHistory = bindLiveValue(historyRef, (snapshot) => {
           const data = snapshot.val();
           if (data) {
@@ -3707,7 +3945,7 @@ useEffect(() => {
         });
 
         // 3. Tarik Data Foto Waste/Rijek secara Real-time dari Node 'wasteFotos'
-        const wasteFotoRef = db.ref(`${storeBase}/wasteFotos`);
+        const wasteFotoRef = db.ref(`${storeBase}/wasteFotos`).limitToLast(150);
         const unbindWaste = bindLiveValue(wasteFotoRef, (snapshot) => {
           const data = snapshot.val();
           if (data) {
@@ -3722,7 +3960,7 @@ useEffect(() => {
         });
 
         // 4. Tarik Data Kedatangan Barang secara Real-time dari Node 'kedatanganBarang'
-        const kedatanganRef = db.ref(`${storeBase}/kedatanganBarang`);
+        const kedatanganRef = db.ref(`${storeBase}/kedatanganBarang`).limitToLast(150);
         const unbindKedatangan = bindLiveValue(kedatanganRef, (snapshot) => {
           const data = snapshot.val();
           if (data) {
@@ -3737,7 +3975,7 @@ useEffect(() => {
         });
 
         // 5. Tarik Data Laporan Suhu secara Real-time dari Node 'suhuReports'
-        const suhuRef = db.ref(`${storeBase}/suhuReports`);
+        const suhuRef = db.ref(`${storeBase}/suhuReports`).limitToLast(150);
         const unbindSuhu = bindLiveValue(suhuRef, (snapshot) => {
           const data = snapshot.val();
           if (data) {
@@ -3762,13 +4000,15 @@ useEffect(() => {
       }, []);
 
       // 5. Auto-hapus data toko ini yang usianya lebih dari 30 hari, agar Cloud & aplikasi tetap ringan.
-      // Dijalankan sekali tiap dashboard toko dibuka (cukup, karena setiap toko login berkala setiap hari).
+      // Dibatasi maksimal 1x per 24 jam (lihat shouldRunPruneNow) — kalau staff login/refresh
+      // berkali-kali sehari, tidak perlu baca ulang seluruh riwayat toko itu tiap kali.
       useEffect(() => {
+        if (!shouldRunPruneNow(`store_${storeId}`)) return;
         pruneOldEntries(db.ref(`${storeBase}/history`), (item) => item.tanggal ? new Date(item.tanggal).getTime() : (item.createdAt || 0));
         pruneOldEntries(db.ref(`${storeBase}/wasteFotos`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => item.fotoKey ? [item.fotoKey] : []);
         pruneOldEntries(db.ref(`${storeBase}/kedatanganBarang`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
         pruneOldEntries(db.ref(`${storeBase}/suhuReports`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => (item.fotos || []).map(f => f.fotoKey).filter(Boolean));
-        pruneOldEntries(db.ref(`chats/${storeId}/messages`), (item) => item.timestamp || 0);
+        // Chat sudah pindah ke /api/chat (D1) — retensi 30 harinya otomatis di server.
       }, [storeId]);
 
       // 6. Notifikasi pesan chat baru dari admin (badge merah + toast + notifikasi browser)
@@ -3777,28 +4017,37 @@ useEffect(() => {
       const chatInitializedRef = React.useRef(false);
       const lastSeenAdminMsgIdRef = React.useRef(null);
       useEffect(() => {
-        const chatRef = db.ref(`chats/${storeId}/messages`).limitToLast(30);
-        const handler = (snapshot) => {
-          const data = snapshot.val();
-          if (!data) return;
-          const msgs = Object.keys(data).map(k => ({ id: k, ...data[k] })).sort((a, b) => a.timestamp - b.timestamp);
-          const lastRead = parseInt(localStorage.getItem(`tarobun_chat_lastread_store_${storeId}`) || '0', 10);
-          const unread = msgs.filter(m => m.sender === 'admin' && m.timestamp > lastRead).length;
-          setUnreadChat(unread);
-
-          // Deteksi pesan admin baru yang benar-benar baru masuk (bukan saat pertama kali dimuat)
-          const newestMsg = msgs[msgs.length - 1];
-          if (chatInitializedRef.current && newestMsg && newestMsg.sender === 'admin' && newestMsg.id !== lastSeenAdminMsgIdRef.current) {
-            if (activeTabRef.current !== 'chat') {
-              showToast(`💬 Pesan baru dari Admin: "${newestMsg.text.slice(0, 60)}${newestMsg.text.length > 60 ? '…' : ''}"`);
+        // OPTIMASI (2026-07-19): sebelumnya db.ref('chats/...').limitToLast(30) yang
+        // limit-nya kosmetik (tetap baca semua riwayat di server). Sekarang cukup poll
+        // ringkasan 1 baris (/api/chat/summary), jauh lebih murah.
+        let stopped = false;
+        const refreshSummary = async () => {
+          if (stopped) return;
+          try {
+            const res = await fetch(`${WORKER_BASE}/api/chat/summary`, { headers: __authHeaders() });
+            const data = await res.json();
+            const s = data.summary;
+            if (s) {
+              setUnreadChat(s.unread_for_store || 0);
+              if (chatInitializedRef.current && s.last_sender === 'admin' && s.last_message_id !== lastSeenAdminMsgIdRef.current) {
+                if (activeTabRef.current !== 'chat') {
+                  showToast(`💬 Pesan baru dari Admin: "${(s.last_text || '').slice(0, 60)}${(s.last_text || '').length > 60 ? '…' : ''}"`);
+                }
+                playNotificationSound();
+                sendBrowserNotification('Pesan baru dari Admin', s.last_text || '');
+              }
+              if (s.last_message_id) lastSeenAdminMsgIdRef.current = s.last_message_id;
+              chatInitializedRef.current = true;
             }
-            playNotificationSound();
-            sendBrowserNotification('Pesan baru dari Admin', newestMsg.text);
-          }
-          if (newestMsg) lastSeenAdminMsgIdRef.current = newestMsg.id;
-          chatInitializedRef.current = true;
+          } catch (e) { /* coba lagi lewat safety interval / long-poll berikutnya */ }
         };
-        return bindLiveValue(chatRef, handler);
+        refreshSummary(); // muat langsung saat pertama render
+        // REAL-TIME: begitu Admin kirim balasan, worker langsung "membangunkan" long-poll
+        // ini lewat ChatHub (bukan nunggu interval 15 detik lagi).
+        const poller = createChatLongPoll({ storeId, onChange: refreshSummary });
+        // Jaring pengaman kalau-kalau ada momen bangun-tidur yang kelewat.
+        const safetyInterval = setInterval(refreshSummary, 60000);
+        return () => { stopped = true; poller.stop(); clearInterval(safetyInterval); };
       }, [storeId]);
 
       const numVal = (val) => {
@@ -4652,7 +4901,9 @@ Daily inventory done✅
           showToast('Foto berhasil dihapus dari Riwayat.');
           setWasteFotoList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
         } catch (error) {
-          showToast('Gagal menghapus foto.');
+          console.error('Gagal menghapus foto waste:', error);
+          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
+          showToast(`⚠️ Gagal menghapus foto: ${detail}`);
         }
       };
 
@@ -5167,7 +5418,9 @@ Daily inventory done✅
           showToast('Laporan suhu berhasil dihapus dari Riwayat.');
           setSuhuReportList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
         } catch (error) {
-          showToast('Gagal menghapus laporan.');
+          console.error('Gagal menghapus laporan suhu:', error);
+          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
+          showToast(`⚠️ Gagal menghapus laporan: ${detail}`);
         }
       };
 
@@ -6961,16 +7214,45 @@ Daily inventory done✅
       const [ending, setEnding] = useState(false);
       const bottomRef = React.useRef(null);
 
+      // REAL-TIME (2026-07-20, sebelumnya poll tiap 15 detik lewat GET /api/chat penuh):
+      // sekarang riwayat pesan cuma diambil PENUH sekali di awal (buka chat), setelah itu
+      // pesan BARU datang lewat long-poll /api/chat/wait yang langsung "dibangunkan" server
+      // detik itu juga saat lawan bicara kirim pesan — jadi terasa instan tanpa WebSocket.
       useEffect(() => {
-        const ref = db.ref(`chats/${storeId}/messages`).limitToLast(200);
-        const handler = (snapshot) => {
-          const data = snapshot.val();
-          const list = data ? Object.keys(data).map(k => ({ id: k, ...data[k] })).sort((a, b) => a.timestamp - b.timestamp) : [];
-          setMessages(list);
-          localStorage.setItem(`tarobun_chat_lastread_${senderRole}_${storeId}`, Date.now().toString());
-        };
-        return bindLiveValue(ref, handler);
+        let stopped = false;
+
+        (async () => {
+          try {
+            const res = await fetch(`${WORKER_BASE}/api/chat?storeId=${encodeURIComponent(storeId)}&limit=200`, { headers: __authHeaders() });
+            const data = await res.json();
+            if (!stopped && data.messages) setMessages(data.messages);
+          } catch (e) { /* riwayat gagal dimuat, tapi long-poll di bawah tetap coba jalan */ }
+        })();
+
+        const poller = createChatLongPoll({
+          storeId,
+          onChange: (data) => {
+            if (stopped || !data.event) return;
+            setMessages(prev => {
+              // Cegah dobel: kalau ini pesan yang kita kirim sendiri (sudah dimasukkan
+              // secara optimistic oleh handleSend), atau memang sudah ada dari poll lain.
+              if (prev.some(m => m.id === data.event.id)) return prev;
+              return [...prev, data.event].sort((a, b) => a.timestamp - b.timestamp);
+            });
+          },
+        });
+        return () => { stopped = true; poller.stop(); };
       }, [storeId]);
+
+      // Tandai terbaca di server (bukan cuma localStorage) begitu panel chat ini dibuka,
+      // supaya badge unread akurat lintas device juga.
+      useEffect(() => {
+        fetch(`${WORKER_BASE}/api/chat/mark-read`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+          body: JSON.stringify({ storeId }),
+        }).catch(() => {});
+      }, [storeId, messages.length]);
 
       useEffect(() => {
         if (bottomRef.current) bottomRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -6983,10 +7265,15 @@ Daily inventory done✅
         setSending(true);
         const optimisticMsg = { sender: senderRole, senderLabel, text: trimmed, timestamp: Date.now() };
         try {
-          const result = await restPush(db.ref(`chats/${storeId}/messages`), optimisticMsg);
-          // Langsung tampilkan pesan di layar SEKETIKA (tidak nunggu listener realtime),
-          // supaya tidak perlu refresh manual untuk melihat pesan sendiri.
-          const newId = (result && result.name) ? result.name : ('local-' + optimisticMsg.timestamp);
+          const res = await fetch(`${WORKER_BASE}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId, senderLabel, text: trimmed }),
+          });
+          const result = await res.json();
+          // Langsung tampilkan pesan di layar SEKETIKA (tidak nunggu poll berikutnya),
+          // supaya tidak terasa lambat untuk melihat pesan sendiri.
+          const newId = (result && result.id) ? result.id : ('local-' + optimisticMsg.timestamp);
           setMessages(prev => [...prev, { id: newId, ...optimisticMsg }].sort((a, b) => a.timestamp - b.timestamp));
           setText('');
         } catch (err) {
@@ -6996,12 +7283,16 @@ Daily inventory done✅
         }
       };
 
-      // Admin dapat mengakhiri sesi chat: seluruh riwayat pesan dengan toko ini dihapus permanen
-      // dari Firebase, dan percakapan otomatis mulai dari kosong lagi (baik di sisi admin maupun toko).
+      // Admin dapat mengakhiri sesi chat: seluruh riwayat pesan dengan toko ini dihapus permanen,
+      // dan percakapan otomatis mulai dari kosong lagi (baik di sisi admin maupun toko).
       const handleEndSession = async () => {
         setEnding(true);
         try {
-          await restRemove(db.ref(`chats/${storeId}`));
+          await fetch(`${WORKER_BASE}/api/chat/end-session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId }),
+          });
           setMessages([]);
           setConfirmEnd(false);
         } catch (err) {

@@ -255,6 +255,26 @@ const { useState, useEffect } = React;
     const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
     const CF_SESSION_KEY = 'tarobun_cf_session';
 
+    // ==========================================
+    // IDENTITAS DEVICE (dipakai untuk limit 2 device/toko + auto-logout tidak aktif 5 jam)
+    // ==========================================
+    // deviceId acak dibuat SEKALI per browser/perangkat lalu disimpan permanen di localStorage,
+    // supaya browser yang sama tetap dikenali sebagai device yang sama walau login/logout
+    // berkali-kali (tidak dianggap device baru tiap kali login).
+    const DEVICE_ID_KEY = 'tarobun_device_id';
+    const getDeviceId = () => {
+      try {
+        let id = localStorage.getItem(DEVICE_ID_KEY);
+        if (!id) {
+          id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('dev-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+          localStorage.setItem(DEVICE_ID_KEY, id);
+        }
+        return id;
+      } catch (e) {
+        return 'dev-' + Date.now();
+      }
+    };
+
     let __sessionToken = null;
     let __authListeners = [];
 
@@ -577,7 +597,7 @@ const { useState, useEffect } = React;
           const storeId = email.replace(/^store-/, '').replace(/@toko\.tarobun-app\.internal$/, '');
           res = await fetch(`${WORKER_BASE}/api/login/store`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ storeId, token: password }),
+            body: JSON.stringify({ storeId, token: password, deviceId: getDeviceId() }),
           });
           data = await res.json();
           if (!res.ok) throw new Error(data.error || 'Login gagal');
@@ -639,21 +659,18 @@ const { useState, useEffect } = React;
     // yang lalu). Kalau toko menutup tab/koneksi putus mendadak, heartbeat
     // otomatis berhenti dan Admin akan melihatnya berubah jadi Offline sendiri
     // begitu heartbeat terakhir kedaluwarsa — tanpa perlu event "disconnect" apa pun.
-    // OPTIMASI (2026-07-18): dinaikkan dari 20s -> 30s. Dengan 100 toko aktif bersamaan,
-    // tiap heartbeat = 1 D1 write per toko. 20s = ~4.3 juta write/bulan; 30s = ~2.9 juta
-    // write/bulan. Presence lewat Durable Object (memori, 0 biaya D1) — aman heartbeat
-    // sesering ini.
-    // BUGFIX (2026-07-20): timeout offline sebelumnya cuma 2.5x interval (75 detik). Di HP,
-    // begitu layar dikunci / app dipindah ke background, OS/browser sering MENAHAN
-    // (throttle) timer setInterval selama puluhan detik agar hemat baterai — jadi heartbeat
-    // berikutnya bisa telat lebih dari 75 detik walau toko sebenarnya masih login & aktif.
-    // Akibatnya Admin melihat status "berkedip" balik ke Offline padahal sebelumnya online,
-    // lalu balik lagi Online begitu HP dibuka (heartbeat langsung dikirim ulang lewat
-    // listener visibilitychange/focus). Timeout dinaikkan jadi 4x interval (120 detik) supaya
-    // ada ruang toleransi untuk throttling ini, tanpa membuat deteksi offline SUNGGUHAN
-    // (tab benar-benar ditutup) jadi terasa lambat bagi Admin.
-    const PRESENCE_HEARTBEAT_MS = 30 * 1000;        // toko lapor "online" tiap 30 detik
-    const PRESENCE_ONLINE_TIMEOUT_MS = 120 * 1000;  // dianggap offline kalau tak ada kabar > 120 detik
+    // OPTIMASI (2026-07-18, dipercepat lagi 2026-07-20): presence 100% lewat Durable Object
+    // (memori, 0 biaya D1 Rows Written), jadi heartbeat boleh sesering apa pun tanpa numpang
+    // limit D1 sama sekali — TIDAK ada alasan lagi membuatnya lambat.
+    // BUGFIX (2026-07-20): timeout offline sebelumnya 120 detik, terasa lambat ("tidak
+    // real-time") bagi Admin saat memantau status ON/OFF toko. Dipercepat jadi heartbeat 10
+    // detik + timeout 35 detik (3.5x interval — masih ada toleransi untuk throttling timer di
+    // HP saat layar dikunci/app di-background, tapi status berubah jauh lebih cepat
+    // dibanding sebelumnya). Heartbeat ini SEKALIGUS dipakai server untuk mengecek limit
+    // device & auto-logout tidak aktif (lihat sendHeartbeat di StoreApp) — jadi
+    // mempercepat interval ini juga mempercepat deteksi "device ditendang/logout paksa".
+    const PRESENCE_HEARTBEAT_MS = 10 * 1000;       // toko lapor "online" tiap 10 detik
+    const PRESENCE_ONLINE_TIMEOUT_MS = 35 * 1000;  // dianggap offline kalau tak ada kabar > 35 detik
 
     const storeIdToEmail = (storeId) => `store-${storeId}${STORE_EMAIL_DOMAIN}`;
 
@@ -2364,12 +2381,20 @@ const { useState, useEffect } = React;
         }
         setWebUpdateReport({ success, failed });
 
-        // Simpan juga ke database agar semua Toko yang online menerima pop-up real-time
+        // Simpan juga ke database agar Toko yang online menerima pop-up real-time.
+        // BUGFIX (2026-07-20): sebelumnya path ini SATU untuk semua toko dan TIDAK menyimpan
+        // toko mana saja yang jadi tujuan, padahal Telegram di atas SUDAH benar hanya
+        // mengirim ke toko yang dipilih (`targets`). Akibatnya pop-up real-time di web tetap
+        // muncul di SEMUA toko walau admin cuma memilih sebagian. Fix: simpan juga daftar
+        // storeId tujuan (`targetStoreIds` = null berarti untuk SEMUA toko), dan sisi Toko
+        // (lihat listener systemUpdates/latest di StoreApp) memeriksa dulu apakah storeId-nya
+        // ada di daftar itu sebelum menampilkan pop-up.
         try {
           await restSet(db.ref('systemUpdates/latest'), {
             id: Date.now().toString(),
             text: message,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            targetStoreIds: webUpdateAll ? null : targets.map(s => s.id),
           });
         } catch (err) {
           console.error('Gagal menyimpan Update Web ke database:', err);
@@ -3439,7 +3464,7 @@ const { useState, useEffect } = React;
           fetch(`${WORKER_BASE}/api/presence/offline`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
-            body: JSON.stringify({ storeId: session.storeId }),
+            body: JSON.stringify({ storeId: session.storeId, deviceId: getDeviceId() }),
           }).catch(() => {});
         }
         await auth.signOut();
@@ -3450,6 +3475,10 @@ const { useState, useEffect } = React;
       // ==========================================
       // AUTO-LOGOUT KARENA TIDAK ADA AKTIVITAS (45 MENIT)
       // ==========================================
+      // Ini untuk skenario tab MASIH TERBUKA tapi tidak disentuh sama sekali selama 45 menit.
+      // Untuk skenario tab DITUTUP TOTAL selama >5 jam, deteksinya tetap lewat server (lihat
+      // forceKickedLogout di StoreApp — reason 'inactive-timeout' berdasarkan heartbeat
+      // terakhir yang tersimpan di server), jadi kedua aturan ini berjalan berdampingan.
       useEffect(() => {
         if (!session) return;
         const TIMEOUT_MS = 45 * 60 * 1000;
@@ -3461,7 +3490,7 @@ const { useState, useEffect } = React;
               await fetch(`${WORKER_BASE}/api/presence/offline`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...__authHeaders() },
-                body: JSON.stringify({ storeId: session.storeId }),
+                body: JSON.stringify({ storeId: session.storeId, deviceId: getDeviceId() }),
               }).catch(() => {});
             }
           } finally {
@@ -3572,17 +3601,39 @@ const { useState, useEffect } = React;
       // Kalau tab ditutup/koneksi putus mendadak, heartbeat berhenti dan status
       // otomatis "meluruh" jadi Offline dengan sendirinya di sisi Admin — tanpa
       // perlu event disconnect apa pun dari Firebase.
+      // Logout paksa dari server: dipicu kalau device ini ditendang karena toko sudah login
+      // di 2 device lain (device paling lama tidak aktif yang kena), ATAU device ini sendiri
+      // tidak mengirim heartbeat (tab ditutup/laptop mati) selama lebih dari 5 jam.
+      const forceKickedLogout = (reason) => {
+        const msg = reason === 'inactive-timeout'
+          ? '⏱️ Sesi Anda otomatis berakhir karena web ini tidak dibuka/aktif selama lebih dari 5 jam. Silakan login kembali.'
+          : '⚠️ Akun toko ini sudah login di 2 perangkat lain (batas maksimal), sehingga sesi di perangkat ini otomatis diakhiri. Silakan login kembali.';
+        alert(msg);
+        onLogout();
+      };
+
       useEffect(() => {
         // OPTIMASI (2026-07-19): sebelumnya restSet ke db.ref('storesPresence/...') yang
         // menulis ke D1 tiap heartbeat — untuk 100 toko ini gampang lewat limit gratis
         // 100.000 Rows Written/hari. Sekarang heartbeat langsung ke Durable Object
         // (in-memory, 0 Rows D1), jadi seberapa pun sering/banyak toko, tidak numpang ke
         // limit D1 sama sekali.
+        // FITUR BARU (2026-07-20): heartbeat ini SEKALIGUS "menumpang" untuk mengecek limit
+        // 2 device/toko & auto-logout tidak aktif 5 jam (deviceId dikirim, server membalas
+        // deviceValid:false kalau sesi device ini sudah tidak berlaku) — sengaja digabung ke
+        // request yang sudah ada ini (bukan bikin endpoint/polling baru) supaya tetap efisien
+        // dan tetap murni HTTP biasa, bukan WebSocket.
+        let stoppedByServer = false;
         const sendHeartbeat = () => {
           fetch(`${WORKER_BASE}/api/presence/ping`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
-            body: JSON.stringify({ storeId, storeName }),
+            body: JSON.stringify({ storeId, storeName, deviceId: getDeviceId() }),
+          }).then(res => res.json()).then(data => {
+            if (data && data.deviceValid === false && !stoppedByServer) {
+              stoppedByServer = true;
+              forceKickedLogout(data.reason);
+            }
           }).catch((err) => console.error('Gagal update status online toko:', err));
         };
 
@@ -3614,13 +3665,18 @@ const { useState, useEffect } = React;
         return bindLiveValue(ref, (snap) => {
           const data = snap.val();
           if (!data || !data.id) return;
+          // BUGFIX (2026-07-20): dulu pop-up ini muncul di SEMUA toko tanpa memeriksa
+          // target, walau admin sudah memilih hanya sebagian toko di menu Update Web.
+          // targetStoreIds null/kosong = memang untuk SEMUA toko (perilaku broadcast lama);
+          // kalau berisi daftar storeId, toko ini harus ada di dalamnya baru pop-up muncul.
+          if (Array.isArray(data.targetStoreIds) && !data.targetStoreIds.includes(storeId)) return;
           const seenId = localStorage.getItem('tarobun_seen_update_id');
           if (seenId !== String(data.id)) {
             setSystemUpdate(data);
             setShowUpdatePopup(true);
           }
         });
-      }, []);
+      }, [storeId]);
 
       const dismissSystemUpdate = () => {
         if (systemUpdate) localStorage.setItem('tarobun_seen_update_id', String(systemUpdate.id));

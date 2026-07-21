@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
   <title>Tarobun SO Mandiri Hub</title>
 
-  <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, laporan suhu, dan koordinasi pusat.">
+  <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
@@ -153,6 +153,39 @@
     .presence-dot-ping {
       animation: tarobunPresencePing 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     }
+
+    /* ========================================== */
+    /* TOUR GUIDE INTERAKTIF (spotlight highlight menu SOP onboarding) */
+    /* ========================================== */
+    /* Kotak spotlight: memakai trik box-shadow raksasa (0 0 0 9999px) supaya seluruh layar
+       jadi gelap KECUALI area menu yang sedang disorot — ringan (1 elemen, murni CSS,
+       tanpa canvas/svg/library) dan otomatis mengikuti ukuran/posisi elemen target. */
+    .tour-spotlight-box {
+      position: fixed;
+      z-index: 100;
+      border-radius: 14px;
+      box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.72), 0 0 0 3px #7C3AED, 0 0 18px 2px rgba(124,58,237,0.55);
+      pointer-events: none;
+      transition: top 0.28s cubic-bezier(0.4,0,0.2,1), left 0.28s cubic-bezier(0.4,0,0.2,1),
+                  width 0.28s cubic-bezier(0.4,0,0.2,1), height 0.28s cubic-bezier(0.4,0,0.2,1);
+    }
+    .tour-tooltip-card {
+      position: fixed;
+      z-index: 101;
+      max-width: 280px;
+      width: 84vw;
+      transition: top 0.28s cubic-bezier(0.4,0,0.2,1), left 0.28s cubic-bezier(0.4,0,0.2,1);
+    }
+    .tour-click-shield {
+      position: fixed;
+      inset: 0;
+      z-index: 99;
+      background: transparent;
+    }
+    @keyframes tourPulseDot {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.35; }
+    }
+    .tour-pulse-dot { animation: tourPulseDot 1.4s ease-in-out infinite; }
 
     /* ========================================== */
     /* TIPOGRAFI DASAR & LAYOUT LEGA (dashboard modern) */
@@ -329,7 +362,7 @@ const { useState, useEffect } = React;
     };
 
     // OPTIMASI BESAR (2026-07-19): sebelumnya SETIAP listener .on('value', ...) di app ini
-    // (riwayat, chat, waste, suhu, katalog, storeDirectory, dst — ada ~19 titik) polling
+    // (riwayat, chat, waste, katalog, storeDirectory, dst — ada ~19 titik) polling
     // GET ke Worker/D1 tiap 4 DETIK, TERUS-MENERUS selama halaman terbuka. Dengan banyak
     // listener aktif bersamaan per sesi (toko/admin bisa punya 6-8 sekaligus), 1 toko saja
     // bisa menghasilkan puluhan ribu Rows Read/hari — dikali 100 toko, ini JAUH melewati
@@ -1295,61 +1328,213 @@ const { useState, useEffect } = React;
     // ==========================================
     // KONTEN TUR PANDUAN (ONBOARDING)
     // ==========================================
+    // Setiap step boleh punya `target`: CSS selector (mengacu ke atribut data-tour yang
+    // ditempel di tombol menu sidebar asli). Kalau target ada & ketemu di DOM, TourGuide akan
+    // menyorot (spotlight) tombol tersebut langsung di sidebar. Kalau tidak ada target (step
+    // pembuka/penutup yang sifatnya info umum), tampil sebagai modal biasa di tengah layar.
     const STORE_ONBOARDING_STEPS = [
-      { icon: 'hand', title: 'Selamat Datang! 👋', desc: 'Ini adalah aplikasi pencatatan toko Anda. Yuk kenali fitur-fitur utamanya secara singkat.' },
-      { icon: 'trending-up', title: 'Dasbor', desc: 'Menampilkan ringkasan penjualan, pemakaian bahan baku, dan performa toko hari ini.' },
-      { icon: 'plus-circle', title: 'Input Penjualan', desc: 'Catat jumlah roti & minuman terjual, nilai transaksi, serta suhu freezer/chiller setiap hari.' },
-      { icon: 'package', title: 'SO Stok', desc: 'Catat stok opname bahan baku dan barang packaging yang tersisa.' },
-      { icon: 'truck', title: 'Datang Barang', desc: 'Catat barang yang baru datang dari gudang pusat, termasuk barang yang tidak sesuai.' },
-      { icon: 'camera', title: 'Foto Rijek', desc: 'Unggah foto bun rijek, barang rijek, atau waste sebagai bukti dan dikirim ke Telegram.' },
-      { icon: 'history', title: 'Riwayat Laporan', desc: 'Lihat & unduh riwayat laporan harian yang tersimpan di Cloud.' },
-      { icon: 'message-circle', title: 'Chat Admin', desc: 'Hubungi admin pusat langsung lewat menu Chat jika ada kendala atau pertanyaan.' },
+      { icon: 'hand', title: 'Selamat Datang! 👋', desc: 'Ini adalah aplikasi pencatatan toko Anda. Yuk kenali menu-menu utamanya satu per satu — akan disorot langsung di menu sebelah.' },
+      { icon: 'trending-up', title: 'Dasbor', desc: 'Menampilkan ringkasan penjualan, pemakaian bahan baku, dan performa toko hari ini.', target: '[data-tour="menu-dashboard"]' },
+      { icon: 'plus-circle', title: 'Laporan Penjualan', desc: 'Catat jumlah roti & minuman terjual, nilai transaksi, serta suhu freezer/chiller setiap hari.', target: '[data-tour="menu-sales"]' },
+      { icon: 'package', title: 'SO Stok', desc: 'Catat stok opname bahan baku dan barang packaging yang tersisa.', target: '[data-tour="menu-inventory"]' },
+      { icon: 'calendar-clock', title: 'PO', desc: 'Catat pesanan pre order pelanggan (bukti bayar, isi pesanan, jadwal pickup) dan kirim ke grup Telegram — otomatis diingatkan 1 jam sebelum waktu pickup.', target: '[data-tour="menu-preorder"]' },
+      { icon: 'clipboard-check', title: 'BAP', desc: 'Laporkan selisih nominal antara POS dengan channel pembayaran (EDC/QRIS/Gofood/GrabFood/ShopeeFood) dan kirim ke Telegram.', target: '[data-tour="menu-bap"]' },
+      { icon: 'truck', title: 'Datang Barang', desc: 'Catat barang yang baru datang dari gudang pusat, termasuk barang yang tidak sesuai.', target: '[data-tour="menu-kedatangan"]' },
+      { icon: 'camera', title: 'Foto Rijek', desc: 'Unggah foto bun rijek, barang rijek, atau waste sebagai bukti dan dikirim ke Telegram.', target: '[data-tour="menu-wasteFoto"]' },
+      { icon: 'history', title: 'Riwayat Laporan', desc: 'Lihat & unduh riwayat laporan harian yang tersimpan di Cloud.', target: '[data-tour="menu-history"]' },
+      { icon: 'book-open', title: 'Panduan SOP', desc: 'Semua SOP toko ada di sini — buka menu ini kapan pun butuh mengingat langkah kerja yang benar.', target: '[data-tour="menu-sop"]' },
+      { icon: 'message-circle', title: 'Chat Admin', desc: 'Hubungi admin pusat langsung lewat menu Chat jika ada kendala atau pertanyaan.', target: '[data-tour="menu-chat"]' },
       { icon: 'shield-check', title: 'Keamanan Akun', desc: 'Sesi login Anda otomatis berakhir setiap 24 jam 30 menit demi keamanan. Jaga kerahasiaan token toko Anda!' },
     ];
     const ADMIN_ONBOARDING_STEPS = [
-      { icon: 'hand', title: 'Selamat Datang, Admin! 👋', desc: 'Panel ini khusus untuk mengelola seluruh cabang toko dari satu tempat.' },
-      { icon: 'store', title: 'Kelola Toko', desc: 'Tambah cabang toko baru dan dapatkan token login untuk diberikan ke toko tersebut.' },
-      { icon: 'eye', title: 'Pantau Toko', desc: 'Lihat stok, foto rijek, dan value penjualan tiap cabang secara real-time.' },
-      { icon: 'trash-2', title: 'Hapus Toko', desc: 'Nonaktifkan/hapus akses toko yang sudah tidak beroperasi kapan saja.' },
-      { icon: 'message-circle', title: 'Chat', desc: 'Balas pesan dari setiap toko langsung dari panel admin.' },
+      { icon: 'hand', title: 'Selamat Datang, Admin! 👋', desc: 'Panel ini khusus untuk mengelola seluruh cabang toko dari satu tempat. Yuk kenali menunya.' },
+      { icon: 'store', title: 'Kelola Toko', desc: 'Tambah cabang toko baru dan dapatkan token login untuk diberikan ke toko tersebut.', target: '[data-tour="menu-stores"]' },
+      { icon: 'eye', title: 'Pantau Toko', desc: 'Di dalam menu Kelola Toko, Anda bisa melihat stok, foto rijek, dan value penjualan tiap cabang secara real-time.' },
+      { icon: 'trash-2', title: 'Hapus Toko', desc: 'Nonaktifkan/hapus akses toko yang sudah tidak beroperasi kapan saja, juga dari menu Kelola Toko.' },
+      { icon: 'file-cog', title: 'Form Builder', desc: 'Atur field tambahan pada form Laporan Penjualan & SO Stok yang dipakai semua toko.', target: '[data-tour="menu-formbuilder"]' },
+      { icon: 'book-open', title: 'Panduan SOP', desc: 'Kelola konten SOP yang akan tampil di aplikasi setiap toko.', target: '[data-tour="menu-sop"]' },
+      { icon: 'message-circle', title: 'Chat', desc: 'Balas pesan dari setiap toko langsung dari panel admin.', target: '[data-tour="menu-chat"]' },
       { icon: 'shield-check', title: 'Keamanan', desc: 'Token toko hanya ditampilkan sekali saat dibuat — segera salin & simpan dengan aman.' },
     ];
 
-    function Onboarding({ steps, onFinish }) {
+    // Daftar pekerjaan wajib yang TIDAK BOLEH dilupakan kasir/karyawan toko — ditampilkan sebagai
+    // pop-up wajib di akhir tur onboarding (harus dicentang & dikonfirmasi, tidak bisa ditutup asal-asalan).
+    const MANDATORY_STORE_CHECKLIST = [
+      { icon: 'calculator', text: 'Pastikan hasil closing kasir (uang fisik) sudah sesuai dengan catatan sistem sebelum shift berakhir.' },
+      { icon: 'package-check', text: 'Cek fisik barang datang dari gudang pusat satu per satu — jangan hanya tanda tangan tanpa mengecek.' },
+      { icon: 'clipboard-check', text: 'Isi & kirim laporan BAP (selisih transaksi EDC/QRIS/Gofood/GrabFood/ShopeeFood) sebelum logout/tutup toko.' },
+      { icon: 'lock', text: 'Jangan bagikan token/kode login toko ke siapa pun yang tidak berwenang.' },
+    ];
+    const MANDATORY_ADMIN_CHECKLIST = [
+      { icon: 'clipboard-check', text: 'Pantau laporan BAP tiap toko secara berkala — selisih yang tidak wajar harus segera ditindaklanjuti.' },
+      { icon: 'key', text: 'Token toko hanya tampil sekali saat dibuat. Simpan dengan aman sebelum menutup dialog pembuatan toko.' },
+      { icon: 'message-circle', text: 'Balas chat dari toko sesegera mungkin, terutama laporan kendala operasional mendesak.' },
+    ];
+
+    // Komponen tombol "titik" indikator langkah pada TourGuide (dipakai di tooltip & modal info).
+    function TourStepDots({ steps, idx }) {
+      return (
+        <div className="flex items-center justify-center gap-1.5 mb-4 flex-wrap">
+          {steps.map((_, i) => (
+            <span key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-5 bg-purple-700' : 'w-1.5 bg-slate-200'}`}></span>
+          ))}
+        </div>
+      );
+    }
+
+    // TourGuide: onboarding interaktif dengan spotlight highlight ke elemen menu ASLI di sidebar
+    // (bukan cuma modal generik). Ringan: 1 kotak spotlight (trik box-shadow, murni CSS) + 1 kartu
+    // tooltip yang posisinya dihitung ulang dari getBoundingClientRect() elemen target, tanpa
+    // request API apa pun. Kalau step tidak punya target, tampil sebagai modal di tengah layar
+    // (dipakai untuk step pembuka & step info yang tidak punya menu fisik).
+    function TourGuide({ steps, onFinish, onOpenMenu }) {
       const [idx, setIdx] = useState(0);
+      const [rect, setRect] = useState(null);
       const step = steps[idx];
       const isLast = idx === steps.length - 1;
-      return (
-        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-2xl animate-scaleIn max-w-sm w-full p-6 shadow-2xl">
-            <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center mb-4">
-              <i data-lucide={step.icon} className="w-6 h-6"></i>
-            </div>
-            <h3 className="font-bold text-slate-800 text-base mb-1">{step.title}</h3>
-            <p className="text-sm text-slate-500 mb-5">{step.desc}</p>
-            <div className="flex items-center justify-center gap-1.5 mb-5">
-              {steps.map((_, i) => (
-                <span key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-6 bg-purple-700' : 'w-1.5 bg-slate-200'}`}></span>
-              ))}
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <button onClick={onFinish} className="text-xs font-bold text-slate-600 hover:text-slate-600 px-2 py-2">
-                Lewati Semua
-              </button>
-              <div className="flex items-center gap-2">
-                {!isLast && (
-                  <button onClick={() => setIdx(idx + 1)} className="text-xs font-bold text-slate-500 hover:text-slate-700 px-3 py-2">
-                    Lewati Langkah
-                  </button>
-                )}
-                <button
-                  onClick={() => isLast ? onFinish() : setIdx(idx + 1)}
-                  className="bg-purple-800 hover:bg-purple-900 text-white text-xs font-bold px-4 py-2.5 rounded-xl"
-                >
+
+      // Buka sidebar hamburger otomatis kalau ada step yang butuh menyorot menu di dalamnya,
+      // supaya pengguna tidak perlu membuka menu manual saat tur berjalan.
+      useEffect(() => {
+        const needsMenu = steps.some(s => s.target);
+        if (needsMenu && onOpenMenu) onOpenMenu(true);
+        scheduleLucideIcons();
+      }, []);
+
+      useEffect(() => {
+        scheduleLucideIcons();
+        if (!step.target) { setRect(null); return; }
+        let cancelled = false;
+        const measure = () => {
+          if (cancelled) return;
+          const el = document.querySelector(step.target);
+          if (el) {
+            el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            const r = el.getBoundingClientRect();
+            setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+          } else {
+            setRect(null);
+          }
+        };
+        const t = setTimeout(measure, 320); // tunggu animasi buka sidebar (0.28s) selesai
+        window.addEventListener('resize', measure);
+        return () => { cancelled = true; clearTimeout(t); window.removeEventListener('resize', measure); };
+      }, [idx]);
+
+      const goNext = () => { if (isLast) onFinish(); else setIdx(idx + 1); };
+      const skipAll = () => onFinish();
+
+      // Modal biasa di tengah (tanpa target)
+      if (!rect) {
+        return (
+          <div className="fixed inset-0 z-[102] bg-black/60 flex items-center justify-center p-4 animate-fadeIn">
+            <div className="bg-white rounded-2xl animate-scaleIn max-w-sm w-full p-6 shadow-2xl">
+              <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center mb-4">
+                <i data-lucide={step.icon} className="w-6 h-6"></i>
+              </div>
+              <h3 className="font-bold text-slate-800 text-base mb-1">{step.title}</h3>
+              <p className="text-sm text-slate-500 mb-5">{step.desc}</p>
+              <TourStepDots steps={steps} idx={idx} />
+              <div className="flex items-center justify-between gap-2">
+                <button onClick={skipAll} className="text-xs font-bold text-slate-500 hover:text-slate-700 px-2 py-2">
+                  Lewati Semua
+                </button>
+                <button onClick={goNext} className="bg-purple-800 hover:bg-purple-900 text-white text-xs font-bold px-4 py-2.5 rounded-xl">
                   {isLast ? 'Selesai' : 'Lanjut'}
                 </button>
               </div>
             </div>
+          </div>
+        );
+      }
+
+      // Mode spotlight: sorot elemen menu asli + kartu tooltip mengikuti posisinya
+      const pad = 6;
+      const boxTop = Math.max(rect.top - pad, 4);
+      const boxLeft = Math.max(rect.left - pad, 4);
+      const boxWidth = rect.width + pad * 2;
+      const boxHeight = rect.height + pad * 2;
+
+      const spaceBelow = window.innerHeight - (rect.top + rect.height);
+      const placeBelow = spaceBelow > 200 || spaceBelow > rect.top;
+      const cardTop = placeBelow
+        ? Math.min(rect.top + rect.height + 14, window.innerHeight - 220)
+        : Math.max(rect.top - 14, 12);
+      const cardLeft = Math.min(Math.max(rect.left, 12), window.innerWidth - 296);
+
+      return (
+        <React.Fragment>
+          {/* Penahan klik: mencegah pengguna tidak sengaja menutup sidebar/menekan menu lain saat tur aktif */}
+          <div className="tour-click-shield" onClick={(e) => e.stopPropagation()}></div>
+          <div
+            className="tour-spotlight-box"
+            style={{ top: boxTop, left: boxLeft, width: boxWidth, height: boxHeight }}
+          ></div>
+          <div
+            className="tour-tooltip-card animate-scaleIn"
+            style={{ top: cardTop, left: cardLeft, transform: placeBelow ? 'none' : 'translateY(-100%)' }}
+          >
+            <div className="bg-white rounded-2xl shadow-2xl p-4 border border-purple-100">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 shrink-0 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center">
+                  <i data-lucide={step.icon} className="w-4 h-4"></i>
+                </div>
+                <h3 className="font-bold text-slate-800 text-sm">{step.title}</h3>
+              </div>
+              <p className="text-xs text-slate-500 mb-3 leading-relaxed">{step.desc}</p>
+              <TourStepDots steps={steps} idx={idx} />
+              <div className="flex items-center justify-between gap-2">
+                <button onClick={skipAll} className="text-[11px] font-bold text-slate-500 hover:text-slate-700 px-2 py-2">
+                  Lewati Semua
+                </button>
+                <button onClick={goNext} className="bg-purple-800 hover:bg-purple-900 text-white text-xs font-bold px-4 py-2.5 rounded-xl">
+                  {isLast ? 'Selesai' : 'Lanjut'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </React.Fragment>
+      );
+    }
+
+    // Pop-up peringatan WAJIB di akhir tur: berisi daftar pekerjaan yang tidak boleh dilupakan.
+    // Sengaja tidak bisa ditutup lewat klik backdrop/tombol X — hanya lewat tombol konfirmasi,
+    // dan tombol itu baru aktif setelah kotak centang "sudah membaca" dicentang.
+    function MandatoryChecklistModal({ items, onAcknowledge }) {
+      const [checked, setChecked] = useState(false);
+      useEffect(() => { scheduleLucideIcons(); }, [checked]);
+      return (
+        <div className="fixed inset-0 z-[110] bg-black/75 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl animate-scaleIn max-w-sm w-full p-6 shadow-2xl border-t-4 border-rose-600">
+            <div className="w-12 h-12 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
+              <i data-lucide="alert-triangle" className="w-6 h-6"></i>
+            </div>
+            <h3 className="font-bold text-slate-800 text-base mb-1">Jangan Sampai Lupa! ⚠️</h3>
+            <p className="text-xs text-slate-500 mb-4">Beberapa hal ini WAJIB dilakukan setiap hari — mohon dibaca sampai selesai:</p>
+            <ul className="space-y-2 mb-5 max-h-60 overflow-y-auto pr-1">
+              {items.map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs text-slate-700 bg-rose-50 rounded-lg p-2.5">
+                  <i data-lucide={item.icon} className="w-4 h-4 text-rose-600 shrink-0 mt-0.5"></i>
+                  <span>{item.text}</span>
+                </li>
+              ))}
+            </ul>
+            <label className="flex items-start gap-2 mb-4 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => setChecked(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-rose-600 shrink-0"
+              />
+              <span className="text-xs text-slate-600 font-semibold">Saya sudah membaca & memahami semua poin di atas.</span>
+            </label>
+            <button
+              disabled={!checked}
+              onClick={onAcknowledge}
+              className={`w-full text-xs font-bold px-4 py-3 rounded-xl transition-all ${checked ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+            >
+              Saya Mengerti, Lanjutkan
+            </button>
           </div>
         </div>
       );
@@ -1997,7 +2182,11 @@ const { useState, useEffect } = React;
       const [detailLoading, setDetailLoading] = useState(false);
       const [confirmDelete, setConfirmDelete] = useState(null);
       const [activeChatStore, setActiveChatStore] = useState(null);
+      // isFirstTime: true kalau flag 'tarobun_onboarding_admin' belum pernah diset di localStorage
+      // perangkat ini -> tur onboarding otomatis jalan. Setelah tur selesai, pop-up peringatan wajib
+      // ditampilkan sebelum benar-benar ditutup.
       const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('tarobun_onboarding_admin'));
+      const [showMandatoryChecklist, setShowMandatoryChecklist] = useState(false);
 
       // Onboarding hanya perlu muncul sekali seumur akun, bukan sekali per-browser/HP. Cek juga
       // penanda di Firebase supaya kalau admin login dari HP/browser lain, tidak muncul lagi.
@@ -2017,6 +2206,8 @@ const { useState, useEffect } = React;
         const uid = auth.currentUser && auth.currentUser.uid;
         if (uid) restSet(db.ref(`admins/${uid}/onboardingSeen`), true).catch(() => {});
         setShowOnboarding(false);
+        setShowMenu(false);
+        setShowMandatoryChecklist(true);
       };
       const [errorMsg, setErrorMsg] = useState('');
       const [adminToast, setAdminToast] = useState(null);
@@ -2195,7 +2386,6 @@ const { useState, useEffect } = React;
           pruneOldEntries(db.ref(`${base}/history`), (item) => item.tanggal ? new Date(item.tanggal).getTime() : (item.createdAt || 0));
           pruneOldEntries(db.ref(`${base}/wasteFotos`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => item.fotoKey ? [item.fotoKey] : []);
           pruneOldEntries(db.ref(`${base}/kedatanganBarang`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
-          pruneOldEntries(db.ref(`${base}/suhuReports`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => (item.fotos || []).map(f => f.fotoKey).filter(Boolean));
           // Chat sudah tidak lewat rtdb generic path lagi (pindah ke /api/chat, D1) — retensi
           // 30 harinya sekarang otomatis di server (lihat worker.js), jadi baris prune di sini
           // sudah tidak relevan lagi dan dihapus.
@@ -2581,7 +2771,10 @@ const { useState, useEffect } = React;
       return (
         <div className="min-h-screen bg-slate-50 text-slate-800">
           {showOnboarding && (
-            <Onboarding steps={ADMIN_ONBOARDING_STEPS} onFinish={finishAdminOnboarding} />
+            <TourGuide steps={ADMIN_ONBOARDING_STEPS} onFinish={finishAdminOnboarding} onOpenMenu={setShowMenu} />
+          )}
+          {showMandatoryChecklist && (
+            <MandatoryChecklistModal items={MANDATORY_ADMIN_CHECKLIST} onAcknowledge={() => setShowMandatoryChecklist(false)} />
           )}
           <header className="bg-gradient-to-r from-indigo-900 to-purple-900 text-white shadow-md sticky top-0 z-20 px-4 py-3">
             <div className="max-w-5xl mx-auto flex justify-between items-center">
@@ -2636,20 +2829,20 @@ const { useState, useEffect } = React;
                 </div>
 
                 <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
-                  <button onClick={() => { setTab('stores'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'stores' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-stores" onClick={() => { setTab('stores'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'stores' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="store" className="w-4 h-4"></i>
                     <span>Kelola Toko</span>
                   </button>
-                  <button onClick={() => { setTab('formbuilder'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'formbuilder' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-formbuilder" onClick={() => { setTab('formbuilder'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'formbuilder' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="layout-list" className="w-4 h-4"></i>
                     <span>Form Builder</span>
                   </button>
-                  <button onClick={() => { setTab('sop'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'sop' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-sop" onClick={() => { setTab('sop'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'sop' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="book-open" className="w-4 h-4"></i>
                     <span>Panduan SOP</span>
                     <span className="ml-auto text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded-md">{sopCategories.length}</span>
                   </button>
-                  <button onClick={() => { setTab('chat'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'chat' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-chat" onClick={() => { setTab('chat'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'chat' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="message-circle" className="w-4 h-4"></i>
                     <span>Chat</span>
                     {totalAdminUnread > 0 && <span className="ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md">{totalAdminUnread}</span>}
@@ -3545,7 +3738,10 @@ const { useState, useEffect } = React;
   const [activeTab, setActiveTab] = useState('dashboard');
       const [notification, setNotification] = useState(null);
       const [showConfig, setShowConfig] = useState(false);
+      // isFirstTime: true kalau flag 'tarobun_onboarding_store_<id>' belum ada di localStorage
+      // perangkat ini (login pertama kali / device baru) -> tur onboarding otomatis jalan.
       const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem(`tarobun_onboarding_store_${storeId}`));
+      const [showMandatoryChecklist, setShowMandatoryChecklist] = useState(false);
 
       // Sama seperti admin: cek juga penanda di Firebase agar onboarding tidak muncul lagi
       // kalau toko login dari HP/browser lain setelah pernah login sebelumnya.
@@ -3562,6 +3758,8 @@ const { useState, useEffect } = React;
         localStorage.setItem(`tarobun_onboarding_store_${storeId}`, '1');
         restSet(db.ref(`${storeBase}/info/onboardingSeen`), true).catch(() => {});
         setShowOnboarding(false);
+        setShowMenu(false);
+        setShowMandatoryChecklist(true);
       };
       const [unreadChat, setUnreadChat] = useState(0);
 
@@ -3893,6 +4091,30 @@ useEffect(() => {
       const [isSavingKedatangan, setIsSavingKedatangan] = useState(false);
       const [tidakSesuaiInput, setTidakSesuaiInput] = useState({ nama: '', jumlah: '', satuan: 'pcs', keterangan: '' });
 
+      // ==========================================
+      // BAP (LAPORAN SELISIH TRANSAKSI) - STATE & MASTER DATA
+      // ==========================================
+      // BAP dipakai untuk melaporkan selisih nominal antara catatan POS toko dengan nominal
+      // yang tercatat di masing-masing channel pembayaran/pesan-antar (EDC, QRIS, Gofood,
+      // GrabFood, ShopeeFood), lalu dikirim ke Telegram sebagai berita acara.
+      const BAP_TRANSAKSI_OPTIONS = ['EDC BCA', 'Qris BCA', 'Gofood', 'GrabFood', 'ShopeeFood'];
+
+      const getEmptyBapForm = (dateStr = new Date().toISOString().split('T')[0]) => ({
+        tanggal: dateStr,
+        transaksi: BAP_TRANSAKSI_OPTIONS[0],
+        nominalPos: '',
+        nominalChannel: '',
+        keterangan: '',
+      });
+
+      const [bapForm, setBapForm] = useState(() => getEmptyBapForm());
+      const [bapHistoryList, setBapHistoryList] = useState([]);
+      const [isSavingBap, setIsSavingBap] = useState(false);
+      // true selama keterangan belum diedit manual oleh user — teksnya ikut menyesuaikan
+      // otomatis setiap nominal POS/channel berubah. Begitu user mengetik sendiri di kolom
+      // keterangan, flag ini dimatikan supaya tulisan manualnya tidak ditimpa lagi.
+      const [bapKeteranganAuto, setBapKeteranganAuto] = useState(true);
+
       // Menu sidebar (hamburger)
       const [showMenu, setShowMenu] = useState(false);
 
@@ -3947,27 +4169,21 @@ useEffect(() => {
       const [wasteFotoViewDate, setWasteFotoViewDate] = useState(() => new Date().toISOString().split('T')[0]);
 
       // ==========================================
-      // LAPORAN SUHU - STATE
+      // MENU: PRE ORDER PESANAN (2026-07-20)
       // ==========================================
-      // Pilihan cepat Tipe Store (tetap bisa diketik bebas via datalist)
-      const TIPE_STORE_OPTIONS = ['Public Transport', 'Mall', 'Perkantoran', 'Perumahan', 'Sekolah/Kampus', 'Jalan Raya', 'Lainnya'];
-
-      const getEmptySuhuForm = () => ({
-        store: '',
-        tipeStore: '',
-        menit: '30',
-        suhuLuar: '',
-        suhuDalam: '',
-        suhuRuangan: '',
-        fotos: [], // [{ foto: base64 terkompresi, timestamp: epoch ms saat foto diambil/dipilih }]
+      const getEmptyPreOrderForm = () => ({
+        tanggalPesanan: new Date().toISOString().split('T')[0],
+        namaPemesan: '',
+        isiPesanan: '',
+        buktiPreview: null, // bukti pembayaran/struk, base64 hasil kompresi untuk preview & kirim
+        pickupTanggal: new Date().toISOString().split('T')[0],
+        pickupJam: '',
+        metodePickup: 'ambilSendiri', // 'ojol' | 'ambilSendiri'
       });
-
-      const [suhuForm, setSuhuForm] = useState(() => getEmptySuhuForm());
-      const [suhuReportList, setSuhuReportList] = useState([]);
-      const [isCompressingSuhuFoto, setIsCompressingSuhuFoto] = useState(false);
-      const [isSendingSuhu, setIsSendingSuhu] = useState(false);
-      // Tanggal riwayat yang sedang ditampilkan di tab Laporan Suhu (default: hari ini)
-      const [suhuViewDate, setSuhuViewDate] = useState(() => new Date().toISOString().split('T')[0]);
+      const [preOrderForm, setPreOrderForm] = useState(() => getEmptyPreOrderForm());
+      const [preOrderList, setPreOrderList] = useState([]);
+      const [isCompressingBukti, setIsCompressingBukti] = useState(false);
+      const [isSavingPreOrder, setIsSavingPreOrder] = useState(false);
 
       // Toast notification helper
       const showToast = (message) => {
@@ -4048,18 +4264,33 @@ useEffect(() => {
           }
         });
 
-        // 5. Tarik Data Laporan Suhu secara Real-time dari Node 'suhuReports'
-        const suhuRef = db.ref(`${storeBase}/suhuReports`).limitToLast(150);
-        const unbindSuhu = bindLiveValue(suhuRef, (snapshot) => {
+        // 5. Tarik Data BAP (Laporan Selisih Transaksi) secara Real-time dari Node 'bapReports'
+        const bapRef = db.ref(`${storeBase}/bapReports`).limitToLast(150);
+        const unbindBap = bindLiveValue(bapRef, (snapshot) => {
           const data = snapshot.val();
           if (data) {
             const formattedList = Object.keys(data).map(key => ({
               ...data[key],
               firebaseKey: key
             })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-            setSuhuReportList(formattedList);
+            setBapHistoryList(formattedList);
           } else {
-            setSuhuReportList([]);
+            setBapHistoryList([]);
+          }
+        });
+
+        // 6. Tarik Data Pre Order Pesanan secara Real-time dari Node 'preOrders'
+        const preOrderRef = db.ref(`${storeBase}/preOrders`).limitToLast(150);
+        const unbindPreOrder = bindLiveValue(preOrderRef, (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            const formattedList = Object.keys(data).map(key => ({
+              ...data[key],
+              firebaseKey: key
+            })).sort((a, b) => (a.pickupAt || 0) - (b.pickupAt || 0));
+            setPreOrderList(formattedList);
+          } else {
+            setPreOrderList([]);
           }
         });
 
@@ -4069,7 +4300,8 @@ useEffect(() => {
           unbindTg();
           unbindWaste();
           unbindKedatangan();
-          unbindSuhu();
+          unbindBap();
+          unbindPreOrder();
         };
       }, []);
 
@@ -4080,8 +4312,9 @@ useEffect(() => {
         if (!shouldRunPruneNow(`store_${storeId}`)) return;
         pruneOldEntries(db.ref(`${storeBase}/history`), (item) => item.tanggal ? new Date(item.tanggal).getTime() : (item.createdAt || 0));
         pruneOldEntries(db.ref(`${storeBase}/wasteFotos`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => item.fotoKey ? [item.fotoKey] : []);
+        pruneOldEntries(db.ref(`${storeBase}/preOrders`), (item) => item.createdAt || item.pickupAt || 0, (item) => item.buktiKey ? [item.buktiKey] : []);
         pruneOldEntries(db.ref(`${storeBase}/kedatanganBarang`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
-        pruneOldEntries(db.ref(`${storeBase}/suhuReports`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => (item.fotos || []).map(f => f.fotoKey).filter(Boolean));
+        pruneOldEntries(db.ref(`${storeBase}/bapReports`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
         // Chat sudah pindah ke /api/chat (D1) — retensi 30 harinya otomatis di server.
       }, [storeId]);
 
@@ -4734,6 +4967,136 @@ Daily inventory done✅
       };
 
       // ==========================================
+      // BAP (LAPORAN SELISIH TRANSAKSI) - LOGIKA
+      // ==========================================
+
+      // Selisih selalu ditampilkan sebagai nilai mutlak (bukan negatif), mengikuti contoh format
+      // yang diminta: "(Selisih Rp. 200)" — bukan "-200" atau "200-".
+      const bapSelisih = Math.abs(numVal(bapForm.nominalPos) - numVal(bapForm.nominalChannel));
+
+      // Kalimat keterangan otomatis, hanya dipakai untuk MENGISI kolom keterangan selama
+      // user belum mengetik sendiri (lihat bapKeteranganAuto). User tetap bebas mengedit atau
+      // mengganti total teksnya kapan saja.
+      const buildAutoBapKeterangan = (selisih) => selisih > 0
+        ? `Selisih Rp. ${selisih.toLocaleString('id-ID')} dikarenakan sistem pada POS.`
+        : '';
+
+      // Setiap nominal POS/Channel berubah, keterangan ikut menyesuaikan otomatis — TAPI hanya
+      // selama bapKeteranganAuto masih true (user belum pernah mengetik manual di kolom itu).
+      useEffect(() => {
+        if (!bapKeteranganAuto) return;
+        setBapForm(prev => ({ ...prev, keterangan: buildAutoBapKeterangan(bapSelisih) }));
+      }, [bapForm.nominalPos, bapForm.nominalChannel, bapKeteranganAuto]);
+
+      const handleBapKeteranganChange = (value) => {
+        setBapKeteranganAuto(false); // user mulai mengetik manual, hentikan auto-update
+        setBapForm(prev => ({ ...prev, keterangan: value }));
+      };
+
+      const handleResetBapKeteranganOtomatis = () => {
+        setBapKeteranganAuto(true);
+        setBapForm(prev => ({ ...prev, keterangan: buildAutoBapKeterangan(bapSelisih) }));
+      };
+
+      const generateBapReportString = (form) => {
+        const formattedDate = formatIndonesianDate(form.tanggal);
+        const selisih = Math.abs(numVal(form.nominalPos) - numVal(form.nominalChannel));
+        let text = `*${escapeTelegramMarkdown(storeName || '-')}*\nTanggal: ${formattedDate}\n\n`;
+        text += `Transaksi: ${form.transaksi}\n`;
+        text += `Nominal POS: Rp. ${numVal(form.nominalPos).toLocaleString('id-ID')}\n`;
+        text += `Nominal ${form.transaksi}: Rp. ${numVal(form.nominalChannel).toLocaleString('id-ID')}\n`;
+        text += `(Selisih Rp. ${selisih.toLocaleString('id-ID')})\n`;
+        if (form.keterangan && form.keterangan.trim()) {
+          text += `Keterangan: ${form.keterangan.trim()}\n`;
+        }
+        text += `\nTerimakasih 🙏`;
+        return text;
+      };
+
+      const handleResetBapForm = () => {
+        setBapForm(getEmptyBapForm());
+        setBapKeteranganAuto(true);
+      };
+
+      const handleSaveBap = async () => {
+        if (!bapForm.tanggal) {
+          showToast('⚠️ Tanggal wajib diisi.');
+          return;
+        }
+        if (numVal(bapForm.nominalPos) <= 0 && numVal(bapForm.nominalChannel) <= 0) {
+          showToast('⚠️ Isi minimal salah satu nominal (POS atau channel) sebelum menyimpan.');
+          return;
+        }
+        setIsSavingBap(true);
+        try {
+          const now = Date.now();
+          const payload = {
+            id: now.toString(),
+            tanggal: bapForm.tanggal,
+            transaksi: bapForm.transaksi,
+            nominalPos: numVal(bapForm.nominalPos),
+            nominalChannel: numVal(bapForm.nominalChannel),
+            selisih: Math.abs(numVal(bapForm.nominalPos) - numVal(bapForm.nominalChannel)),
+            keterangan: (bapForm.keterangan || '').trim(),
+            createdAt: now,
+          };
+          await restSet(db.ref(`${storeBase}/bapReports/` + now), payload);
+          showToast('Laporan BAP tersimpan ke Riwayat! 📋✨');
+          setBapHistoryList(prev => {
+            const withoutDup = prev.filter(it => it.firebaseKey !== now.toString());
+            return [...withoutDup, { ...payload, firebaseKey: now.toString() }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          });
+          handleResetBapForm();
+        } catch (error) {
+          console.error('Gagal menyimpan laporan BAP. Detail:', error);
+          const reason = (error && error.message) ? error.message : 'periksa koneksi internet Anda';
+          showToast(`Gagal menyimpan data: ${reason}. Data belum tersimpan, silakan coba lagi.`);
+        } finally {
+          setIsSavingBap(false);
+        }
+      };
+
+      const handleDeleteBap = async (firebaseKey) => {
+        try {
+          showToast('Menghapus laporan BAP... 🗑️');
+          await restRemove(db.ref(`${storeBase}/bapReports/` + firebaseKey));
+          showToast('Laporan BAP berhasil dihapus.');
+          setBapHistoryList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
+        } catch (error) {
+          showToast('Gagal menghapus laporan BAP.');
+        }
+      };
+
+      const handleSendBapToTelegram = async (form) => {
+        if (!config.telegramBotToken || !config.telegramChatId) {
+          showToast('⚠️ Isi Bot Token & Chat ID Telegram di menu pengaturan (Roda Gigi) dahulu!');
+          setShowConfig(true);
+          return;
+        }
+        const text = generateBapReportString(form);
+        showToast('Mengirim laporan BAP ke Telegram... ✈️');
+        const res = await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, text);
+        if (res.ok) {
+          showToast('Laporan BAP terkirim ke Telegram! 🚀');
+        } else {
+          showToast(`Gagal mengirim laporan: ${res.error}`);
+        }
+      };
+
+      const loadBapToActive = (item) => {
+        setBapForm({
+          tanggal: item.tanggal,
+          transaksi: item.transaksi,
+          nominalPos: item.nominalPos,
+          nominalChannel: item.nominalChannel,
+          keterangan: item.keterangan || '',
+        });
+        setBapKeteranganAuto(false); // data lama dianggap sudah final, jangan ditimpa auto-text
+        setActiveTab('bap');
+        showToast(`Memuat data BAP tanggal: ${item.tanggal} 🔄`);
+      };
+
+      // ==========================================
       // FOTO WASTE / RIJEK - LOGIKA
       // ==========================================
 
@@ -4813,7 +5176,7 @@ Daily inventory done✅
 
       // Kompres foto di sisi klien (resize + JPEG quality + koreksi orientasi EXIF) agar ringan,
       // tampil tegak lurus, dan aman untuk penyimpanan Firebase maupun dikirim ke Telegram.
-      // Dipakai bersama oleh Foto Rijek/Waste maupun Laporan Suhu.
+      // Dipakai bersama oleh Foto Rijek/Waste dan fitur unggah foto lainnya.
       const compressImageFile = async (file, maxWidth = 800, quality = 0.6) => {
         if (!file) throw new Error('Tidak ada file');
         const { source, width: srcW, height: srcH, orientation, isBitmap } = await loadOrientedImageSource(file);
@@ -4981,6 +5344,136 @@ Daily inventory done✅
         }
       };
 
+      // ==========================================
+      // PRE ORDER PESANAN — upload bukti bayar, simpan, & kirim ke grup Telegram (2026-07-20)
+      // ==========================================
+      const handleBuktiFotoFileChange = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+          showToast('⚠️ File harus berupa foto/gambar.');
+          e.target.value = '';
+          return;
+        }
+        if (file.size > 25 * 1024 * 1024) {
+          showToast('⚠️ Ukuran foto terlalu besar (maks 25MB). Coba ambil ulang atau pilih foto lain.');
+          e.target.value = '';
+          return;
+        }
+        setIsCompressingBukti(true);
+        try {
+          const steps = [
+            { maxWidth: 900, quality: 0.65 },
+            { maxWidth: 700, quality: 0.5 },
+            { maxWidth: 550, quality: 0.4 },
+            { maxWidth: 400, quality: 0.35 },
+          ];
+          let compressed = null;
+          let sizeKB = Infinity;
+          for (const step of steps) {
+            compressed = await compressImageFile(file, step.maxWidth, step.quality);
+            sizeKB = estimateBase64SizeKB(compressed);
+            if (sizeKB <= 300) break;
+          }
+          if (sizeKB > 600) {
+            showToast('⚠️ Foto terlalu besar walau sudah dikompres, coba foto lain.');
+            return;
+          }
+          setPreOrderForm(prev => ({ ...prev, buktiPreview: compressed }));
+          showToast(`Foto bukti siap (≈${sizeKB} KB setelah kompresi) 📸`);
+        } catch (error) {
+          console.error(error);
+          showToast('Gagal memproses foto. Pastikan formatnya JPG/PNG lalu coba lagi.');
+        } finally {
+          setIsCompressingBukti(false);
+          e.target.value = '';
+        }
+      };
+
+      // Susun teks detail pesanan untuk dikirim sebagai caption foto ke grup Telegram
+      const buildPreOrderCaption = (po) => {
+        const metodeLabel = po.metodePickup === 'ojol' ? 'Ojek Online' : 'Ambil Sendiri';
+        return `🛍️ *PRE ORDER PESANAN BARU*\n\n`
+          + `📅 Tgl Pesan: ${po.tanggalPesanan}\n`
+          + `👤 Pemesan: ${po.namaPemesan}\n`
+          + `📝 Pesanan:\n${po.isiPesanan}\n\n`
+          + `⏰ Pickup: ${po.pickupTanggal} pukul ${po.pickupJam}\n`
+          + `🚚 Metode: ${metodeLabel}\n`
+          + `🏪 Toko: ${storeName || storeId}`;
+      };
+
+      const handleSavePreOrder = async () => {
+        if (!preOrderForm.namaPemesan.trim()) { showToast('⚠️ Isi nama pemesan terlebih dahulu.'); return; }
+        if (!preOrderForm.isiPesanan.trim()) { showToast('⚠️ Isi detail pesanan terlebih dahulu.'); return; }
+        if (!preOrderForm.pickupTanggal || !preOrderForm.pickupJam) { showToast('⚠️ Isi tanggal & jam pickup terlebih dahulu.'); return; }
+        if (!preOrderForm.buktiPreview) { showToast('⚠️ Unggah bukti pembayaran/struk terlebih dahulu.'); return; }
+        if (!config.telegramBotToken || !config.telegramChatId) {
+          showToast('⚠️ Isi Bot Token & Chat ID Telegram di menu pengaturan (Roda Gigi) dahulu!');
+          setShowConfig(true);
+          return;
+        }
+        // Dibuat dari input tanggal+jam apa adanya (waktu lokal browser toko) supaya jadwal
+        // pengingat "1 jam sebelum pickup" di server tetap akurat sesuai jam toko setempat.
+        const pickupAt = new Date(`${preOrderForm.pickupTanggal}T${preOrderForm.pickupJam}:00`).getTime();
+        if (!pickupAt || isNaN(pickupAt)) { showToast('⚠️ Tanggal/jam pickup tidak valid.'); return; }
+
+        setIsSavingPreOrder(true);
+        try {
+          const now = Date.now();
+          // Upload bukti ke R2 dulu — database cuma menyimpan URL & key-nya, bukan base64 mentah,
+          // supaya storage tetap ringan (sama seperti Foto Rijek).
+          const { url: buktiUrl, key: buktiKeyR2 } = await uploadMediaToR2(preOrderForm.buktiPreview, `preOrders/${storeBase}`, 'jpg');
+          const payload = {
+            id: now.toString(),
+            tanggalPesanan: preOrderForm.tanggalPesanan,
+            namaPemesan: preOrderForm.namaPemesan.trim(),
+            isiPesanan: preOrderForm.isiPesanan.trim(),
+            bukti: buktiUrl,
+            buktiKey: buktiKeyR2,
+            pickupTanggal: preOrderForm.pickupTanggal,
+            pickupJam: preOrderForm.pickupJam,
+            pickupAt,
+            metodePickup: preOrderForm.metodePickup,
+            // reminderSent: dipakai server (cron) untuk menandai pengingat "1 jam sebelum pickup"
+            // sudah terkirim ke grup Telegram, supaya tidak dikirim berulang kali.
+            reminderSent: false,
+            createdAt: now,
+          };
+          // Kirim langsung ke grup Telegram sekarang juga (foto bukti + detail pesanan jadi caption)
+          await sendPhotoToTelegram(preOrderForm.buktiPreview, buildPreOrderCaption(payload));
+          // Simpan ke database — dipakai juga oleh server untuk pengingat otomatis 1 jam sebelum pickup
+          await restSet(db.ref(`${storeBase}/preOrders/` + now), payload);
+          showToast('Pre Order tersimpan & terkirim ke grup Telegram! 🎉');
+          setPreOrderList(prev => [...prev, { ...payload, firebaseKey: now.toString() }].sort((a, b) => (a.pickupAt || 0) - (b.pickupAt || 0)));
+          handleResetPreOrderForm();
+        } catch (error) {
+          console.error(error);
+          const detail = (error && error.message === 'NO_CONFIG')
+            ? 'Bot Token/Chat ID Telegram belum diisi.'
+            : 'Gagal mengirim/menyimpan Pre Order. Cek koneksi internet.';
+          showToast(`⚠️ ${detail}`);
+        } finally {
+          setIsSavingPreOrder(false);
+        }
+      };
+
+      const handleResetPreOrderForm = () => {
+        setPreOrderForm(getEmptyPreOrderForm());
+      };
+
+      const handleDeletePreOrder = async (firebaseKey) => {
+        try {
+          showToast('Menghapus Pre Order... 🗑️');
+          await restRemove(db.ref(`${storeBase}/preOrders/` + firebaseKey));
+          showToast('Pre Order berhasil dihapus.');
+          setPreOrderList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
+        } catch (error) {
+          console.error('Gagal menghapus Pre Order:', error);
+          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
+          showToast(`⚠️ Gagal menghapus Pre Order: ${detail}`);
+        }
+      };
+
       // Kelompokkan foto berdasarkan kategori, lengkap dengan total jumlah
       const groupWasteFotosByCategory = (list) => {
         const groups = {};
@@ -5137,7 +5630,7 @@ Daily inventory done✅
       };
 
       // Kirim 1 foto + caption ke Telegram (sendPhoto). Dipakai bersama oleh Foto
-      // Rijek/Waste maupun Laporan Suhu.
+      // Rijek/Waste dan fitur pengiriman foto lainnya.
       const sendPhotoToTelegram = async (base64DataUrl, caption) => {
         // .trim() PENTING: Bot Token / Chat ID yang di-copy-paste dari Telegram sering
         // membawa spasi atau baris baru tak terlihat di awal/akhir. Kalau tidak dibuang,
@@ -5278,240 +5771,6 @@ Daily inventory done✅
         }
       };
 
-      // ==========================================
-      // LAPORAN SUHU - LOGIKA
-      // ==========================================
-
-      // Tambah 1 atau banyak foto sekaligus (kamera hanya 1 per pemanggilan, galeri bisa banyak via atribut "multiple").
-      // Tiap foto dicatat timestamp saat itu juga (waktu diambil/ditambahkan ke form).
-      const handleSuhuFotoFileChange = async (e) => {
-        const files = Array.from(e.target.files || []);
-        if (files.length === 0) return;
-        if (files.some(f => !f.type.startsWith('image/'))) {
-          showToast('⚠️ Semua file harus berupa foto/gambar.');
-          e.target.value = '';
-          return;
-        }
-        // Guard awal: file mentah super besar (mis. hasil kamera 48MP) bisa bikin HP nge-lag
-        if (files.some(f => f.size > 25 * 1024 * 1024)) {
-          showToast('⚠️ Ada foto berukuran terlalu besar (maks 25MB per foto). Coba foto lain.');
-          e.target.value = '';
-          return;
-        }
-        setIsCompressingSuhuFoto(true);
-        try {
-          const newFotos = [];
-          const steps = [
-            { maxWidth: 900, quality: 0.65 },
-            { maxWidth: 700, quality: 0.5 },
-            { maxWidth: 550, quality: 0.4 },
-            { maxWidth: 400, quality: 0.35 },
-          ];
-          for (let i = 0; i < files.length; i++) {
-            let compressed = null;
-            let sizeKB = Infinity;
-            for (const step of steps) {
-              compressed = await compressImageFile(files[i], step.maxWidth, step.quality);
-              sizeKB = estimateBase64SizeKB(compressed);
-              if (sizeKB <= 300) break; // sudah cukup ringan, tidak perlu kompres lebih jauh
-            }
-            // Tambahkan offset ms tiap foto supaya waktu tiap foto tetap berurutan & unik walau dipilih bersamaan dari galeri
-            newFotos.push({ foto: compressed, timestamp: Date.now() + i });
-          }
-          setSuhuForm(prev => ({ ...prev, fotos: [...prev.fotos, ...newFotos] }));
-          showToast(`${newFotos.length} foto siap ditambahkan 📸`);
-        } catch (error) {
-          console.error(error);
-          showToast('Gagal memproses salah satu foto. Pastikan formatnya JPG/PNG lalu coba lagi.');
-        } finally {
-          setIsCompressingSuhuFoto(false);
-          e.target.value = ''; // reset supaya file/kamera yang sama bisa dipilih ulang
-        }
-      };
-
-      const handleRemoveSuhuFoto = (idx) => {
-        setSuhuForm(prev => ({ ...prev, fotos: prev.fotos.filter((_, i) => i !== idx) }));
-      };
-
-      const handleResetSuhuForm = () => {
-        setSuhuForm(getEmptySuhuForm());
-      };
-
-      // Escape karakter spesial Telegram Markdown (legacy): _ * ` [ ]
-      // PENTING: caption suhu dikirim dengan parse_mode 'Markdown'. Jika field bebas
-      // (nama Store / Tipe Store) mengandung salah satu karakter ini TANPA pasangan
-      // yang lengkap (mis. "Toko A_1", "Green*Pramuka"), Telegram akan MENOLAK seluruh
-      // pesan dengan error "can't parse entities" — laporan tersimpan ke Cloud tapi
-      // gagal terkirim ke Telegram. Escaping ini mencegah itu.
-      const escapeTelegramMarkdown = (text) => {
-        if (text === null || text === undefined) return '';
-        return String(text).replace(/([_*`\[])/g, '\\$1');
-      };
-
-      // Susun teks keterangan laporan suhu, format mengikuti contoh yang diminta
-      const generateSuhuReportCaption = (form, tanggalStr) => {
-        const tanggalLabel = formatIndonesianDate(tanggalStr || new Date().toISOString().split('T')[0]);
-        let caption = `*LAPORAN SUHU TAROBUN*\n${tanggalLabel}\n\n`;
-        caption += `Store : ${escapeTelegramMarkdown(form.store)}\n`;
-        caption += `Tipe Store : ${escapeTelegramMarkdown(form.tipeStore)}\n`;
-        caption += `Suhu bag luar tarobun setelah ${form.menit} menit : ${form.suhuLuar}°C\n`;
-        caption += `Suhu bag dalam tarobun setelah ${form.menit} menit : ${form.suhuDalam}°C\n`;
-        caption += `Suhu ruangan saat mengukur suhu Tarobun : ${form.suhuRuangan}°C`;
-        if (form.fotos && form.fotos.length > 0) {
-          const jamList = form.fotos.map((f, i) => `${i + 1}) ${new Date(f.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`).join('  ');
-          caption += `\n\nJumlah Foto: ${form.fotos.length}\nWaktu Foto: ${jamList}`;
-        }
-        return caption;
-      };
-
-
-      // Kirim foto laporan Suhu (kolase) + caption ke Telegram, dengan logika yang SAMA dengan
-      // Laporan Waste (handleSendCategoryRecapToTelegram): caption sendPhoto Telegram dibatasi
-      // ~1024 karakter. Kalau nama Store/Tipe Store panjang atau jumlah foto banyak (daftar
-      // "Waktu Foto" ikut memanjang), caption Suhu bisa melewati batas itu dan Telegram akan
-      // MENOLAK seluruh pengiriman (error "message caption is too long") — inilah yang selama
-      // ini bikin notifikasi "gagal kirim" muncul. Solusinya: kalau caption kepanjangan, kirim
-      // teks lengkap dulu lewat sendMessage (limitnya jauh lebih lega, 4096 karakter), baru foto
-      // kolase dikirim menyusul dengan caption ringkas.
-      const sendSuhuPhotoSmart = async (collageDataUrl, fullCaption, shortCaption) => {
-        const token = (config.telegramBotToken || '').trim();
-        const chatId = (config.telegramChatId || '').trim();
-        if (fullCaption.length > 1000) {
-          await fetchWithRetry(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: fullCaption, parse_mode: 'Markdown' })
-          });
-          await sendPhotoToTelegram(collageDataUrl, shortCaption);
-        } else {
-          await sendPhotoToTelegram(collageDataUrl, fullCaption);
-        }
-      };
-
-      // Simpan laporan ke Cloud lalu otomatis buat 1 kolase dari semua foto + kirim ke Telegram lengkap dengan keterangan
-      const handleSendSuhuReport = async () => {
-        if (!suhuForm.store.trim()) { showToast('⚠️ Isi nama Store terlebih dahulu.'); return; }
-        if (!suhuForm.tipeStore.trim()) { showToast('⚠️ Isi Tipe Store terlebih dahulu.'); return; }
-        if (!suhuForm.menit || numVal(suhuForm.menit) <= 0) { showToast('⚠️ Isi menit pengukuran terlebih dahulu.'); return; }
-        if (suhuForm.suhuLuar === '' || suhuForm.suhuDalam === '' || suhuForm.suhuRuangan === '') {
-          showToast('⚠️ Isi ketiga nilai suhu terlebih dahulu.');
-          return;
-        }
-        if (suhuForm.fotos.length === 0) {
-          showToast('⚠️ Ambil atau pilih minimal 1 foto terlebih dahulu.');
-          return;
-        }
-
-        setIsSendingSuhu(true);
-        try {
-          const now = Date.now();
-          const tanggal = new Date(now).toISOString().split('T')[0];
-
-          // Upload semua foto ke R2 dulu — yang disimpan ke database adalah URL & key-nya saja
-          // (bukan base64), supaya database tetap ringan. Kolase & pengiriman ke Telegram di
-          // bawah tetap pakai `suhuForm.fotos` versi base64 asli di memori, jadi tidak terpengaruh.
-          const uploadedFotos = await Promise.all(
-            suhuForm.fotos.map(async (f) => {
-              const { url, key } = await uploadMediaToR2(f.foto, `suhuReports/${storeBase}`, 'jpg');
-              return { foto: url, fotoKey: key, timestamp: f.timestamp };
-            })
-          );
-
-          const payload = {
-            id: now.toString(),
-            store: suhuForm.store.trim(),
-            tipeStore: suhuForm.tipeStore.trim(),
-            menit: numVal(suhuForm.menit),
-            suhuLuar: numVal(suhuForm.suhuLuar),
-            suhuDalam: numVal(suhuForm.suhuDalam),
-            suhuRuangan: numVal(suhuForm.suhuRuangan),
-            fotos: uploadedFotos,
-            tanggal,
-            createdAt: now
-          };
-
-          // 1. Simpan ke Cloud Firebase dulu, agar riwayat tetap tersimpan walau pengiriman Telegram gagal
-          await restSet(db.ref(`${storeBase}/suhuReports/` + now), payload);
-          setSuhuReportList(prev => [...prev, { ...payload, firebaseKey: now.toString() }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
-          setSuhuViewDate(tanggal);
-
-          // 2. Buat 1 foto kolase otomatis dari seluruh foto, lalu kirim ke Telegram lengkap dengan keterangan
-          if ((config.telegramBotToken || '').trim() && (config.telegramChatId || '').trim()) {
-            showToast('Laporan tersimpan. Menggabungkan foto & mengirim ke Telegram... ✈️');
-            const caption = generateSuhuReportCaption(suhuForm, tanggal);
-            const collageDataUrl = suhuForm.fotos.length === 1
-              ? suhuForm.fotos[0].foto
-              : await buildPhotoCollage(suhuForm.fotos.map(f => f.foto));
-            const tanggalLabel = formatIndonesianDate(tanggal);
-            const shortCaption = `*LAPORAN SUHU TAROBUN*\n${tanggalLabel}\nStore : ${escapeTelegramMarkdown(suhuForm.store)}\n(Detail lengkap ada di pesan sebelumnya)`;
-            await sendSuhuPhotoSmart(collageDataUrl, caption, shortCaption);
-            showToast('Laporan Suhu berhasil dikirim ke Telegram! 🌡️🚀');
-          } else {
-            showToast('⚠️ Laporan tersimpan ke Riwayat, tapi Bot Token & Chat ID Telegram belum diisi (menu Roda Gigi).');
-            setShowConfig(true);
-          }
-
-          handleResetSuhuForm();
-        } catch (error) {
-          console.error(error);
-          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
-          showToast(`⚠️ Laporan tersimpan ke Riwayat, tapi gagal kirim Telegram: ${detail}`);
-        } finally {
-          setIsSendingSuhu(false);
-        }
-      };
-
-      // Kirim ulang laporan suhu yang sudah tersimpan di Riwayat (misal pengiriman pertama gagal)
-      const handleResendSuhuReport = async (item) => {
-        if (!config.telegramBotToken || !config.telegramChatId) {
-          showToast('⚠️ Isi Bot Token & Chat ID Telegram di menu pengaturan (Roda Gigi) dahulu!');
-          setShowConfig(true);
-          return;
-        }
-        try {
-          showToast('Menggabungkan & mengirim ulang laporan suhu... ✈️');
-          const caption = generateSuhuReportCaption(item, item.tanggal);
-          const fotos = item.fotos || [];
-          if (fotos.length === 0) { showToast('Laporan ini tidak memiliki foto.'); return; }
-          const collageDataUrl = fotos.length === 1 ? fotos[0].foto : await buildPhotoCollage(fotos.map(f => f.foto));
-          const tanggalLabel = formatIndonesianDate(item.tanggal);
-          const shortCaption = `*LAPORAN SUHU TAROBUN*\n${tanggalLabel}\nStore : ${escapeTelegramMarkdown(item.store)}\n(Detail lengkap ada di pesan sebelumnya)`;
-          await sendSuhuPhotoSmart(collageDataUrl, caption, shortCaption);
-          showToast('Laporan Suhu berhasil dikirim ulang ke Telegram! 🚀');
-        } catch (error) {
-          console.error(error);
-          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
-          showToast(`⚠️ Gagal mengirim ulang: ${detail}`);
-        }
-      };
-
-      const handleDeleteSuhuReport = async (firebaseKey) => {
-        try {
-          showToast('Menghapus laporan suhu... 🗑️');
-          await restRemove(db.ref(`${storeBase}/suhuReports/` + firebaseKey));
-          showToast('Laporan suhu berhasil dihapus dari Riwayat.');
-          setSuhuReportList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
-        } catch (error) {
-          console.error('Gagal menghapus laporan suhu:', error);
-          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
-          showToast(`⚠️ Gagal menghapus laporan: ${detail}`);
-        }
-      };
-
-      // Daftar tanggal unik yang punya riwayat laporan suhu, terbaru di atas (untuk dropdown pilih hari)
-      const suhuAvailableDates = Array.from(new Set(suhuReportList.map(it => it.tanggal))).sort((a, b) => b.localeCompare(a));
-      const suhuReportListForViewDate = suhuReportList.filter(it => it.tanggal === suhuViewDate);
-
-      const handleSuhuViewYesterday = () => {
-        const d = new Date(suhuViewDate + 'T00:00:00');
-        d.setDate(d.getDate() - 1);
-        setSuhuViewDate(d.toISOString().split('T')[0]);
-      };
-
-      const handleSuhuViewToday = () => {
-        setSuhuViewDate(new Date().toISOString().split('T')[0]);
-      };
-
       const handleExportCSV = () => {
         let csvContent = "data:text/csv;charset=utf-8,";
         csvContent += "Tanggal,Roti Terjual (Pcs),Pendapatan (IDR),Suhu Freezer,Suhu Chiller,Dough Gagal Baking,Roti Matang Reject,Topping Taro Terpakai (KG)\n";
@@ -5624,10 +5883,14 @@ Daily inventory done✅
           )}
 
           {showOnboarding && (
-            <Onboarding
+            <TourGuide
               steps={STORE_ONBOARDING_STEPS}
               onFinish={finishStoreOnboarding}
+              onOpenMenu={setShowMenu}
             />
+          )}
+          {showMandatoryChecklist && (
+            <MandatoryChecklistModal items={MANDATORY_STORE_CHECKLIST} onAcknowledge={() => setShowMandatoryChecklist(false)} />
           )}
 
           {/* Sidebar Hamburger Menu */}
@@ -5654,42 +5917,46 @@ Daily inventory done✅
                 </div>
 
                 <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
-                  <button onClick={() => { setActiveTab('dashboard'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'dashboard' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-dashboard" onClick={() => { setActiveTab('dashboard'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'dashboard' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="trending-up" className="w-4 h-4"></i>
                     <span>Dasbor</span>
                   </button>
-                  <button onClick={() => { setActiveTab('sales'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'sales' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-sales" onClick={() => { setActiveTab('sales'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'sales' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="plus-circle" className="w-4 h-4"></i>
-                    <span>Input Penjualan</span>
+                    <span>Laporan Penjualan</span>
                   </button>
-                  <button onClick={() => { setActiveTab('inventory'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'inventory' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-inventory" onClick={() => { setActiveTab('inventory'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'inventory' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="package" className="w-4 h-4"></i>
                     <span>SO Stok</span>
                   </button>
-                  <button onClick={() => { setActiveTab('kedatangan'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'kedatangan' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-preorder" onClick={() => { setActiveTab('preorder'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'preorder' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="calendar-clock" className="w-4 h-4"></i>
+                    <span>PO</span>
+                  </button>
+                  <button data-tour="menu-bap" onClick={() => { setActiveTab('bap'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'bap' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="clipboard-check" className="w-4 h-4"></i>
+                    <span>BAP</span>
+                  </button>
+                  <button data-tour="menu-kedatangan" onClick={() => { setActiveTab('kedatangan'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'kedatangan' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="truck" className="w-4 h-4"></i>
                     <span>Datang Barang</span>
                   </button>
-                  <button onClick={() => { setActiveTab('suhu'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'suhu' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="thermometer" className="w-4 h-4"></i>
-                    <span>Laporan Suhu</span>
-                  </button>
-                  <button onClick={() => { setActiveTab('wasteFoto'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'wasteFoto' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-wasteFoto" onClick={() => { setActiveTab('wasteFoto'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'wasteFoto' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="camera" className="w-4 h-4"></i>
                     <span>Foto Rijek</span>
                     <span className="ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md">{wasteFotoList.length}</span>
                   </button>
-                  <button onClick={() => { setActiveTab('history'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'history' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-history" onClick={() => { setActiveTab('history'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'history' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="history" className="w-4 h-4"></i>
                     <span>Riwayat Laporan</span>
                     <span className="ml-auto text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded-md">{historyList.length}</span>
                   </button>
-                  <button onClick={() => { setActiveTab('sop'); setSelectedSopCategory(null); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'sop' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-sop" onClick={() => { setActiveTab('sop'); setSelectedSopCategory(null); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'sop' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="book-open" className="w-4 h-4"></i>
                     <span>Panduan SOP</span>
                     <span className="ml-auto text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded-md">{sopCategories.length}</span>
                   </button>
-                  <button onClick={() => { setActiveTab('chat'); setUnreadChat(0); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'chat' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <button data-tour="menu-chat" onClick={() => { setActiveTab('chat'); setUnreadChat(0); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'chat' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="message-circle" className="w-4 h-4"></i>
                     <span>Chat Admin</span>
                     {unreadChat > 0 && <span className="ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md">{unreadChat}</span>}
@@ -6002,7 +6269,7 @@ Daily inventory done✅
             {activeTab === 'sales' && (
               <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm space-y-6">
                 <div>
-                  <h3 className="font-bold text-slate-800 text-lg">Input Penjualan & Financials</h3>
+                  <h3 className="font-bold text-slate-800 text-lg">Laporan Penjualan & Financials</h3>
                   <p className="text-xs text-slate-500">Nilai yang kosong tidak akan dihitung, memudahkan input harian.</p>
                 </div>
 
@@ -6446,6 +6713,334 @@ Daily inventory done✅
               </div>
             )}
 
+            {/* Tab: Pre Order Pesanan */}
+            {activeTab === 'preorder' && (
+              <div className="space-y-6">
+
+                {/* Form Input Pre Order */}
+                <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm space-y-5">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Input Pre Order Pesanan</h3>
+                    <p className="text-xs text-slate-500">Catat pesanan pre order pelanggan. Data akan langsung dikirim ke grup Telegram, dan otomatis diingatkan lagi 1 jam sebelum waktu pickup.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="preorder_tanggalPesanan" className="block text-xs font-semibold text-slate-600 mb-1.5">Tanggal Pesanan</label>
+                      <input
+                        id="preorder_tanggalPesanan"
+                        type="date"
+                        value={preOrderForm.tanggalPesanan}
+                        onChange={(e) => setPreOrderForm({ ...preOrderForm, tanggalPesanan: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="preorder_namaPemesan" className="block text-xs font-semibold text-slate-600 mb-1.5">Nama Pemesan</label>
+                      <input
+                        id="preorder_namaPemesan"
+                        type="text"
+                        value={preOrderForm.namaPemesan}
+                        onChange={(e) => setPreOrderForm({ ...preOrderForm, namaPemesan: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                        placeholder="Contoh: Bu Sari"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="preorder_isiPesanan" className="block text-xs font-semibold text-slate-600 mb-1.5">Isi Pesanan</label>
+                    <textarea
+                      id="preorder_isiPesanan"
+                      rows={3}
+                      value={preOrderForm.isiPesanan}
+                      onChange={(e) => setPreOrderForm({ ...preOrderForm, isiPesanan: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      placeholder={"Contoh:\n- Taro Original x2\n- Coklat Lava x1"}
+                    ></textarea>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="preorder_pickupTanggal" className="block text-xs font-semibold text-slate-600 mb-1.5">Tanggal Pickup</label>
+                      <input
+                        id="preorder_pickupTanggal"
+                        type="date"
+                        value={preOrderForm.pickupTanggal}
+                        onChange={(e) => setPreOrderForm({ ...preOrderForm, pickupTanggal: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="preorder_pickupJam" className="block text-xs font-semibold text-slate-600 mb-1.5">Jam Pickup</label>
+                      <input
+                        id="preorder_pickupJam"
+                        type="time"
+                        value={preOrderForm.pickupJam}
+                        onChange={(e) => setPreOrderForm({ ...preOrderForm, pickupJam: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Metode Pickup */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-2">Metode Pickup</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setPreOrderForm({ ...preOrderForm, metodePickup: 'ambilSendiri' })}
+                        className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${preOrderForm.metodePickup === 'ambilSendiri' ? 'bg-purple-600 text-white border-purple-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
+                      >
+                        <i data-lucide="user-check" className="w-4 h-4"></i>
+                        <span>Ambil Sendiri</span>
+                      </button>
+                      <button
+                        onClick={() => setPreOrderForm({ ...preOrderForm, metodePickup: 'ojol' })}
+                        className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${preOrderForm.metodePickup === 'ojol' ? 'bg-purple-600 text-white border-purple-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
+                      >
+                        <i data-lucide="bike" className="w-4 h-4"></i>
+                        <span>Ojek Online</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Bukti Pembayaran & Struk */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-2">Bukti Pembayaran & Struk</label>
+                    {preOrderForm.buktiPreview ? (
+                      <div className="relative inline-block">
+                        <img src={preOrderForm.buktiPreview} alt="Preview Bukti Bayar" className="w-40 h-40 object-cover rounded-xl border border-slate-200 shadow-sm" />
+                        <button
+                          onClick={() => setPreOrderForm({ ...preOrderForm, buktiPreview: null })}
+                          className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1.5 shadow-md hover:bg-rose-700"
+                          title="Hapus foto"
+                        >
+                          <i data-lucide="x" className="w-3.5 h-3.5"></i>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-slate-300 rounded-xl py-6 cursor-pointer hover:bg-slate-50 transition-all">
+                          <i data-lucide="camera" className="w-6 h-6 text-purple-700"></i>
+                          <span className="text-xs font-bold text-slate-600">Foto Langsung</span>
+                          <input type="file" accept="image/*" capture="environment" onChange={handleBuktiFotoFileChange} className="hidden" />
+                        </label>
+                        <label className="flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-slate-300 rounded-xl py-6 cursor-pointer hover:bg-slate-50 transition-all">
+                          <i data-lucide="image" className="w-6 h-6 text-indigo-700"></i>
+                          <span className="text-xs font-bold text-slate-600">Pilih Galeri</span>
+                          <input type="file" accept="image/*" onChange={handleBuktiFotoFileChange} className="hidden" />
+                        </label>
+                      </div>
+                    )}
+                    {isCompressingBukti && <p className="text-xs text-slate-400 mt-2">Memproses foto...</p>}
+                  </div>
+
+                  <button
+                    onClick={handleSavePreOrder}
+                    disabled={isSavingPreOrder}
+                    className="w-full bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
+                  >
+                    <i data-lucide="send" className="w-4 h-4"></i>
+                    <span>{isSavingPreOrder ? 'Mengirim...' : 'Simpan & Kirim ke Telegram'}</span>
+                  </button>
+                </div>
+
+                {/* Daftar Pre Order Mendatang */}
+                <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm">
+                  <h3 className="font-bold text-slate-800 text-base mb-3">Daftar Pre Order</h3>
+                  {preOrderList.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-6">Belum ada Pre Order tersimpan.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {preOrderList.map(po => (
+                        <div key={po.firebaseKey} className="flex items-start justify-between gap-3 border border-slate-100 rounded-xl p-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-sm text-slate-800 truncate">{po.namaPemesan}</p>
+                            <p className="text-xs text-slate-500 whitespace-pre-line">{po.isiPesanan}</p>
+                            <p className="text-[11px] text-slate-400 mt-1">
+                              Pickup: {po.pickupTanggal} • {po.pickupJam} • {po.metodePickup === 'ojol' ? 'Ojek Online' : 'Ambil Sendiri'}
+                            </p>
+                            <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${po.reminderSent ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                              {po.reminderSent ? '✓ Sudah diingatkan' : 'Menunggu pengingat H-1 jam'}
+                            </span>
+                          </div>
+                          <button onClick={() => handleDeletePreOrder(po.firebaseKey)} className="text-rose-500 shrink-0" title="Hapus">
+                            <i data-lucide="trash-2" className="w-4 h-4"></i>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Tab: BAP (Laporan Selisih Transaksi) */}
+            {activeTab === 'bap' && (
+              <div className="space-y-6">
+
+                <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm space-y-6">
+                  <div className="flex justify-between items-start gap-3">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-lg">Input Laporan BAP</h3>
+                      <p className="text-xs text-slate-500">Catat selisih nominal antara POS dengan channel pembayaran/pesan-antar, lalu kirim ke Telegram.</p>
+                    </div>
+                    <button
+                      onClick={handleResetBapForm}
+                      className="text-xs text-rose-600 font-bold border border-rose-100 bg-rose-50 px-3 py-1.5 rounded-lg hover:bg-rose-100 whitespace-nowrap"
+                    >
+                      Reset Form
+                    </button>
+                  </div>
+
+                  {/* Outlet (otomatis dari sesi login) & Tanggal */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">Outlet</label>
+                      <div className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-700 font-semibold">
+                        {storeName || storeId}
+                      </div>
+                    </div>
+                    <div>
+                      <label htmlFor="tanggal-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Tanggal</label>
+                      <input
+                        id="tanggal-bap"
+                        type="date"
+                        value={bapForm.tanggal}
+                        onChange={(e) => setBapForm({ ...bapForm, tanggal: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-slate-50"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Transaksi */}
+                  <div>
+                    <label htmlFor="transaksi-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Transaksi</label>
+                    <select
+                      id="transaksi-bap"
+                      value={bapForm.transaksi}
+                      onChange={(e) => setBapForm({ ...bapForm, transaksi: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                    >
+                      {BAP_TRANSAKSI_OPTIONS.map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Nominal POS & Nominal Channel */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="nominal-pos-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Nominal POS (Rp)</label>
+                      <input
+                        id="nominal-pos-bap"
+                        type="number"
+                        value={bapForm.nominalPos}
+                        onChange={(e) => setBapForm({ ...bapForm, nominalPos: e.target.value })}
+                        placeholder="0"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="nominal-channel-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Nominal {bapForm.transaksi} (Rp)</label>
+                      <input
+                        id="nominal-channel-bap"
+                        type="number"
+                        value={bapForm.nominalChannel}
+                        onChange={(e) => setBapForm({ ...bapForm, nominalChannel: e.target.value })}
+                        placeholder="0"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Selisih (otomatis, tidak bisa diedit) */}
+                  <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${bapSelisih > 0 ? 'bg-rose-50 border border-rose-100' : 'bg-emerald-50 border border-emerald-100'}`}>
+                    <span className={`text-xs font-bold ${bapSelisih > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>Selisih</span>
+                    <span className={`text-sm font-extrabold ${bapSelisih > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>Rp. {bapSelisih.toLocaleString('id-ID')}</span>
+                  </div>
+
+                  {/* Keterangan (otomatis terisi, tetap bisa diedit bebas) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label htmlFor="keterangan-bap" className="block text-xs font-semibold text-slate-600">Keterangan</label>
+                      {!bapKeteranganAuto && (
+                        <button onClick={handleResetBapKeteranganOtomatis} className="text-[10px] font-bold text-purple-700 hover:underline">
+                          Isi Otomatis
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      id="keterangan-bap"
+                      value={bapForm.keterangan}
+                      onChange={(e) => handleBapKeteranganChange(e.target.value)}
+                      rows={2}
+                      placeholder="Contoh: Selisih Rp. 200 dikarenakan sistem pada POS."
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                    />
+                  </div>
+
+                  {/* Preview teks yang akan dikirim ke Telegram */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Preview Laporan</p>
+                    <pre className="text-xs text-slate-700 whitespace-pre-wrap font-sans">{generateBapReportString(bapForm)}</pre>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={handleSaveBap}
+                      disabled={isSavingBap}
+                      className="bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-xs sm:text-sm"
+                    >
+                      <i data-lucide={isSavingBap ? 'loader' : 'save'} className={`w-4 h-4 ${isSavingBap ? 'animate-spin' : ''}`}></i>
+                      <span>{isSavingBap ? 'Menyimpan...' : 'Simpan ke Riwayat'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleSendBapToTelegram(bapForm)}
+                      className="bg-sky-500 hover:bg-sky-400 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-xs sm:text-sm"
+                    >
+                      <i data-lucide="send" className="w-4 h-4"></i>
+                      <span>Kirim Telegram</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Riwayat BAP */}
+                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+                  <div className="pb-3 border-b border-slate-100">
+                    <h3 className="font-bold text-slate-800 text-base">Riwayat BAP</h3>
+                    <p className="text-xs text-slate-500">Tersimpan di Cloud, bisa dibuka & dicek kembali kapan saja.</p>
+                  </div>
+
+                  {bapHistoryList.length === 0 ? (
+                    <div className="text-center py-10 text-slate-600">
+                      <i data-lucide="clipboard-check" className="w-10 h-10 mx-auto mb-2 text-slate-600"></i>
+                      <p className="text-sm font-medium">Belum ada riwayat laporan BAP.</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
+                      {bapHistoryList.map(item => (
+                        <div key={item.firebaseKey} className="py-3 flex justify-between items-center gap-2">
+                          <div className="min-w-0">
+                            <h4 className="font-bold text-slate-700 text-sm">{formatIndonesianDate(item.tanggal)} · {item.transaksi}</h4>
+                            <p className="text-xs text-slate-600 truncate">
+                              POS Rp {numVal(item.nominalPos).toLocaleString('id-ID')} vs {item.transaksi} Rp {numVal(item.nominalChannel).toLocaleString('id-ID')}
+                              {numVal(item.selisih) > 0 && <span className="text-rose-500 font-semibold"> · Selisih Rp {numVal(item.selisih).toLocaleString('id-ID')}</span>}
+                            </p>
+                          </div>
+                          <div className="flex items-center space-x-2 flex-shrink-0">
+                            <button onClick={() => loadBapToActive(item)} className="bg-purple-50 text-purple-700 text-xs font-bold px-2.5 py-1.5 rounded-lg border border-purple-100">Buka</button>
+                            <button onClick={() => handleSendBapToTelegram(item)} className="text-sky-600 hover:bg-sky-50 p-1.5 rounded-lg border border-sky-100" title="Kirim Telegram"><i data-lucide="send" className="w-3.5 h-3.5"></i></button>
+                            <button onClick={() => handleDeleteBap(item.firebaseKey)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg border border-rose-100" title="Hapus"><i data-lucide="trash-2" className="w-4 h-4"></i></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Tab: Datang Barang */}
             {activeTab === 'kedatangan' && (
               <div className="space-y-6">
@@ -6673,246 +7268,6 @@ Daily inventory done✅
                           </div>
                         );
                       })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Tab: Laporan Suhu */}
-            {activeTab === 'suhu' && (
-              <div className="space-y-6">
-
-                {/* Form Input Laporan Suhu */}
-                <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm space-y-5">
-                  <div>
-                    <h3 className="font-bold text-slate-800 text-lg">Input Laporan Suhu</h3>
-                    <p className="text-xs text-slate-500">Catat suhu Tarobun & lampirkan foto bukti. Saat dikirim, seluruh foto otomatis digabung jadi 1 kolase lengkap dengan keterangan.</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="store" className="block text-xs font-semibold text-slate-600 mb-1.5">Store</label>
-                      <input
-                        id="store"
-                        type="text"
-                        value={suhuForm.store}
-                        onChange={(e) => setSuhuForm({ ...suhuForm, store: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                        placeholder="Contoh: Stasiun Gambir"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="tipe-store" className="block text-xs font-semibold text-slate-600 mb-1.5">Tipe Store</label>
-                      <input
-                        id="tipe-store"
-                        type="text"
-                        list="tipe-store-options"
-                        value={suhuForm.tipeStore}
-                        onChange={(e) => setSuhuForm({ ...suhuForm, tipeStore: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                        placeholder="Contoh: Public Transport"
-                      />
-                      <datalist id="tipe-store-options">
-                        {TIPE_STORE_OPTIONS.map(opt => <option key={opt} value={opt} />)}
-                      </datalist>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label htmlFor="diukur-setelah--menit" className="block text-xs font-semibold text-slate-600 mb-1.5">Diukur Setelah (menit)</label>
-                    <input
-                      id="diukur-setelah--menit"
-                      type="number"
-                      value={suhuForm.menit}
-                      onChange={(e) => setSuhuForm({ ...suhuForm, menit: e.target.value })}
-                      className="w-full sm:w-40 px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                      placeholder="30"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label htmlFor="suhu-bag-luar---c" className="block text-xs font-semibold text-slate-600 mb-1.5">Suhu Bag Luar (°C)</label>
-                      <input
-                        id="suhu-bag-luar---c"
-                        type="number"
-                        step="0.1"
-                        value={suhuForm.suhuLuar}
-                        onChange={(e) => setSuhuForm({ ...suhuForm, suhuLuar: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                        placeholder="35.8"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="suhu-bag-dalam---c" className="block text-xs font-semibold text-slate-600 mb-1.5">Suhu Bag Dalam (°C)</label>
-                      <input
-                        id="suhu-bag-dalam---c"
-                        type="number"
-                        step="0.1"
-                        value={suhuForm.suhuDalam}
-                        onChange={(e) => setSuhuForm({ ...suhuForm, suhuDalam: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                        placeholder="34.1"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="suhu-ruangan---c" className="block text-xs font-semibold text-slate-600 mb-1.5">Suhu Ruangan (°C)</label>
-                      <input
-                        id="suhu-ruangan---c"
-                        type="number"
-                        step="0.1"
-                        value={suhuForm.suhuRuangan}
-                        onChange={(e) => setSuhuForm({ ...suhuForm, suhuRuangan: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                        placeholder="32.8"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Ambil / Pilih Foto - bisa banyak sekaligus, tiap foto punya timestamp sendiri */}
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-2">Foto Bukti Suhu ({suhuForm.fotos.length})</label>
-                    <div className="grid grid-cols-2 gap-3 mb-3">
-                      <label className="flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-slate-300 rounded-xl py-6 cursor-pointer hover:bg-slate-50 transition-all">
-                        <i data-lucide="camera" className="w-6 h-6 text-purple-700"></i>
-                        <span className="text-xs font-bold text-slate-600">Foto Langsung</span>
-                        <input type="file" accept="image/*" capture="environment" onChange={handleSuhuFotoFileChange} className="hidden" />
-                      </label>
-                      <label className="flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-slate-300 rounded-xl py-6 cursor-pointer hover:bg-slate-50 transition-all">
-                        <i data-lucide="image" className="w-6 h-6 text-indigo-700"></i>
-                        <span className="text-xs font-bold text-slate-600">Pilih Galeri (bisa banyak)</span>
-                        <input type="file" accept="image/*" multiple onChange={handleSuhuFotoFileChange} className="hidden" />
-                      </label>
-                    </div>
-
-                    {isCompressingSuhuFoto && (
-                      <p className="text-[11px] text-purple-600 font-semibold mb-2 flex items-center gap-1">
-                        <i data-lucide="loader" className="w-3.5 h-3.5 animate-spin"></i> Mengompres foto...
-                      </p>
-                    )}
-
-                    {suhuForm.fotos.length > 0 && (
-                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                        {suhuForm.fotos.map((f, idx) => (
-                          <div key={idx} className="relative">
-                            <img src={f.foto} alt={`Foto ${idx + 1}`} className="w-full h-20 object-cover rounded-lg border border-slate-200" />
-                            <p className="text-[9px] text-slate-500 text-center mt-0.5">{new Date(f.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</p>
-                            <button onClick={() => handleRemoveSuhuFoto(idx)} className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white rounded-full p-1 shadow-md hover:bg-rose-700" title="Hapus foto">
-                              <i data-lucide="x" className="w-3 h-3"></i>
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-100">
-                    <button
-                      onClick={handleSendSuhuReport}
-                      disabled={isSendingSuhu || isCompressingSuhuFoto}
-                      className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
-                    >
-                      <i data-lucide={isSendingSuhu ? 'loader' : 'send'} className={`w-4 h-4 ${isSendingSuhu ? 'animate-spin' : ''}`}></i>
-                      <span>{isSendingSuhu ? 'Mengirim...' : 'Kirim Laporan Suhu'}</span>
-                    </button>
-                    <p className="text-[11px] text-slate-600 text-center mt-2">Foto akan digabung otomatis jadi 1 kolase + keterangan lalu dikirim ke Telegram, dan tersimpan ke Riwayat.</p>
-                  </div>
-                </div>
-
-                {/* Riwayat Laporan Suhu */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
-                  <div className="pb-3 border-b border-slate-100">
-                    <h3 className="font-bold text-slate-800 text-base">Riwayat Laporan Suhu</h3>
-                    <p className="text-xs text-slate-500">Laporan suhu tersimpan otomatis di Cloud, lengkap dengan seluruh foto & timestamp-nya.</p>
-                  </div>
-
-                  {/* Navigasi Tanggal Riwayat */}
-                  <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-                    <button
-                      onClick={handleSuhuViewYesterday}
-                      className="flex items-center gap-1 bg-white border border-slate-200 text-slate-600 text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-slate-100"
-                    >
-                      <i data-lucide="chevron-left" className="w-3.5 h-3.5"></i>
-                      <span>Hari Sebelumnya</span>
-                    </button>
-                    <input
-                      type="date"
-                      value={suhuViewDate}
-                      onChange={(e) => setSuhuViewDate(e.target.value)}
-                      className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold bg-white"
-                    />
-                    <button
-                      onClick={handleSuhuViewToday}
-                      className="bg-purple-50 text-purple-700 border border-purple-100 text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-purple-100"
-                    >
-                      Hari Ini
-                    </button>
-                    {suhuAvailableDates.length > 0 && (
-                      <select
-                        value=""
-                        onChange={(e) => { if (e.target.value) setSuhuViewDate(e.target.value); }}
-                        className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-500 flex-1 min-w-[140px]"
-                      >
-                        <option value="">Lompat ke tanggal lain...</option>
-                        {suhuAvailableDates.map(d => (
-                          <option key={d} value={d}>{formatIndonesianDate(d)}</option>
-                        ))}
-                      </select>
-                    )}
-                    <span className="text-xs font-bold text-purple-800 ml-auto">
-                      Menampilkan: {formatIndonesianDate(suhuViewDate)}
-                    </span>
-                  </div>
-
-                  {suhuReportListForViewDate.length === 0 ? (
-                    <p className="text-xs text-slate-600 text-center py-8">Belum ada laporan suhu untuk tanggal {formatIndonesianDate(suhuViewDate)}.</p>
-                  ) : (
-                    <div className="space-y-4">
-                      {suhuReportListForViewDate.map(item => (
-                        <div key={item.firebaseKey} className="rounded-xl border border-slate-200 p-4 bg-slate-50/40">
-                          <div className="flex justify-between items-start gap-2 mb-3">
-                            <div>
-                              <p className="font-bold text-sm text-slate-800">{item.store} <span className="font-normal text-slate-600">• {item.tipeStore}</span></p>
-                              <p className="text-[10px] text-slate-600">{new Date(item.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</p>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <button onClick={() => handleResendSuhuReport(item)} className="text-sky-600 hover:bg-sky-50 p-1.5 rounded-lg border border-sky-100" title="Kirim ke Telegram">
-                                <i data-lucide="send" className="w-3.5 h-3.5"></i>
-                              </button>
-                              <button onClick={() => handleDeleteSuhuReport(item.firebaseKey)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg border border-rose-100" title="Hapus">
-                                <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-2 mb-3">
-                            <div className="bg-white rounded-lg border border-slate-200 p-2 text-center">
-                              <p className="text-[9px] text-slate-600">Bag Luar ({item.menit}mnt)</p>
-                              <p className="font-bold text-sm text-slate-700">{item.suhuLuar}°C</p>
-                            </div>
-                            <div className="bg-white rounded-lg border border-slate-200 p-2 text-center">
-                              <p className="text-[9px] text-slate-600">Bag Dalam ({item.menit}mnt)</p>
-                              <p className="font-bold text-sm text-slate-700">{item.suhuDalam}°C</p>
-                            </div>
-                            <div className="bg-white rounded-lg border border-slate-200 p-2 text-center">
-                              <p className="text-[9px] text-slate-600">Ruangan</p>
-                              <p className="font-bold text-sm text-slate-700">{item.suhuRuangan}°C</p>
-                            </div>
-                          </div>
-
-                          {item.fotos && item.fotos.length > 0 && (
-                            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                              {item.fotos.map((f, idx) => (
-                                <div key={idx}>
-                                  <img src={f.foto} alt={`Foto ${idx + 1}`} className="w-full h-16 object-cover rounded-lg border border-slate-200" />
-                                  <p className="text-[9px] text-slate-600 text-center mt-0.5">{new Date(f.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</p>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
                     </div>
                   )}
                 </div>
@@ -7196,6 +7551,22 @@ Daily inventory done✅
                         <span>Panduan SOP</span>
                       </h2>
                       <p className="text-xs text-slate-500 mt-1">Pilih kategori untuk melihat langkah-langkah SOP beserta foto/video pendukung.</p>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <button
+                        onClick={() => setShowOnboarding(true)}
+                        className="flex-1 flex items-center justify-center gap-2 bg-purple-50 text-purple-700 border border-purple-100 text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-purple-100 transition-all"
+                      >
+                        <i data-lucide="compass" className="w-4 h-4"></i>
+                        <span>Mulai Tur Panduan Menu</span>
+                      </button>
+                      <button
+                        onClick={() => setShowMandatoryChecklist(true)}
+                        className="flex-1 flex items-center justify-center gap-2 bg-rose-50 text-rose-700 border border-rose-100 text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-rose-100 transition-all"
+                      >
+                        <i data-lucide="alert-triangle" className="w-4 h-4"></i>
+                        <span>Lihat Hal yang Wajib Diingat</span>
+                      </button>
                     </div>
                     {sopCategories.length === 0 ? (
                       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center text-slate-600 text-sm">Belum ada Panduan SOP untuk toko ini.</div>

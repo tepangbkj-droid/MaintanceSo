@@ -1337,8 +1337,8 @@ const { useState, useEffect } = React;
       { icon: 'trending-up', title: 'Dasbor', desc: 'Menampilkan ringkasan penjualan, pemakaian bahan baku, dan performa toko hari ini.', target: '[data-tour="menu-dashboard"]' },
       { icon: 'plus-circle', title: 'Laporan Penjualan', desc: 'Catat jumlah roti & minuman terjual, nilai transaksi, serta suhu freezer/chiller setiap hari.', target: '[data-tour="menu-sales"]' },
       { icon: 'package', title: 'SO Stok', desc: 'Catat stok opname bahan baku dan barang packaging yang tersisa.', target: '[data-tour="menu-inventory"]' },
-      { icon: 'calendar-clock', title: 'PO', desc: 'Catat pesanan pre order pelanggan (bukti bayar, isi pesanan, jadwal pickup) dan kirim ke grup Telegram — otomatis diingatkan 1 jam sebelum waktu pickup.', target: '[data-tour="menu-preorder"]' },
-      { icon: 'clipboard-check', title: 'BAP', desc: 'Laporkan selisih nominal antara POS dengan channel pembayaran (EDC/QRIS/Gofood/GrabFood/ShopeeFood) dan kirim ke Telegram.', target: '[data-tour="menu-bap"]' },
+      { icon: 'calendar-clock', title: 'PO (Pre Order)', desc: 'Catat pesanan pre order pelanggan (bukti bayar, isi pesanan, jadwal pickup) dan kirim ke grup Telegram — otomatis diingatkan 1 jam sebelum waktu pickup.', target: '[data-tour="menu-preorder"]' },
+      { icon: 'clipboard-check', title: 'BAP (Berita Acara Penyesuaian)', desc: 'Laporkan selisih nominal antara POS dengan channel pembayaran (EDC/QRIS/Gofood/GrabFood/ShopeeFood) dan kirim ke Telegram.', target: '[data-tour="menu-bap"]' },
       { icon: 'truck', title: 'Datang Barang', desc: 'Catat barang yang baru datang dari gudang pusat, termasuk barang yang tidak sesuai.', target: '[data-tour="menu-kedatangan"]' },
       { icon: 'camera', title: 'Foto Rijek', desc: 'Unggah foto bun rijek, barang rijek, atau waste sebagai bukti dan dikirim ke Telegram.', target: '[data-tour="menu-wasteFoto"]' },
       { icon: 'history', title: 'Riwayat Laporan', desc: 'Lihat & unduh riwayat laporan harian yang tersimpan di Cloud.', target: '[data-tour="menu-history"]' },
@@ -5931,11 +5931,11 @@ Daily inventory done✅
                   </button>
                   <button data-tour="menu-preorder" onClick={() => { setActiveTab('preorder'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'preorder' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="calendar-clock" className="w-4 h-4"></i>
-                    <span>PO</span>
+                    <span>PO (Pre Order)</span>
                   </button>
                   <button data-tour="menu-bap" onClick={() => { setActiveTab('bap'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'bap' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="clipboard-check" className="w-4 h-4"></i>
-                    <span>BAP</span>
+                    <span>BAP (Berita Acara Penyesuaian)</span>
                   </button>
                   <button data-tour="menu-kedatangan" onClick={() => { setActiveTab('kedatangan'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'kedatangan' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="truck" className="w-4 h-4"></i>

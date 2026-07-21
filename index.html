@@ -3744,6 +3744,14 @@ const { useState, useEffect } = React;
       // Semua data toko ini disimpan terpisah di bawah node stores/{storeId}/...
       // sehingga setiap cabang store memiliki data sendiri-sendiri, terisolasi oleh Firebase Security Rules.
       const storeBase = `stores/${storeId}`;
+      // BUGFIX (2026-07-22): fungsi ini dipakai di 4 tempat (laporan penjualan, stok,
+      // kedatangan barang, BAP) untuk meng-escape karakter spesial Telegram Markdown
+      // (_ * ` [ ) supaya tidak merusak format pesan yang dikirim ke bot. Sebelumnya
+      // fungsi ini TIDAK PERNAH didefinisikan di file ini sama sekali -> ReferenceError
+      // "escapeTelegramMarkdown is not defined" -> seluruh StoreApp crash (layar putih)
+      // begitu komponen ini dirender. Pola escape-nya sama seperti escapeMdWebUpdate
+      // yang dipakai di AdminApp.
+      const escapeTelegramMarkdown = (text) => String(text === null || text === undefined ? '' : text).replace(/([_*`\[])/g, '\\$1');
   const [activeTab, setActiveTab] = useState('dashboard');
       const [notification, setNotification] = useState(null);
       const [showConfig, setShowConfig] = useState(false);

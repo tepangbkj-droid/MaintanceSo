@@ -272,6 +272,15 @@
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
+  <!-- ===== DEBUG SEMENTARA (2026-07-22): Eruda console overlay =====
+       Supaya bisa lihat pesan error jaringan/CORS ASLI langsung di layar HP, tanpa
+       perlu komputer/USB debugging. HAPUS blok <script> ini lagi kalau sudah selesai
+       debug (cari komentar "HAPUS SAMPAI SINI" di bawah), supaya tidak nempel terus
+       di app produksi. -->
+  <script src="https://unpkg.com/eruda"></script>
+  <script>eruda.init();</script>
+  <!-- HAPUS SAMPAI SINI -->
+
 
   <div id="root"></div>
 

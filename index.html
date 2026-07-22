@@ -33,7 +33,7 @@
 <!-- Firebase SDK dihapus — sudah diganti Cloudflare Worker (lihat shim di bawah) -->
 
 <!-- Lucide -->
-<script src="https://unpkg.com/lucide@latest" defer></script>
+<script src="https://unpkg.com/lucide@latest" defer crossorigin="anonymous"></script>
 
 <!-- Tipografi: Inter (teks/UI/data, sangat jelas di ukuran kecil) + Plus Jakarta Sans (judul/heading,
      lebih berkarakter & modern). Dimuat dari unpkg (sudah di-whitelist di CSP di atas) supaya tidak
@@ -106,6 +106,18 @@
 
   <!-- Animasi untuk pop-up notifikasi Update Sistem -->
   <style>
+    /* ========================================== */
+    /* PENGAMAN RESPONSIF GLOBAL (2026-07-22) */
+    /* Mencegah layar "kepotong"/geser horizontal di HP dengan lebar layar kecil
+       (mis. 320-360px) — biasanya disebabkan 1 elemen saja yang lebih lebar dari
+       layar (teks panjang tanpa wrap, gambar tanpa max-width, dsb) yang memaksa
+       SELURUH halaman jadi bisa di-scroll ke samping. */
+    html, body { max-width: 100%; overflow-x: hidden; }
+    /* Teks panjang tanpa spasi (mis. link, isi pesanan PO, catatan BAP) dipaksa
+       pindah baris alih-alih mendorong lebar layout melebar ke samping. */
+    * { overflow-wrap: break-word; word-break: break-word; }
+    img, video { max-width: 100%; height: auto; }
+
     @keyframes tarobunFadeIn { from { opacity: 0 } to { opacity: 1 } }
     @keyframes tarobunScaleIn { from { opacity: 0; transform: scale(0.9) } to { opacity: 1; transform: scale(1) } }
     .animate-fadeIn { animation: tarobunFadeIn 0.2s ease-out; }
@@ -272,14 +284,6 @@
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
-  <!-- ===== DEBUG SEMENTARA (2026-07-22): Eruda console overlay =====
-       Supaya bisa lihat pesan error jaringan/CORS ASLI langsung di layar HP, tanpa
-       perlu komputer/USB debugging. HAPUS blok <script> ini lagi kalau sudah selesai
-       debug (cari komentar "HAPUS SAMPAI SINI" di bawah), supaya tidak nempel terus
-       di app produksi. -->
-  <script src="https://unpkg.com/eruda"></script>
-  <script>eruda.init();</script>
-  <!-- HAPUS SAMPAI SINI -->
 
 
   <div id="root"></div>
@@ -1980,6 +1984,12 @@ const { useState, useEffect } = React;
       // ==========================================
       const [confirmDeleteReport, setConfirmDeleteReport] = useState(null); // { id, tanggal }
       const [deletingReportId, setDeletingReportId] = useState(null);
+      // FITUR BARU (2026-07-22): Admin bisa lihat & hapus riwayat PO (Pre Order) dan
+      // BAP (Berita Acara Penyesuaian) tiap toko, sama seperti riwayat laporan penjualan.
+      const [confirmDeletePreOrder, setConfirmDeletePreOrder] = useState(null); // { firebaseKey, namaPemesan }
+      const [deletingPreOrderId, setDeletingPreOrderId] = useState(null);
+      const [confirmDeleteBap, setConfirmDeleteBap] = useState(null); // { firebaseKey, tanggal }
+      const [deletingBapId, setDeletingBapId] = useState(null);
       const [confirmDeleteWasteFoto, setConfirmDeleteWasteFoto] = useState(null); // { firebaseKey, fotoKey, kategori }
       const [deletingWasteFotoKey, setDeletingWasteFotoKey] = useState(null);
       // Label ringkas kategori waste, dipakai HANYA untuk teks modal konfirmasi hapus di Panel
@@ -2336,14 +2346,18 @@ const { useState, useEffect } = React;
         const historyRef = db.ref(`stores/${storeId}/history`).limitToLast(150);
         const wasteRef = db.ref(`stores/${storeId}/wasteFotos`).limitToLast(150);
         const tgRef = db.ref(`stores/${storeId}/telegramConfig`);
+        const preOrderRef = db.ref(`stores/${storeId}/preOrders`).limitToLast(150);
+        const bapRef = db.ref(`stores/${storeId}/bapReports`).limitToLast(150);
 
         let historyList = [];
         let wasteList = [];
-        let gotHistory = false, gotWaste = false;
+        let preOrderList = [];
+        let bapList = [];
+        let gotHistory = false, gotWaste = false, gotPreOrder = false, gotBap = false;
 
         const pushUpdate = () => {
-          if (gotHistory && gotWaste) {
-            setDetailData({ historyList, wasteList });
+          if (gotHistory && gotWaste && gotPreOrder && gotBap) {
+            setDetailData({ historyList, wasteList, preOrderList, bapList });
             setDetailLoading(false);
           }
         };
@@ -2371,15 +2385,31 @@ const { useState, useEffect } = React;
           const tg = snap.val() || {};
           setTelegramForm({ botToken: tg.botToken || '', chatId: tg.chatId || '' });
         };
+        const preOrderHandler = (snap) => {
+          const data = snap.val() || {};
+          preOrderList = Object.keys(data).map(key => ({ firebaseKey: key, ...data[key] })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          gotPreOrder = true;
+          pushUpdate();
+        };
+        const bapHandler = (snap) => {
+          const data = snap.val() || {};
+          bapList = Object.keys(data).map(key => ({ firebaseKey: key, ...data[key] })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          gotBap = true;
+          pushUpdate();
+        };
 
         const unbindHistory = bindLiveValue(historyRef, historyHandler);
         const unbindWaste = bindLiveValue(wasteRef, wasteHandler);
         const unbindTg = bindLiveValue(tgRef, tgHandler);
+        const unbindPreOrder = bindLiveValue(preOrderRef, preOrderHandler);
+        const unbindBap = bindLiveValue(bapRef, bapHandler);
 
         return () => {
           unbindHistory();
           unbindWaste();
           unbindTg();
+          unbindPreOrder();
+          unbindBap();
         };
       }, [detailStore && detailStore.id]);
 
@@ -2674,7 +2704,46 @@ const { useState, useEffect } = React;
         }
       };
 
-      // Hapus SATU foto Rijek/Waste — foto aslinya tersimpan di R2 (bukan base64 di database),
+      // Hapus SATU entri Pre Order (PO) tertentu. Foto bukti bayar PO tersimpan di R2 (buktiKey),
+      // jadi selain hapus baris DB, file di R2 juga ikut dihapus permanen.
+      const handleDeleteSinglePreOrder = async () => {
+        if (!detailStore || !confirmDeletePreOrder) return;
+        setDeletingPreOrderId(confirmDeletePreOrder.firebaseKey);
+        try {
+          await restRemove(db.ref(`stores/${detailStore.id}/preOrders/${confirmDeletePreOrder.firebaseKey}`));
+          if (confirmDeletePreOrder.buktiKey) {
+            await deleteMediaFromR2(confirmDeletePreOrder.buktiKey).catch(() => {});
+          }
+          setConfirmDeletePreOrder(null);
+          showAdminToast(`🗑️ PO atas nama "${confirmDeletePreOrder.namaPemesan || '-'}" berhasil dihapus.`);
+        } catch (err) {
+          console.error('Gagal menghapus PO:', err);
+          const detail = (err && err.message) ? err.message : 'Kesalahan tidak diketahui';
+          alert(`Gagal menghapus PO: ${detail}`);
+        } finally {
+          setDeletingPreOrderId(null);
+        }
+      };
+
+      // Hapus SATU entri BAP (Berita Acara Penyesuaian) tertentu. Laporan ini tidak menyimpan
+      // foto, jadi cukup hapus baris DB-nya saja.
+      const handleDeleteSingleBap = async () => {
+        if (!detailStore || !confirmDeleteBap) return;
+        setDeletingBapId(confirmDeleteBap.firebaseKey);
+        try {
+          await restRemove(db.ref(`stores/${detailStore.id}/bapReports/${confirmDeleteBap.firebaseKey}`));
+          setConfirmDeleteBap(null);
+          showAdminToast(`🗑️ BAP tanggal ${confirmDeleteBap.tanggal} berhasil dihapus.`);
+        } catch (err) {
+          console.error('Gagal menghapus BAP:', err);
+          const detail = (err && err.message) ? err.message : 'Kesalahan tidak diketahui';
+          alert(`Gagal menghapus BAP: ${detail}`);
+        } finally {
+          setDeletingBapId(null);
+        }
+      };
+
+
       // jadi selain hapus baris DB, file di R2 juga ikut dihapus permanen lewat fotoKey supaya
       // storage tidak menumpuk sampah foto yang sudah tidak ada reference-nya di database.
       const handleDeleteWasteFoto = async () => {
@@ -3452,6 +3521,38 @@ const { useState, useEffect } = React;
             </div>
           )}
 
+          {/* Modal Konfirmasi Hapus 1 PO — FITUR BARU 2026-07-22 */}
+          {confirmDeletePreOrder && detailStore && (
+            <div className="fixed inset-0 z-[96] bg-black/50 flex items-center justify-center p-4 animate-fadeIn">
+              <div className="bg-white rounded-2xl animate-scaleIn w-full max-w-sm p-6">
+                <h3 className="font-bold text-slate-800 mb-2">Hapus PO Ini?</h3>
+                <p className="text-xs text-slate-500 mb-4">
+                  PO toko "{detailStore.name}" atas nama <b>{confirmDeletePreOrder.namaPemesan || '-'}</b> akan dihapus permanen (termasuk foto buktinya). Tindakan ini tidak bisa dibatalkan.
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => setConfirmDeletePreOrder(null)} className="flex-1 bg-slate-100 text-slate-600 font-bold py-2.5 rounded-xl text-sm">Batal</button>
+                  <button onClick={handleDeleteSinglePreOrder} disabled={!!deletingPreOrderId} className="flex-1 bg-rose-600 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{deletingPreOrderId ? 'Menghapus...' : 'Ya, Hapus'}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Konfirmasi Hapus 1 BAP — FITUR BARU 2026-07-22 */}
+          {confirmDeleteBap && detailStore && (
+            <div className="fixed inset-0 z-[96] bg-black/50 flex items-center justify-center p-4 animate-fadeIn">
+              <div className="bg-white rounded-2xl animate-scaleIn w-full max-w-sm p-6">
+                <h3 className="font-bold text-slate-800 mb-2">Hapus BAP Ini?</h3>
+                <p className="text-xs text-slate-500 mb-4">
+                  BAP toko "{detailStore.name}" tanggal <b>{confirmDeleteBap.tanggal}</b> akan dihapus permanen. Tindakan ini tidak bisa dibatalkan.
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => setConfirmDeleteBap(null)} className="flex-1 bg-slate-100 text-slate-600 font-bold py-2.5 rounded-xl text-sm">Batal</button>
+                  <button onClick={handleDeleteSingleBap} disabled={!!deletingBapId} className="flex-1 bg-rose-600 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{deletingBapId ? 'Menghapus...' : 'Ya, Hapus'}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Modal Konfirmasi Hapus 1 Foto Rijek/Waste */}
           {confirmDeleteWasteFoto && detailStore && (
             <div className="fixed inset-0 z-[96] bg-black/50 flex items-center justify-center p-4 animate-fadeIn">
@@ -3599,6 +3700,72 @@ const { useState, useEffect } = React;
                                 <i data-lucide="trash-2" className="w-3 h-3"></i>
                               </button>
                             </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Riwayat PO (Pre Order) — FITUR BARU 2026-07-22 */}
+                    <div>
+                      <h4 className="font-bold text-slate-700 text-sm mb-2">Riwayat PO (Pre Order) ({detailData.preOrderList.length})</h4>
+                      {detailData.preOrderList.length === 0 ? (
+                        <p className="text-xs text-slate-600">Belum ada PO.</p>
+                      ) : (
+                        <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto border border-slate-100 rounded-xl">
+                          {detailData.preOrderList.map((po, i) => (
+                            <details key={i} className="p-3">
+                              <summary className="cursor-pointer text-xs font-bold text-slate-700 flex justify-between items-center gap-2">
+                                <span className="truncate">{po.namaPemesan || '-'} • {po.tanggalPesanan}</span>
+                                <span className="flex items-center gap-2 shrink-0">
+                                  <span className="font-normal text-slate-500">Pickup {po.pickupTanggal} {po.pickupJam}</span>
+                                  <button
+                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDeletePreOrder({ firebaseKey: po.firebaseKey, buktiKey: po.buktiKey, namaPemesan: po.namaPemesan }); }}
+                                    className="shrink-0 p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg"
+                                    title="Hapus PO ini"
+                                  >
+                                    <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
+                                  </button>
+                                </span>
+                              </summary>
+                              <div className="mt-2 text-[11px] text-slate-500 space-y-1">
+                                <p className="whitespace-pre-wrap">{po.isiPesanan}</p>
+                                <p>Metode pickup: {po.metodePickup === 'ojol' ? 'Ojek Online' : 'Ambil Sendiri'}</p>
+                                {po.bukti && <img src={po.bukti} className="w-20 h-20 object-cover rounded-lg border border-slate-200 mt-1" />}
+                              </div>
+                            </details>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Riwayat BAP (Berita Acara Penyesuaian) — FITUR BARU 2026-07-22 */}
+                    <div>
+                      <h4 className="font-bold text-slate-700 text-sm mb-2">Riwayat BAP ({detailData.bapList.length})</h4>
+                      {detailData.bapList.length === 0 ? (
+                        <p className="text-xs text-slate-600">Belum ada BAP.</p>
+                      ) : (
+                        <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto border border-slate-100 rounded-xl">
+                          {detailData.bapList.map((b, i) => (
+                            <details key={i} className="p-3">
+                              <summary className="cursor-pointer text-xs font-bold text-slate-700 flex justify-between items-center gap-2">
+                                <span>{b.tanggal} • {b.transaksi || '-'}</span>
+                                <span className="flex items-center gap-2 shrink-0">
+                                  <span className="font-normal text-slate-500">Selisih Rp {(b.selisih || 0).toLocaleString('id-ID')}</span>
+                                  <button
+                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDeleteBap({ firebaseKey: b.firebaseKey, tanggal: b.tanggal }); }}
+                                    className="shrink-0 p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg"
+                                    title="Hapus BAP ini"
+                                  >
+                                    <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
+                                  </button>
+                                </span>
+                              </summary>
+                              <div className="mt-2 grid grid-cols-2 gap-1 text-[10px] text-slate-500">
+                                <div className="bg-slate-50 rounded px-2 py-1">POS: Rp {(b.nominalPos || 0).toLocaleString('id-ID')}</div>
+                                <div className="bg-slate-50 rounded px-2 py-1">Channel: Rp {(b.nominalChannel || 0).toLocaleString('id-ID')}</div>
+                                {b.keterangan && <div className="col-span-2 bg-slate-50 rounded px-2 py-1">{b.keterangan}</div>}
+                              </div>
+                            </details>
                           ))}
                         </div>
                       )}

@@ -7813,7 +7813,11 @@ Daily inventory done✅
           showToast(`Kolase & rekap ${catInfo.short} berhasil dikirim! 🚀`);
         } catch (error) {
           console.error(error);
-          showToast('Gagal mengirim rekap ke Telegram. Cek koneksi internet.');
+          // BUGFIX (2026-08-09): sebelumnya pesan error SELALU digeneralisir jadi "Cek koneksi
+          // internet" apa pun penyebab aslinya (mis. foto gagal dimuat ke canvas karena CORS,
+          // caption ditolak Telegram, dll), jadi penyebab sebenarnya tidak pernah terlihat oleh
+          // pengguna maupun saat debugging. Sekarang pesan asli error ikut ditampilkan.
+          showToast(`Gagal mengirim rekap ke Telegram: ${error.message || 'Cek koneksi internet.'}`);
         } finally {
           setSendingCategory(null);
         }

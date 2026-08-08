@@ -11,6 +11,10 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta name="referrer" content="strict-origin-when-cross-origin">
+  <!-- KEAMANAN (hardening, 2026-08): cegah web ini muncul di hasil pencarian Google/Bing dkk.
+       Ini aplikasi internal toko, bukan halaman publik -- tidak perlu (dan tidak boleh)
+       ke-index search engine. Dipasangkan juga dengan file robots.txt terpisah. -->
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
 
  <!-- React core -->
   <link rel="manifest" href="manifest.json">
@@ -312,6 +316,53 @@
 
   <div id="root"></div>
 
+<script>
+  // ==========================================
+  // FIX: konflik lucide.createIcons() vs React DOM reconciliation
+  // ==========================================
+  // lucide.createIcons() mengganti elemen <i data-lucide="..."> LANGSUNG di DOM nyata
+  // (di luar sepengetahuan React) menjadi <svg>. React tetap menyimpan elemen <i> lama
+  // di Fiber tree miliknya. Begitu React nanti perlu menghapus/memindah bagian itu (mis.
+  // tab berpindah, list berubah, komponen unmount), React memanggil
+  // parentNode.removeChild(elemenLamaYangSudahDiganti) -- tapi elemen itu SUDAH TIDAK ADA
+  // di DOM (sudah diganti Lucide), sehingga browser melempar:
+  //   "NotFoundError: Failed to execute 'removeChild' on 'Node': The node to be removed
+  //    is not a child of this node."
+  // Ini SELALU tertangkap oleh AppErrorBoundary sebagai "kendala tampilan" walau
+  // sebenarnya tidak ada bug pada data/logika aplikasi sama sekali -- murni konflik dua
+  // library yang sama-sama memanipulasi DOM.
+  //
+  // Perbaikan MENYELURUH (mengganti seluruh ikon jadi komponen React lucide-react) butuh
+  // menyentuh ribuan baris JSX, terlalu berisiko dilakukan sekaligus. Solusi standar &
+  // aman yang dipakai di sini: buat removeChild/insertBefore "defensif" -- kalau node yang
+  // diminta dihapus/disisipkan TERNYATA bukan child dari parent tsb (karena sudah
+  // diubah pihak lain di luar React), JANGAN lempar error, cukup diam saja (tidak ada apa
+  // pun yang perlu dihapus/dipindah lagi). Ini tidak mengubah tampilan/perilaku apa pun
+  // yang terlihat pengguna -- hanya mencegah crash akibat DOM sudah berubah duluan.
+  (function () {
+    const origRemoveChild = Node.prototype.removeChild;
+    Node.prototype.removeChild = function (child) {
+      if (child.parentNode !== this) {
+        if (console && console.warn) {
+          console.warn('[Tarobun] Diabaikan: removeChild pada node yang sudah tidak jadi child (biasanya akibat lucide.createIcons()).', child);
+        }
+        return child;
+      }
+      return origRemoveChild.call(this, child);
+    };
+
+    const origInsertBefore = Node.prototype.insertBefore;
+    Node.prototype.insertBefore = function (newNode, refNode) {
+      if (refNode && refNode.parentNode !== this) {
+        if (console && console.warn) {
+          console.warn('[Tarobun] Diabaikan: insertBefore dengan referenceNode yang sudah tidak jadi child (biasanya akibat lucide.createIcons()).', refNode);
+        }
+        return this.appendChild(newNode);
+      }
+      return origInsertBefore.call(this, newNode, refNode);
+    };
+  })();
+</script>
 <script type="text/babel">
 const { useState, useEffect } = React;
 
@@ -323,14 +374,64 @@ const { useState, useEffect } = React;
     // KONEKSI KE CLOUDFLARE WORKER (pengganti Firebase)
     // ==========================================
     const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
-    const CF_SESSION_KEY = 'tarobun_cf_session';
 
     // ==========================================
-    // IDENTITAS DEVICE (dipakai untuk limit 2 device/toko + auto-logout tidak aktif 5 jam)
+    // FIX (2026-08): base URL TETAP untuk link publik (psikotes/OJT) yang dibagikan admin
+    // ke luar (WA, dsb).
+    // ------------------------------------------
+    // SEBELUMNYA link dibuat pakai `window.location.origin`, yang artinya kalau admin
+    // membuka app ini dari dalam APK/WebView (origin-nya "capacitor://localhost" atau
+    // "http://localhost", BUKAN alamat web publik), link yang ter-copy ikut jadi
+    // "https://localhost/?psikotes=..." -- link itu jelas tidak bisa dibuka di HP lain.
+    // Sekarang link SELALU dibuat dari alamat web publik yang tetap (PUBLIC_APP_BASE),
+    // apa pun origin tempat admin membuka app-nya (web biasa ataupun APK).
+    // Halaman tujuannya juga sengaja diarahkan ke "psikotes.html" (file KHUSUS, terpisah
+    // dari app admin yang berat ini) supaya OJT yang buka link tidak perlu memuat seluruh
+    // aplikasi admin -- cukup halaman ringan untuk mengerjakan soal saja.
+    // PENTING: PUBLIC_APP_BASE harus persis alamat web tempat file index.html & psikotes.html
+    // ini di-deploy (harus SAMA dengan salah satu domain di ALLOWED_ORIGIN, wrangler.toml).
+    const PUBLIC_APP_BASE = 'https://so-mandiri-tarobun.vercel.app';
+
     // ==========================================
-    // deviceId acak dibuat SEKALI per browser/perangkat lalu disimpan permanen di localStorage,
-    // supaya browser yang sama tetap dikenali sebagai device yang sama walau login/logout
-    // berkali-kali (tidak dianggap device baru tiap kali login).
+    // SEMUA fetch() ke WORKER_BASE WAJIB lewat __apiFetch (bukan fetch() langsung) supaya
+    // credentials: 'include' selalu ikut terkirim -- ini yang membuat Cookie sesi HttpOnly
+    // (lihat catatan KEAMANAN di bawah) benar-benar terkirim & tersimpan, karena WORKER_BASE
+    // adalah origin BERBEDA dari halaman ini (subdomain workers.dev terpisah), dan browser
+    // TIDAK PERNAH mengirim/menyimpan cookie lintas-origin tanpa opsi ini secara eksplisit.
+    // ==========================================
+    const __apiFetch = (url, opts = {}) => fetch(url, { ...opts, credentials: 'include' });
+
+    // ==========================================
+    // KEAMANAN (2026-08): sesi login TIDAK LAGI disimpan sebagai token di localStorage.
+    // Sebelumnya token autentikasi disimpan mentah-mentah di localStorage (CF_SESSION_KEY),
+    // yang artinya SEMUA script di halaman ini -- termasuk script asing yang berhasil
+    // disuntikkan lewat celah XSS mana pun -- bisa membaca token itu dan membajak sesi
+    // login. Sekarang Cloudflare Worker mengirim sesi lewat Set-Cookie HttpOnly (lihat
+    // buildSessionCookie di worker.js): cookie itu TIDAK PERNAH bisa dibaca oleh
+    // document.cookie atau JavaScript apa pun, hanya otomatis dikirim browser ke Worker.
+    // Konsekuensinya: frontend ini juga TIDAK LAGI tahu isi/nilai token-nya sendiri -- utk
+    // mengetahui "apakah user ini sedang login", frontend bertanya ke server lewat endpoint
+    // GET /api/session/me (lihat __loadCfSession di bawah), bukan membaca localStorage.
+    let __authListeners = [];
+    // __authHeaders() sengaja jadi no-op (dipertahankan sebagai fungsi kosong, bukan
+    // dihapus) supaya SEMUA titik fetch() lama di file ini yang masih menulis
+    // `...__authHeaders()` tetap berjalan tanpa perlu diubah satu-persatu -- otentikasi
+    // sekarang murni lewat Cookie (otomatis via __apiFetch), bukan header lagi.
+    const __authHeaders = () => ({});
+
+    // ==========================================
+    // IDENTITAS DEVICE -- HANYA LABEL KOSMETIK, BUKAN LAGI KONTROL KEAMANAN
+    // ==========================================
+    // PENTING (2026-08): deviceId acak di bawah ini (disimpan di localStorage) DULU dipakai
+    // Worker untuk menentukan identitas device demi pembatasan sesi -- ini rapuh, karena
+    // klien mana pun bebas membaca/mengubah/memalsukan nilai localStorage-nya sendiri untuk
+    // mengaku-aku sebagai device lain atau menghindari pembatasan. Sekarang identitas device
+    // yang MENENTUKAN HAK AKSES (`sid`) dibuat & ditandatangani di SERVER saat login (lihat
+    // /api/login/store di worker.js), lalu ikut di dalam Cookie sesi -- client tidak bisa
+    // menyentuhnya sama sekali. Variabel deviceId di bawah ini yang tersisa HANYA dipakai
+    // sebagai label kosmetik (mis. dikirim sebagai deviceLabel saat login, supaya Admin bisa
+    // melihat "Chrome - Android" dsb di menu Perangkat) -- memalsukannya tidak memberi
+    // keuntungan keamanan apa pun ke penyerang.
     const DEVICE_ID_KEY = 'tarobun_device_id';
     const getDeviceId = () => {
       try {
@@ -370,25 +471,22 @@ const { useState, useEffect } = React;
       }
     };
 
-    let __sessionToken = null;
-    let __authListeners = [];
-
-    const __saveCfSession = (token, userObj) => {
-      __sessionToken = token;
-      try { localStorage.setItem(CF_SESSION_KEY, JSON.stringify({ token, user: userObj })); } catch (e) {}
-    };
-    const __clearCfSession = () => {
-      __sessionToken = null;
-      try { localStorage.removeItem(CF_SESSION_KEY); } catch (e) {}
-    };
-    const __loadCfSession = () => {
+    // Menggantikan __loadCfSession lama (yang membaca token dari localStorage): sekarang
+    // bertanya LANGSUNG ke server lewat Cookie HttpOnly (otomatis terkirim oleh __apiFetch),
+    // karena JavaScript di sini tidak pernah bisa membaca isi cookie sesi itu sendiri.
+    // Mengembalikan null kalau tidak ada sesi valid (belum login / cookie kedaluwarsa/dihapus).
+    const __fetchServerSession = async () => {
       try {
-        const raw = JSON.parse(localStorage.getItem(CF_SESSION_KEY) || 'null');
-        if (raw && raw.token) { __sessionToken = raw.token; return raw.user; }
-      } catch (e) {}
-      return null;
+        const res = await __apiFetch(`${WORKER_BASE}/api/session/me`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!data || !data.ok) return null;
+        if (data.role === 'admin') return { uid: data.uid, role: 'admin' };
+        return { storeId: data.storeId, role: 'store', storeInfo: data.storeInfo };
+      } catch (e) {
+        return null;
+      }
     };
-    const __authHeaders = () => __sessionToken ? { 'Authorization': 'Bearer ' + __sessionToken } : {};
 
     const __makeSnapshot = (value) => ({
       val: () => (value === undefined ? null : value),
@@ -415,7 +513,7 @@ const { useState, useEffect } = React;
     const __fetchOrThrow = async (url, opts) => {
       let res;
       try {
-        res = await fetch(url, opts);
+        res = await __apiFetch(url, opts);
       } catch (netErr) {
         throw new Error('Tidak bisa menghubungi server (' + (netErr && netErr.message ? netErr.message : 'jaringan gagal') + ')');
       }
@@ -471,7 +569,7 @@ const { useState, useEffect } = React;
           // Sedikit lebih lama dari WAIT_TIMEOUT_MS di server (30 detik), supaya browser
           // yang membatalkan request bukan karena server-nya lambat balas.
           timeoutId = setTimeout(() => controller.abort(), 40000);
-          const res = await fetch(`${WORKER_BASE}/api/chat/wait?${qs}`, { headers: __authHeaders(), signal: controller.signal });
+          const res = await __apiFetch(`${WORKER_BASE}/api/chat/wait?${qs}`, { headers: __authHeaders(), signal: controller.signal });
           clearTimeout(timeoutId);
           const data = await res.json();
           consecutiveErrors = 0;
@@ -574,7 +672,7 @@ const { useState, useEffect } = React;
         try {
           if (!(typeof document !== 'undefined' && document.hidden) && __versionListeners.size > 0) {
             const keys = [...__versionListeners.keys()];
-            const res = await fetch(`${WORKER_BASE}/api/data-version?keys=${encodeURIComponent(keys.join(','))}`, { headers: __authHeaders() });
+            const res = await __apiFetch(`${WORKER_BASE}/api/data-version?keys=${encodeURIComponent(keys.join(','))}`, { headers: __authHeaders() });
             const data = await res.json();
             const versions = (data && data.versions) || {};
             for (const key of keys) {
@@ -769,7 +867,7 @@ const { useState, useEffect } = React;
     // `url` langsung dipakai sebagai <img src>, `key` disimpan di database untuk keperluan hapus nanti.
     const uploadMediaToR2 = async (dataUrlOrBlob, folder, ext = 'jpg') => {
       const blob = dataUrlOrBlob instanceof Blob ? dataUrlOrBlob : dataUrlToBlob(dataUrlOrBlob);
-      const res = await fetch(`${WORKER_BASE}/api/media/upload?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(ext)}`, {
+      const res = await __apiFetch(`${WORKER_BASE}/api/media/upload?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(ext)}`, {
         method: 'POST',
         headers: { 'Content-Type': blob.type || 'application/octet-stream', ...__authHeaders() },
         body: blob,
@@ -787,7 +885,7 @@ const { useState, useEffect } = React;
       const keys = Array.isArray(keyOrKeys) ? keyOrKeys.filter(Boolean) : [keyOrKeys].filter(Boolean);
       if (keys.length === 0) return;
       try {
-        await fetch(`${WORKER_BASE}/api/media/delete`, {
+        await __apiFetch(`${WORKER_BASE}/api/media/delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...__authHeaders() },
           body: JSON.stringify({ keys }),
@@ -797,55 +895,70 @@ const { useState, useEffect } = React;
       }
     };
 
-    const __makeUser = (u) => u ? { uid: u.uid || u.storeId, ...u, getIdToken: async () => __sessionToken } : null;
+    // getIdToken() dipertahankan sebagai stub kosong (bukan dihapus) untuk kompatibilitas
+    // kalau ada pemanggil lama -- tapi TIDAK PERNAH lagi mengembalikan token asli, karena
+    // token sesi sekarang hanya ada di Cookie HttpOnly yang memang sengaja tidak bisa dibaca
+    // dari JavaScript sama sekali (itulah intinya, lihat catatan KEAMANAN di atas).
+    const __makeUser = (u) => u ? { uid: u.uid || u.storeId, ...u, getIdToken: async () => null } : null;
 
     const auth = {
       currentUser: null,
       setPersistence: async () => {},
       onAuthStateChanged: (cb) => {
-        const savedUser = __loadCfSession();
-        auth.currentUser = __makeUser(savedUser);
-        Promise.resolve().then(() => cb(auth.currentUser));
+        // Async: mengecek sesi ke server (lihat __fetchServerSession) alih-alih membaca
+        // localStorage secara instan, karena kebenaran sesi sekarang murni ada di server/cookie.
+        (async () => {
+          const savedUser = await __fetchServerSession();
+          auth.currentUser = __makeUser(savedUser);
+          cb(auth.currentUser);
+        })();
         __authListeners.push(cb);
         return () => { __authListeners = __authListeners.filter(l => l !== cb); };
       },
       signInWithEmailAndPassword: async (email, password) => {
         let res, data;
         if (email === 'admin@tarobun-app.internal') {
-          res = await fetch(`${WORKER_BASE}/api/login/admin`, {
+          res = await __apiFetch(`${WORKER_BASE}/api/login/admin`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password }),
           });
           data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Login gagal');
-          __saveCfSession(data.token, { uid: data.uid, role: 'admin' });
+          if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
+          // Tidak ada lagi token untuk disimpan di sini -- Worker sudah mengirimkannya lewat
+          // Set-Cookie HttpOnly pada response ini (browser menyimpannya otomatis).
           auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
           return { user: auth.currentUser };
         } else {
           const storeId = email.replace(/^store-/, '').replace(/@toko\.tarobun-app\.internal$/, '');
-          res = await fetch(`${WORKER_BASE}/api/login/store`, {
+          // deviceId TIDAK dikirim lagi -- server yang membuat & menandatangani identitas
+          // device (sid) sendiri saat login (lihat catatan di /api/login/store, worker.js).
+          // deviceLabel tetap dikirim, tapi murni label tampilan kosmetik untuk menu Admin.
+          res = await __apiFetch(`${WORKER_BASE}/api/login/store`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ storeId, token: password, deviceId: getDeviceId(), deviceLabel: getDeviceLabel() }),
+            body: JSON.stringify({ storeId, token: password, deviceLabel: getDeviceLabel() }),
           });
           data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
-          __saveCfSession(data.token, { storeId: data.storeId, role: 'store' });
           auth.currentUser = __makeUser({ storeId: data.storeId, role: 'store' });
           return { user: auth.currentUser, storeInfo: data.storeInfo };
         }
       },
       createUserWithEmailAndPassword: async (email, password) => {
-        const res = await fetch(`${WORKER_BASE}/api/bootstrap-admin`, {
+        const res = await __apiFetch(`${WORKER_BASE}/api/bootstrap-admin`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Gagal membuat admin');
-        __saveCfSession(data.token, { uid: data.uid, role: 'admin' });
         auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
         return { user: auth.currentUser };
       },
-      signOut: async () => { __clearCfSession(); auth.currentUser = null; },
+      signOut: async () => {
+        // Cookie HttpOnly tidak bisa dihapus dari JavaScript -- WAJIB minta server yang
+        // menghapusnya lewat Set-Cookie (lihat /api/logout di worker.js).
+        try { await __apiFetch(`${WORKER_BASE}/api/logout`, { method: 'POST' }); } catch (e) {}
+        auth.currentUser = null;
+      },
     };
 
     // Dipakai khusus admin membuat akun toko baru (dulu perlu "instance kedua" Firebase supaya
@@ -869,9 +982,6 @@ const { useState, useEffect } = React;
     const STORE_EMAIL_DOMAIN = '@toko.tarobun-app.internal';
     const SESSION_KEY = 'tarobun_session_v2';
     const SESSION_DURATION_MS = 24.5 * 60 * 60 * 1000; // 24 jam 30 menit sesuai permintaan
-    const LOGIN_ATTEMPT_KEY = 'tarobun_login_attempts';
-    const MAX_LOGIN_ATTEMPTS = 5;
-    const LOGIN_LOCK_MS = 60 * 1000;
 
     // ==========================================
     // KONSTANTA PRESENCE (status online/offline toko)
@@ -917,28 +1027,16 @@ const { useState, useEffect } = React;
       .replace(/(^-|-$)/g, '')
       .slice(0, 40);
 
-    // Anti brute-force sederhana di sisi klien (pelindung tambahan, bukan pengganti Security Rules)
-    const getLoginAttempts = (key) => {
-      try {
-        const raw = JSON.parse(localStorage.getItem(LOGIN_ATTEMPT_KEY) || '{}');
-        return raw[key] || { count: 0, lockedUntil: 0 };
-      } catch { return { count: 0, lockedUntil: 0 }; }
-    };
-    const setLoginAttempts = (key, val) => {
-      try {
-        const raw = JSON.parse(localStorage.getItem(LOGIN_ATTEMPT_KEY) || '{}');
-        raw[key] = val;
-        localStorage.setItem(LOGIN_ATTEMPT_KEY, JSON.stringify(raw));
-      } catch {}
-    };
-    const registerFailedAttempt = (key) => {
-      const cur = getLoginAttempts(key);
-      const count = cur.count + 1;
-      const lockedUntil = count >= MAX_LOGIN_ATTEMPTS ? Date.now() + LOGIN_LOCK_MS : 0;
-      setLoginAttempts(key, { count, lockedUntil });
-      return { count, lockedUntil };
-    };
-    const clearLoginAttempts = (key) => setLoginAttempts(key, { count: 0, lockedUntil: 0 });
+    // KEAMANAN (2026-08): pembatasan percobaan login (anti brute-force) yang DULU ada di sini
+    // (disimpan & dihitung di localStorage) sudah DIHAPUS TOTAL dari frontend. LocalStorage
+    // sepenuhnya dikuasai & bisa diubah bebas oleh siapa pun yang memakai browser tsb (lewat
+    // DevTools, extension, atau script apa pun) -- artinya batasan itu SAMA SEKALI TIDAK
+    // melindungi apa pun, hanya ilusi keamanan di sisi tampilan. Pembatasan yang SUNGGUHAN
+    // sekarang 100% berjalan di Cloudflare Worker (lihat loginGuardCheck/Fail/Success di
+    // worker.js, disimpan di Durable Object -- tidak bisa disentuh/dilewati oleh client sama
+    // sekali): 5x salah dalam 15 menit per akun DAN per alamat IP akan dikunci otomatis, dan
+    // server membalas status 429 dengan pesan sisa waktu kunci -- lihat penanganannya di
+    // handleStoreLogin/handleAdminLogin di bawah (err.status === 429).
 
     const saveSession = (role, extra = {}) => {
       const session = { role, ...extra, loginAt: Date.now(), expiresAt: Date.now() + SESSION_DURATION_MS };
@@ -1409,7 +1507,7 @@ const { useState, useEffect } = React;
 
         PushNotifications.addListener('registration', async (token) => {
           try {
-            await fetch(`${WORKER_BASE}/api/push/register`, {
+            await __apiFetch(`${WORKER_BASE}/api/push/register`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...__authHeaders() },
               body: JSON.stringify({ fcmToken: token.value, platform: 'android' }),
@@ -1769,6 +1867,872 @@ const { useState, useEffect } = React;
       );
     }
 
+    // ==========================================
+    // HALAMAN PUBLIK: Psikotes OJT (dibuka lewat link, TANPA login)
+    // ==========================================
+    // Alur: form Nama+Penempatan -> kerjakan soal satu-satu -> selesai.
+    // Anti-keluar: kalau tab/app di-minimize atau pindah tab saat status 'taking',
+    // langsung dilaporkan ke server (flag-leave) dan attempt ditandai 'blocked'.
+    // JUJUR soal batasan: browser TIDAK memungkinkan web mencegah tab ditutup/di-refresh
+    // sepenuhnya (itu kontrol milik user, bukan website) -- yang bisa dilakukan hanya
+    // MENDETEKSI ketika itu terjadi lalu mengunci attempt-nya sampai admin buka blokir,
+    // bukan benar-benar mencegah user pindah tab secara fisik.
+    function PsikotesOjtPublicPage({ linkToken, assigned }) {
+      // assigned=true -> link per-OJT yang didaftarkan admin (nama+toko sudah pasti, lewat
+      // ?ojt=TOKEN). assigned=false -> link umum satu paket (alur lama, lewat ?psikotes=TOKEN),
+      // OJT isi sendiri nama+penempatan.
+      const storageKey = `tarobun_psikotes_attempt_${linkToken}`;
+      const infoUrl = assigned ? `${WORKER_BASE}/api/psikotes/public/ojt/${linkToken}` : `${WORKER_BASE}/api/psikotes/public/${linkToken}`;
+      const startUrl = assigned ? `${WORKER_BASE}/api/psikotes/public/ojt/${linkToken}/start` : `${WORKER_BASE}/api/psikotes/public/${linkToken}/start`;
+      const [phase, setPhase] = useState('loading'); // loading | form | confirm | taking | blocked | done | error
+      const [errorMsg, setErrorMsg] = useState('');
+      const [test, setTest] = useState(null);
+      const [name, setName] = useState('');
+      const [penempatan, setPenempatan] = useState('');
+      const [assignedInfo, setAssignedInfo] = useState(null); // { ojtName, storeName }
+      const [submittingStart, setSubmittingStart] = useState(false);
+      const [attempt, setAttempt] = useState(null); // { attemptId, attemptSecret }
+      const [questions, setQuestions] = useState([]);
+      const [qIndex, setQIndex] = useState(0);
+      const [answers, setAnswers] = useState({}); // { [questionId]: value }
+      const [saving, setSaving] = useState(false);
+      const [autoScore, setAutoScore] = useState(null);
+
+      // Muat info paket psikotes (judul/deskripsi/terkunci) begitu halaman dibuka.
+      useEffect(() => {
+        (async () => {
+          try {
+            const res = await fetch(infoUrl);
+            const data = await res.json();
+            if (!res.ok) { setErrorMsg(data.error || 'Link tidak valid'); setPhase('error'); return; }
+            setTest(data.test);
+            if (assigned) setAssignedInfo({ ojtName: data.ojtName, storeName: data.storeName });
+            // Kalau OJT sebelumnya sempat memulai (refresh halaman tanpa sengaja), lanjutkan
+            // dari attempt yang sama, bukan mulai dari nol -- ambil dari localStorage.
+            const saved = localStorage.getItem(storageKey);
+            if (saved) {
+              try {
+                const parsed = JSON.parse(saved);
+                const statusRes = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${parsed.attemptId}/status?attemptSecret=${encodeURIComponent(parsed.attemptSecret)}`);
+                const statusData = await statusRes.json();
+                if (statusRes.ok) {
+                  if (statusData.status === 'blocked') { setAttempt(parsed); setPhase('blocked'); return; }
+                  if (statusData.status === 'completed') { setPhase('done'); return; }
+                }
+              } catch (e) { /* kalau gagal cek, biarkan lanjut ke form biasa */ }
+            }
+            // Link per-OJT yang sudah dipakai (tapi tidak ada sesi tersimpan di browser ini,
+            // berarti dibuka dari perangkat lain) -- tolak, supaya 1 link = 1 orang.
+            if (assigned && data.alreadyUsed) {
+              setErrorMsg('Link ini sudah pernah dipakai untuk memulai psikotes. Kalau ini bukan kamu, hubungi admin/toko.');
+              setPhase('error');
+              return;
+            }
+            if (data.test.locked) { setPhase('locked'); return; }
+            setPhase(assigned ? 'confirm' : 'form');
+          } catch (e) {
+            setErrorMsg('Gagal memuat halaman psikotes. Periksa koneksi internet.');
+            setPhase('error');
+          }
+        })();
+      }, [linkToken]);
+
+      const handleStart = async () => {
+        if (!assigned && (!name.trim() || !penempatan.trim())) return;
+        setSubmittingStart(true);
+        try {
+          const res = await fetch(startUrl, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(assigned ? {} : { name: name.trim(), penempatan: penempatan.trim() }),
+          });
+          const data = await res.json();
+          if (!res.ok) { setErrorMsg(data.error || 'Gagal memulai psikotes'); setSubmittingStart(false); return; }
+          const attemptInfo = { attemptId: data.attemptId, attemptSecret: data.attemptSecret };
+          localStorage.setItem(storageKey, JSON.stringify(attemptInfo));
+          setAttempt(attemptInfo);
+          setQuestions(data.questions);
+          setPhase('taking');
+        } catch (e) {
+          setErrorMsg('Gagal memulai psikotes. Periksa koneksi internet.');
+        } finally {
+          setSubmittingStart(false);
+        }
+      };
+
+      // Deteksi OJT pindah tab / minimize app selama mengerjakan (fase 'taking').
+      useEffect(() => {
+        if (phase !== 'taking' || !attempt) return;
+        const reportLeave = () => {
+          navigator.sendBeacon
+            ? navigator.sendBeacon(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, new Blob([JSON.stringify({ attemptSecret: attempt.attemptSecret })], { type: 'application/json' }))
+            : fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ attemptSecret: attempt.attemptSecret }), keepalive: true }).catch(() => {});
+          setPhase('blocked');
+        };
+        const onVisibility = () => { if (document.hidden) reportLeave(); };
+        document.addEventListener('visibilitychange', onVisibility);
+        window.addEventListener('pagehide', reportLeave);
+        return () => {
+          document.removeEventListener('visibilitychange', onVisibility);
+          window.removeEventListener('pagehide', reportLeave);
+        };
+      }, [phase, attempt]);
+
+      // Selagi terblokir, cek berkala apakah admin sudah membuka blokirnya.
+      useEffect(() => {
+        if (phase !== 'blocked' || !attempt) return;
+        const interval = setInterval(async () => {
+          try {
+            const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/status?attemptSecret=${encodeURIComponent(attempt.attemptSecret)}`);
+            const data = await res.json();
+            if (res.ok && data.status === 'in_progress') setPhase('taking');
+          } catch (e) { /* diamkan, coba lagi di interval berikutnya */ }
+        }, 5000);
+        return () => clearInterval(interval);
+      }, [phase, attempt]);
+
+      const saveAnswer = async (questionId, value) => {
+        setAnswers(prev => ({ ...prev, [questionId]: value }));
+        try {
+          await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/answer`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attemptSecret: attempt.attemptSecret, questionId, answer: value }),
+          });
+        } catch (e) { /* best-effort; kalau gagal, jawaban lokal tetap kelihatan tersimpan di UI */ }
+      };
+
+      const handleFinish = async () => {
+        setSaving(true);
+        try {
+          const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/finish`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attemptSecret: attempt.attemptSecret }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setAutoScore(data.autoScore);
+            localStorage.removeItem(storageKey);
+            setPhase('done');
+          } else {
+            setErrorMsg(data.error || 'Gagal mengumpulkan jawaban');
+          }
+        } catch (e) {
+          setErrorMsg('Gagal mengumpulkan jawaban. Periksa koneksi internet lalu coba lagi.');
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const Shell = ({ children }) => (
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md">{children}</div>
+        </div>
+      );
+
+      if (phase === 'loading') {
+        return <Shell><div className="text-center text-slate-500"><i data-lucide="loader" className="w-8 h-8 animate-spin mx-auto mb-2"></i>Memuat...</div></Shell>;
+      }
+      if (phase === 'error') {
+        return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-2">
+          <i data-lucide="alert-triangle" className="w-10 h-10 text-rose-500 mx-auto"></i>
+          <h2 className="font-bold text-slate-800">Tidak Bisa Membuka Psikotes</h2>
+          <p className="text-sm text-slate-500">{errorMsg}</p>
+        </div></Shell>;
+      }
+      if (phase === 'locked') {
+        return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-2">
+          <i data-lucide="lock" className="w-10 h-10 text-amber-500 mx-auto"></i>
+          <h2 className="font-bold text-slate-800">Psikotes Dikunci</h2>
+          <p className="text-sm text-slate-500">Psikotes ini sedang dikunci oleh admin. Hubungi admin/toko untuk info lebih lanjut.</p>
+        </div></Shell>;
+      }
+      if (phase === 'blocked') {
+        return <Shell><div className="bg-white rounded-2xl border border-rose-200 shadow-sm p-6 text-center space-y-2">
+          <i data-lucide="shield-alert" className="w-10 h-10 text-rose-500 mx-auto"></i>
+          <h2 className="font-bold text-slate-800">Akses Diblokir</h2>
+          <p className="text-sm text-slate-500">Kamu terdeteksi keluar dari halaman psikotes saat sedang mengerjakan. Hubungi admin/toko untuk membuka blokir. Halaman ini akan otomatis lanjut begitu diizinkan.</p>
+        </div></Shell>;
+      }
+      if (phase === 'done') {
+        return <Shell><div className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-6 text-center space-y-2">
+          <i data-lucide="check-circle-2" className="w-10 h-10 text-emerald-500 mx-auto"></i>
+          <h2 className="font-bold text-slate-800">Psikotes Selesai</h2>
+          <p className="text-sm text-slate-500">Terima kasih, jawabanmu sudah tersimpan. Hasilnya akan direview oleh admin/toko.</p>
+        </div></Shell>;
+      }
+      if (phase === 'confirm') {
+        // Link per-OJT dari admin: nama & toko sudah pasti (read-only), tidak ada form isian.
+        return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+          <div className="text-center space-y-1">
+            <i data-lucide="clipboard-list" className="w-9 h-9 text-purple-700 mx-auto"></i>
+            <h2 className="font-bold text-slate-800 text-lg">{test?.title}</h2>
+            {test?.description && <p className="text-xs text-slate-500">{test.description}</p>}
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+            <div className="flex justify-between text-xs"><span className="text-slate-500">Nama</span><span className="font-semibold text-slate-800">{assignedInfo?.ojtName}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-slate-500">Penempatan Toko</span><span className="font-semibold text-slate-800">{assignedInfo?.storeName}</span></div>
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+            Setelah mulai, jangan pindah tab/aplikasi lain sampai selesai — kalau keluar, akses akan otomatis diblokir dan butuh izin admin untuk dibuka lagi. Link ini hanya bisa dipakai satu kali.
+          </div>
+          {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
+          <button onClick={handleStart} disabled={submittingStart} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+            {submittingStart ? 'Memulai...' : 'Mulai Psikotes'}
+          </button>
+        </div></Shell>;
+      }
+      if (phase === 'form') {
+        return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+          <div className="text-center space-y-1">
+            <i data-lucide="clipboard-list" className="w-9 h-9 text-purple-700 mx-auto"></i>
+            <h2 className="font-bold text-slate-800 text-lg">{test?.title}</h2>
+            {test?.description && <p className="text-xs text-slate-500">{test.description}</p>}
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+            Setelah mulai, jangan pindah tab/aplikasi lain sampai selesai — kalau keluar, akses akan otomatis diblokir dan butuh izin admin untuk dibuka lagi.
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Nama Lengkap</label>
+            <input value={name} onChange={e => setName(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Nama kamu" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Lokasi Penempatan</label>
+            <input value={penempatan} onChange={e => setPenempatan(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Contoh: Toko Cabang A" />
+          </div>
+          {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
+          <button onClick={handleStart} disabled={submittingStart || !name.trim() || !penempatan.trim()} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+            {submittingStart ? 'Memulai...' : 'Mulai Psikotes'}
+          </button>
+        </div></Shell>;
+      }
+
+      // phase === 'taking'
+      const q = questions[qIndex];
+      const allAnswered = questions.every(qq => answers[qq.id] !== undefined && answers[qq.id] !== '');
+      return (
+        <div className="min-h-screen bg-slate-50 p-4">
+          <div className="max-w-md mx-auto space-y-4">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sticky top-4 z-10">
+              <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
+                <span>Soal {qIndex + 1} dari {questions.length}</span>
+                <span>{Object.keys(answers).length}/{questions.length} terjawab</span>
+              </div>
+              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full bg-purple-700 rounded-full transition-all" style={{ width: `${((qIndex + 1) / questions.length) * 100}%` }}></div>
+              </div>
+            </div>
+
+            {q && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+                <p className="font-semibold text-slate-800 text-sm whitespace-pre-wrap">{q.text}</p>
+                {q.type === 'pilihan_ganda' ? (
+                  <div className="space-y-2">
+                    {q.options.map((opt, i) => (
+                      <button key={i} onClick={() => saveAnswer(q.id, String(i))}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-all ${String(answers[q.id]) === String(i) ? 'bg-purple-800 text-white border-purple-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <textarea value={answers[q.id] || ''} onChange={e => saveAnswer(q.id, e.target.value)} rows={4}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Tulis jawabanmu di sini..." />
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button onClick={() => setQIndex(i => Math.max(0, i - 1))} disabled={qIndex === 0}
+                className="flex-1 bg-white border border-slate-200 disabled:opacity-40 text-slate-700 font-semibold py-2.5 rounded-xl text-sm">Sebelumnya</button>
+              {qIndex < questions.length - 1 ? (
+                <button onClick={() => setQIndex(i => Math.min(questions.length - 1, i + 1))}
+                  className="flex-1 bg-purple-800 hover:bg-purple-900 text-white font-semibold py-2.5 rounded-xl text-sm">Selanjutnya</button>
+              ) : (
+                <button onClick={handleFinish} disabled={saving || !allAnswered}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
+                  {saving ? 'Mengirim...' : 'Kumpulkan Jawaban'}
+                </button>
+              )}
+            </div>
+            {!allAnswered && qIndex === questions.length - 1 && (
+              <p className="text-xs text-center text-slate-400">Jawab semua soal dulu sebelum mengumpulkan.</p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // ADMIN: Tab "Psikotes OJT" -- kelola paket psikotes, soal, dan hasil OJT
+    // ==========================================
+    function AdminPsikotesTab({ stores }) {
+      const [tests, setTests] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [loadError, setLoadError] = useState(''); // BUGFIX: sebelumnya kalau fetch gagal (mis.
+      // CORS/koneksi bermasalah di APK), tab ini diam saja tanpa keterangan apa pun -- pengguna
+      // melihat tab "kosong"/tidak merespons dan mengiranya error. Sekarang kegagalan ditangkap &
+      // ditampilkan jelas + ada tombol coba lagi.
+      const [showCreate, setShowCreate] = useState(false);
+      const [newTitle, setNewTitle] = useState('');
+      const [newDesc, setNewDesc] = useState('');
+      const [creating, setCreating] = useState(false);
+      const [linkCopied, setLinkCopied] = useState(null);
+      const [editingTest, setEditingTest] = useState(null); // { id, title } -- buka editor soal
+      const [viewingScores, setViewingScores] = useState(null); // { id, title } -- buka daftar hasil
+      const [createError, setCreateError] = useState('');
+
+      const loadTests = async () => {
+        setLoading(true);
+        setLoadError('');
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests`, { headers: __authHeaders() });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) { setTests(data.tests || []); }
+          else { setLoadError(data.error || `Gagal memuat paket psikotes (status ${res.status}).`); }
+        } catch (err) {
+          // Biasanya fetch gagal total (bukan cuma respons error) kalau koneksi terputus atau
+          // origin APK belum diizinkan di pengaturan CORS server (ALLOWED_ORIGIN).
+          setLoadError('Gagal terhubung ke server. Periksa koneksi internet, atau hubungi admin teknis kalau ini terjadi terus-menerus di aplikasi APK.');
+        } finally { setLoading(false); }
+      };
+      useEffect(() => { loadTests(); }, []);
+
+      const handleCreate = async () => {
+        if (!newTitle.trim()) return;
+        setCreating(true);
+        setCreateError('');
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ title: newTitle.trim(), description: newDesc.trim() }),
+          });
+          if (res.ok) {
+            setNewTitle(''); setNewDesc(''); setShowCreate(false);
+            await loadTests();
+            return;
+          }
+          // BUGFIX: sebelumnya kalau gagal (mis. tabel psikotes_tests belum ada di D1), tidak
+          // ada pesan apa pun -- tombol cuma balik seperti semula tanpa keterangan.
+          const data = await res.json().catch(() => ({}));
+          setCreateError(data.error || `Gagal membuat paket psikotes (status ${res.status}).`);
+        } catch (err) {
+          setCreateError('Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.');
+        } finally { setCreating(false); }
+      };
+
+      const toggleLock = async (test) => {
+        await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/lock`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+          body: JSON.stringify({ locked: !test.locked }),
+        });
+        loadTests();
+      };
+
+      const handleDelete = async (test) => {
+        if (!window.confirm(`Hapus paket psikotes "${test.title}"? Semua soal & hasil OJT ikut terhapus.`)) return;
+        await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}`, { method: 'DELETE', headers: __authHeaders() });
+        loadTests();
+      };
+
+      const copyLink = (test) => {
+        const link = `${PUBLIC_APP_BASE}/psikotes.html?psikotes=${test.link_token}`;
+        // BUGFIX: navigator.clipboard bisa TIDAK ADA / ditolak diam-diam di sebagian WebView APK
+        // (Capacitor) kalau permission clipboard belum diberikan atau API-nya tidak didukung --
+        // sebelumnya ini bisa melempar error tak tertangani saat tombol "Salin Link" ditekan.
+        // Sekarang: coba Clipboard API dulu, kalau tidak tersedia/gagal, pakai fallback
+        // textarea+execCommand (didukung hampir semua WebView lama).
+        const markCopied = () => { setLinkCopied(test.id); setTimeout(() => setLinkCopied(null), 2000); };
+        const fallbackCopy = () => {
+          try {
+            const ta = document.createElement('textarea');
+            ta.value = link;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus(); ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            markCopied();
+          } catch (err) {
+            window.prompt('Salin link ini secara manual:', link);
+          }
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(link).then(markCopied).catch(fallbackCopy);
+        } else {
+          fallbackCopy();
+        }
+      };
+
+      if (editingTest) {
+        return <PsikotesQuestionEditor test={editingTest} onBack={() => { setEditingTest(null); loadTests(); }} />;
+      }
+      if (viewingScores) {
+        return <PsikotesScoresView test={viewingScores} stores={stores} onBack={() => setViewingScores(null)} />;
+      }
+
+      return (
+        <div className="max-w-2xl mx-auto space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-bold text-slate-700 text-base">Psikotes OJT</h2>
+            <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 bg-purple-800 hover:bg-purple-900 text-white text-xs font-bold px-3 py-2 rounded-xl">
+              <i data-lucide="plus" className="w-3.5 h-3.5"></i> Buat Psikotes
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">Buat paket soal evaluasi untuk anak OJT, bagikan link-nya, lalu pantau hasilnya di sini. OJT yang keluar dari halaman saat mengerjakan otomatis terblokir sampai kamu buka blokirnya.</p>
+
+          {showCreate && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+              <input value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Judul, mis. SOP Produksi Roti Taro" className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" />
+              <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="Deskripsi singkat (opsional)" rows={2} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" />
+              {createError && <p className="text-xs text-rose-600 font-semibold">{createError}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => setShowCreate(false)} className="flex-1 border border-slate-200 text-slate-600 text-sm font-semibold py-2 rounded-xl">Batal</button>
+                <button onClick={handleCreate} disabled={creating || !newTitle.trim()} className="flex-1 bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white text-sm font-bold py-2 rounded-xl">{creating ? 'Menyimpan...' : 'Simpan'}</button>
+              </div>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>
+          ) : loadError ? (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center space-y-3">
+              <i data-lucide="alert-triangle" className="w-6 h-6 text-rose-500 mx-auto"></i>
+              <p className="text-xs text-rose-700 font-semibold">{loadError}</p>
+              <button onClick={loadTests} className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2 rounded-xl">Coba Lagi</button>
+            </div>
+          ) : tests.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center text-slate-500 text-sm">Belum ada paket psikotes. Klik "Buat Psikotes" untuk mulai.</div>
+          ) : (
+            <div className="space-y-3">
+              {tests.map(test => (
+                <div key={test.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-sm">{test.title}</h3>
+                      {test.description && <p className="text-xs text-slate-500 mt-0.5">{test.description}</p>}
+                      <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-400">
+                        <span>{test.question_count} soal</span>
+                        <span>•</span>
+                        <span>{test.attempt_count} OJT sudah isi</span>
+                        {test.blocked_count > 0 && <span className="text-rose-600 font-semibold">• {test.blocked_count} diblokir</span>}
+                      </div>
+                    </div>
+                    {test.locked ? (
+                      <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-2 py-1 rounded-md flex items-center gap-1"><i data-lucide="lock" className="w-3 h-3"></i>Terkunci</span>
+                    ) : (
+                      <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md">Aktif</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setEditingTest({ id: test.id, title: test.title })} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700">Kelola Soal</button>
+                    <button onClick={() => setViewingScores({ id: test.id, title: test.title })} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700">Lihat Hasil</button>
+                    <button onClick={() => copyLink(test)} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700">{linkCopied === test.id ? 'Tersalin!' : 'Salin Link'}</button>
+                    <button onClick={() => toggleLock(test)} className={`text-xs font-semibold px-3 py-1.5 rounded-lg ${test.locked ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{test.locked ? 'Buka Kunci' : 'Kunci'}</button>
+                    <button onClick={() => handleDelete(test)} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 ml-auto">Hapus</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Editor soal untuk satu paket psikotes (tipe pilihan_ganda / esai).
+    function PsikotesQuestionEditor({ test, onBack }) {
+      const [questions, setQuestions] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [loadError, setLoadError] = useState('');
+      const [saving, setSaving] = useState(false);
+      const [saveError, setSaveError] = useState('');
+
+      useEffect(() => {
+        (async () => {
+          try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/questions`, { headers: __authHeaders() });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+              setQuestions((data.questions || []).length ? data.questions.map(q => ({ type: q.question_type, text: q.question_text, options: q.options.length ? q.options : ['', ''], correctIndex: q.correct_index })) : []);
+            } else {
+              // BUGFIX: sebelumnya kalau gagal memuat (mis. tabel D1 belum dibuat), halaman ini
+              // crash diam-diam (mencoba baca data.questions.length padahal data.questions
+              // tidak ada) atau cuma menampilkan daftar kosong tanpa keterangan.
+              setLoadError(data.error || `Gagal memuat soal (status ${res.status}).`);
+            }
+          } catch (err) {
+            setLoadError('Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.');
+          } finally { setLoading(false); }
+        })();
+      }, [test.id]);
+
+      const addQuestion = (type) => {
+        setQuestions(prev => [...prev, type === 'esai' ? { type: 'esai', text: '' } : { type: 'pilihan_ganda', text: '', options: ['', ''], correctIndex: 0 }]);
+      };
+      const updateQuestion = (i, patch) => setQuestions(prev => prev.map((q, idx) => idx === i ? { ...q, ...patch } : q));
+      const removeQuestion = (i) => setQuestions(prev => prev.filter((_, idx) => idx !== i));
+      const updateOption = (qi, oi, value) => setQuestions(prev => prev.map((q, idx) => idx === qi ? { ...q, options: q.options.map((o, j) => j === oi ? value : o) } : q));
+      const addOption = (qi) => setQuestions(prev => prev.map((q, idx) => idx === qi ? { ...q, options: [...q.options, ''] } : q));
+      const removeOption = (qi, oi) => setQuestions(prev => prev.map((q, idx) => idx === qi ? { ...q, options: q.options.filter((_, j) => j !== oi), correctIndex: q.correctIndex >= q.options.length - 1 ? 0 : q.correctIndex } : q));
+
+      const handleSave = async () => {
+        setSaving(true);
+        setSaveError('');
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/questions`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ questions }),
+          });
+          if (res.ok) { onBack(); return; }
+          // BUGFIX UTAMA: sebelumnya kalau res.ok false (mis. "no such table: psikotes_questions"
+          // karena tabelnya belum dibuat di D1), TIDAK ADA APA-APA yang terjadi -- tombol
+          // cuma balik jadi "Simpan Semua Soal" lagi tanpa keterangan, persis seperti "soal
+          // tidak bisa disimpan" yang dilaporkan. Sekarang error server ditampilkan jelas.
+          const data = await res.json().catch(() => ({}));
+          setSaveError(data.error || `Gagal menyimpan soal (status ${res.status}). Kalau ini terus terjadi, kemungkinan tabel psikotes di database (D1) belum dibuat -- hubungi admin teknis.`);
+        } catch (err) {
+          setSaveError('Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.');
+        } finally { setSaving(false); }
+      };
+
+      if (loading) return <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>;
+
+      if (loadError) {
+        return (
+          <div className="max-w-2xl mx-auto space-y-4">
+            <div className="flex items-center gap-2">
+              <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-100"><i data-lucide="arrow-left" className="w-4 h-4"></i></button>
+              <h2 className="font-bold text-slate-700 text-base">Kelola Soal — {test.title}</h2>
+            </div>
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center space-y-2">
+              <i data-lucide="alert-triangle" className="w-6 h-6 text-rose-500 mx-auto"></i>
+              <p className="text-xs text-rose-700 font-semibold">{loadError}</p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="max-w-2xl mx-auto space-y-4">
+          <div className="flex items-center gap-2">
+            <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-100"><i data-lucide="arrow-left" className="w-4 h-4"></i></button>
+            <h2 className="font-bold text-slate-700 text-base">Kelola Soal — {test.title}</h2>
+          </div>
+
+          <div className="space-y-3">
+            {questions.map((q, qi) => (
+              <div key={qi} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-400">Soal {qi + 1} • {q.type === 'esai' ? 'Esai' : 'Pilihan Ganda'}</span>
+                  <button onClick={() => removeQuestion(qi)} className="text-rose-500 text-xs font-semibold">Hapus</button>
+                </div>
+                <textarea value={q.text} onChange={e => updateQuestion(qi, { text: e.target.value })} rows={2} placeholder="Tulis pertanyaan..." className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" />
+                {q.type === 'pilihan_ganda' && (
+                  <div className="space-y-1.5">
+                    {q.options.map((opt, oi) => (
+                      <div key={oi} className="flex items-center gap-2">
+                        <input type="radio" checked={q.correctIndex === oi} onChange={() => updateQuestion(qi, { correctIndex: oi })} title="Tandai sebagai jawaban benar" />
+                        <input value={opt} onChange={e => updateOption(qi, oi, e.target.value)} placeholder={`Pilihan ${oi + 1}`} className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs" />
+                        {q.options.length > 2 && <button onClick={() => removeOption(qi, oi)} className="text-slate-400"><i data-lucide="x" className="w-3.5 h-3.5"></i></button>}
+                      </div>
+                    ))}
+                    <button onClick={() => addOption(qi)} className="text-[11px] font-semibold text-purple-700">+ Tambah pilihan</button>
+                    <p className="text-[10px] text-slate-400">Klik bulatan di samping pilihan untuk menandai jawaban yang benar.</p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={() => addQuestion('pilihan_ganda')} className="flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl">+ Soal Pilihan Ganda</button>
+            <button onClick={() => addQuestion('esai')} className="flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl">+ Soal Esai</button>
+          </div>
+
+          {saveError && <p className="text-xs text-rose-600 font-semibold text-center">{saveError}</p>}
+          <button onClick={handleSave} disabled={saving} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+            {saving ? 'Menyimpan...' : 'Simpan Semua Soal'}
+          </button>
+        </div>
+      );
+    }
+
+    // Daftar hasil/skor OJT untuk satu paket psikotes, dengan tombol buka blokir.
+    // Juga berisi bagian "Daftarkan OJT ke Toko" -- admin pilih toko + nama OJT, sistem
+    // buatkan link khusus 1 OJT itu; begitu selesai dikerjakan skornya otomatis nempel ke
+    // toko yang didaftarkan (muncul di menu "Progres OJT" pada akun toko tsb).
+    function PsikotesScoresView({ test, stores, onBack }) {
+      const [attempts, setAttempts] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [links, setLinks] = useState([]);
+      const [linksLoading, setLinksLoading] = useState(true);
+      const [showRegister, setShowRegister] = useState(false);
+      const [regStoreId, setRegStoreId] = useState('');
+      const [regOjtName, setRegOjtName] = useState('');
+      const [registering, setRegistering] = useState(false);
+      const [copiedLinkId, setCopiedLinkId] = useState(null);
+      const [regError, setRegError] = useState(''); // BUGFIX: lihat catatan di handleRegister
+      const [answerDetailId, setAnswerDetailId] = useState(null); // id attempt yang kunci jawabannya sedang dibuka (admin)
+      const [answerDetail, setAnswerDetail] = useState(null);
+      const [answerDetailLoading, setAnswerDetailLoading] = useState(false);
+
+      // BARU: helper copy-to-clipboard yang aman. navigator.clipboard butuh "secure context"
+      // (https/localhost) DAN kadang tidak tersedia sama sekali di WebView APK lama -- kalau
+      // dipanggil langsung tanpa jaga-jaga, errornya tidak tertangkap dan admin tidak dapat
+      // link-nya sama sekali. Sekarang selalu ada fallback: tampilkan link via prompt supaya
+      // tetap bisa disalin manual.
+      const copyToClipboardSafe = async (text) => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+          }
+        } catch (e) { /* lanjut ke fallback di bawah */ }
+        window.prompt('Salin link ini secara manual:', text);
+        return false;
+      };
+
+      // BARU: admin lihat kunci jawaban + jawaban OJT (fitur ini sebelumnya HANYA ada di
+      // sisi Toko -- di sisi Admin belum ada sama sekali, sehingga admin tidak punya cara
+      // membuka kunci jawaban dari tab ini).
+      const openAnswerDetail = async (attemptId) => {
+        if (!attemptId) return;
+        if (answerDetailId === attemptId) { setAnswerDetailId(null); setAnswerDetail(null); return; }
+        setAnswerDetailId(attemptId);
+        setAnswerDetail(null);
+        setAnswerDetailLoading(true);
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/attempts/${attemptId}/answers`, { headers: __authHeaders() });
+          const data = await res.json().catch(() => ({}));
+          setAnswerDetail(res.ok ? (data.answers || []) : []);
+        } catch (e) {
+          setAnswerDetail([]);
+        } finally { setAnswerDetailLoading(false); }
+      };
+
+      const load = async () => {
+        setLoading(true);
+        const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/attempts`, { headers: __authHeaders() });
+        const data = await res.json();
+        if (res.ok) setAttempts(data.attempts);
+        setLoading(false);
+      };
+      const loadLinks = async () => {
+        setLinksLoading(true);
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/ojt-links`, { headers: __authHeaders() });
+          const data = await res.json();
+          if (res.ok) setLinks(data.links);
+        } finally { setLinksLoading(false); }
+      };
+      useEffect(() => { load(); loadLinks(); }, [test.id]);
+
+      const handleUnblock = async (attemptId) => {
+        await __apiFetch(`${WORKER_BASE}/api/psikotes/attempts/${attemptId}/unblock`, { method: 'POST', headers: __authHeaders() });
+        load();
+      };
+
+      const handleRegister = async () => {
+        if (!regStoreId || !regOjtName.trim()) return;
+        setRegistering(true);
+        setRegError('');
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/ojt-links`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId: regStoreId, ojtName: regOjtName.trim() }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setRegOjtName(''); setRegStoreId(''); setShowRegister(false);
+            await loadLinks();
+            // Langsung salin link barunya ke clipboard supaya admin tinggal paste ke WA/dsb.
+            const link = `${PUBLIC_APP_BASE}/psikotes.html?ojt=${data.linkToken}`;
+            copyToClipboardSafe(link).then(() => {
+              setCopiedLinkId(data.id);
+              setTimeout(() => setCopiedLinkId(null), 3000);
+            });
+          } else {
+            // BUGFIX: sebelumnya kalau gagal (mis. toko tidak valid), tidak ada pesan apa pun
+            // ke admin -- form cuma diam, kelihatan seperti "tidak bisa disimpan" padahal
+            // sebenarnya server menolak dengan alasan tertentu. Sekarang alasannya ditampilkan.
+            setRegError(data.error || `Gagal membuat link OJT (status ${res.status}).`);
+          }
+        } catch (e) {
+          setRegError('Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.');
+        } finally { setRegistering(false); }
+      };
+
+      const copyLinkFor = (link) => {
+        const url = `${PUBLIC_APP_BASE}/psikotes.html?ojt=${link.link_token}`;
+        copyToClipboardSafe(url).then(() => {
+          setCopiedLinkId(link.id);
+          setTimeout(() => setCopiedLinkId(null), 2000);
+        });
+      };
+
+      const handleDeleteLink = async (link) => {
+        if (!window.confirm(`Hapus link OJT "${link.ojt_name}" (${link.store_name})? Link ini belum dipakai.`)) return;
+        await __apiFetch(`${WORKER_BASE}/api/psikotes/ojt-links/${link.id}`, { method: 'DELETE', headers: __authHeaders() });
+        loadLinks();
+      };
+
+      const statusBadge = (status) => {
+        if (status === 'blocked') return <span className="text-[10px] bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded-md">Diblokir</span>;
+        if (status === 'completed') return <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md">Selesai</span>;
+        return <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-1 rounded-md">Mengerjakan</span>;
+      };
+
+      return (
+        <div className="max-w-2xl mx-auto space-y-6">
+          <div className="flex items-center gap-2">
+            <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-100"><i data-lucide="arrow-left" className="w-4 h-4"></i></button>
+            <h2 className="font-bold text-slate-700 text-base">Hasil — {test.title}</h2>
+          </div>
+
+          {/* ===== Daftarkan OJT ke Toko ===== */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-700 text-sm">OJT Terdaftar (per Toko)</h3>
+              <button onClick={() => setShowRegister(v => !v)} className="flex items-center gap-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold px-3 py-2 rounded-xl">
+                <i data-lucide="user-plus" className="w-3.5 h-3.5"></i> Daftarkan OJT
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">Pilih toko tempat OJT dilatih + nama OJT, lalu bagikan link yang dihasilkan. Skor psikotesnya otomatis muncul di akun toko yang dipilih.</p>
+
+            {showRegister && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-600">Toko Penempatan OJT</label>
+                  <select value={regStoreId} onChange={e => setRegStoreId(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">
+                    <option value="">Pilih toko...</option>
+                    {(stores || []).map(s => <option key={s.id} value={s.id}>{s.name || s.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-600">Nama OJT</label>
+                  <input value={regOjtName} onChange={e => setRegOjtName(e.target.value)} placeholder="Nama lengkap OJT" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" />
+                </div>
+                {regError && <p className="text-xs text-rose-600 font-semibold">{regError}</p>}
+                <div className="flex gap-2">
+                  <button onClick={() => setShowRegister(false)} className="flex-1 border border-slate-200 text-slate-600 text-sm font-semibold py-2 rounded-xl">Batal</button>
+                  <button onClick={handleRegister} disabled={registering || !regStoreId || !regOjtName.trim()} className="flex-1 bg-indigo-700 hover:bg-indigo-800 disabled:opacity-50 text-white text-sm font-bold py-2 rounded-xl">{registering ? 'Membuat...' : 'Buat Link'}</button>
+                </div>
+              </div>
+            )}
+
+            {linksLoading ? (
+              <div className="text-center text-slate-400 text-sm py-4"><i data-lucide="loader" className="w-5 h-5 animate-spin mx-auto"></i></div>
+            ) : links.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-6 text-center text-slate-400 text-xs">Belum ada OJT yang didaftarkan ke toko untuk paket ini.</div>
+            ) : (
+              <div className="space-y-2">
+                {links.map(l => (
+                  <div key={l.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800 text-sm truncate">{l.ojt_name}</p>
+                        <p className="text-xs text-slate-500 truncate">{l.store_name}</p>
+                        {l.auto_score !== null && l.auto_score !== undefined && <p className="text-xs text-purple-700 font-bold mt-0.5">Skor: {l.auto_score}</p>}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {l.status === 'unused' ? (
+                          <>
+                            <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-1 rounded-md">Belum Dibuka</span>
+                            <button onClick={() => copyLinkFor(l)} className="text-[11px] font-bold bg-slate-100 text-slate-700 px-2.5 py-1.5 rounded-lg">{copiedLinkId === l.id ? 'Tersalin!' : 'Salin Link'}</button>
+                            <button onClick={() => handleDeleteLink(l)} className="text-slate-400 hover:text-rose-600 p-1.5"><i data-lucide="trash-2" className="w-3.5 h-3.5"></i></button>
+                          </>
+                        ) : statusBadge(l.attempt_status)}
+                        {l.attempt_status === 'blocked' && (
+                          <button onClick={() => handleUnblock(l.attempt_id)} className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg">Buka Blokir</button>
+                        )}
+                        {l.attempt_id && (l.attempt_status === 'completed' || l.attempt_status === 'blocked') && (
+                          <button onClick={() => openAnswerDetail(l.attempt_id)} className="text-[11px] font-bold bg-purple-100 text-purple-800 px-2.5 py-1.5 rounded-lg">{answerDetailId === l.attempt_id ? 'Tutup' : 'Kunci Jawaban'}</button>
+                        )}
+                      </div>
+                    </div>
+                    {answerDetailId === l.attempt_id && (
+                      <AnswerKeyPanel loading={answerDetailLoading} answers={answerDetail} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ===== Semua hasil (termasuk yang isi nama/penempatan sendiri lewat link umum) ===== */}
+          <div className="space-y-3">
+            <h3 className="font-bold text-slate-700 text-sm">Semua Hasil</h3>
+            {loading ? (
+              <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>
+            ) : attempts.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center text-slate-500 text-sm">Belum ada OJT yang mengerjakan psikotes ini.</div>
+            ) : (
+              <div className="space-y-2">
+                {attempts.map(a => (
+                  <div key={a.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="p-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-800 text-sm">{a.ojt_name}</p>
+                        <p className="text-xs text-slate-500">{a.penempatan}</p>
+                        {a.auto_score !== null && a.auto_score !== undefined && <p className="text-xs text-purple-700 font-bold mt-0.5">Skor: {a.auto_score}</p>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {statusBadge(a.status)}
+                        {a.status === 'blocked' && (
+                          <button onClick={() => handleUnblock(a.id)} className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg">Buka Blokir</button>
+                        )}
+                        {(a.status === 'completed' || a.status === 'blocked') && (
+                          <button onClick={() => openAnswerDetail(a.id)} className="text-[11px] font-bold bg-purple-100 text-purple-800 px-2.5 py-1.5 rounded-lg">{answerDetailId === a.id ? 'Tutup' : 'Kunci Jawaban'}</button>
+                        )}
+                      </div>
+                    </div>
+                    {answerDetailId === a.id && (
+                      <AnswerKeyPanel loading={answerDetailLoading} answers={answerDetail} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // BARU: panel "Kunci Jawaban" -- dipakai admin di PsikotesScoresView untuk melihat setiap
+    // jawaban OJT dibandingkan kunci jawabannya (pilihan ganda) atau isi jawaban esai apa
+    // adanya. Sebelumnya fitur pembanding ini HANYA ada di sisi Toko (StorePsikotesTab).
+    function AnswerKeyPanel({ loading, answers }) {
+      if (loading) {
+        return <div className="border-t border-slate-100 p-4 text-center text-slate-400 text-xs"><i data-lucide="loader" className="w-4 h-4 animate-spin mx-auto"></i></div>;
+      }
+      if (!answers || answers.length === 0) {
+        return <div className="border-t border-slate-100 p-4 text-center text-slate-400 text-xs">Belum ada jawaban tersimpan.</div>;
+      }
+      return (
+        <div className="border-t border-slate-100 p-4 bg-slate-50 space-y-3">
+          {answers.map((ans, i) => (
+            <div key={ans.question_id} className="bg-white rounded-xl border border-slate-200 p-3 space-y-1.5">
+              <p className="text-xs font-semibold text-slate-700">{i + 1}. {ans.question_text}</p>
+              {ans.question_type === 'pilihan_ganda' ? (
+                <div className="space-y-1">
+                  {ans.options.map((opt, oi) => {
+                    const isChosen = String(ans.answer_text) === String(oi);
+                    const isCorrectOpt = ans.correct_index === oi;
+                    return (
+                      <div key={oi} className={`text-[11px] px-2 py-1 rounded-lg ${isChosen && isCorrectOpt ? 'bg-emerald-50 text-emerald-700 font-semibold' : isChosen ? 'bg-rose-50 text-rose-700 font-semibold' : isCorrectOpt ? 'text-emerald-600' : 'text-slate-500'}`}>
+                        {opt} {isChosen && '• dipilih'} {isCorrectOpt && '• kunci jawaban'}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-600 whitespace-pre-wrap bg-slate-50 rounded-lg p-2">{ans.answer_text || <span className="text-slate-400">Tidak dijawab</span>}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
     function LoginScreen({ onLoggedIn }) {
       const [mode, setMode] = useState('store'); // 'store' | 'admin'
       const [adminExists, setAdminExists] = useState(null); // null = belum dicek
@@ -1898,7 +2862,7 @@ const { useState, useEffect } = React;
         };
 
         const tryAdminCheck = (n) => {
-          fetch(`${WORKER_BASE}/api/admin-exists`)
+          __apiFetch(`${WORKER_BASE}/api/admin-exists`)
             .then(res => { if (!res.ok) throw new Error('admin-exists gagal'); return res.json(); })
             .then(data => {
               if (cancelled) return;
@@ -1957,23 +2921,14 @@ const { useState, useEffect } = React;
         };
       }, []);
 
-      const attemptKeyFor = (id) => `login_${mode}_${id}`;
-
       const handleStoreLogin = async (e) => {
         e.preventDefault();
         setError('');
         if (!storeId || !token) { setError('Pilih toko & isi token.'); return; }
-        const key = attemptKeyFor(storeId);
-        const attempt = getLoginAttempts(key);
-        if (attempt.lockedUntil > Date.now()) {
-          setError(`Terlalu banyak percobaan gagal. Coba lagi dalam ${Math.ceil((attempt.lockedUntil - Date.now()) / 1000)} detik.`);
-          return;
-        }
         setLoading(true);
         try {
           const email = storeIdToEmail(storeId);
           const cred = await auth.signInWithEmailAndPassword(email, token);
-          clearLoginAttempts(key);
           const info = cred.storeInfo;
           if (!info || info.active === false) {
             await auth.signOut();
@@ -1984,16 +2939,14 @@ const { useState, useEffect } = React;
           saveSession('store', { storeId, storeName: info.name });
           onLoggedIn({ role: 'store', storeId, storeName: info.name });
         } catch (err) {
-          // BUGFIX (2026-07-30): dulu SELALU menampilkan "Nama toko atau token salah" apa pun
-          // penyebabnya, termasuk saat sebenarnya PENYEBABNYA adalah limit 2 device (pesan asli
-          // dari server soal itu jadi tidak pernah terlihat user). Sekarang: kalau ini kasus
-          // limit device (status 409), tampilkan pesan ASLI dari server & JANGAN hitung sebagai
-          // percobaan gagal (registerFailedAttempt) — user tidak salah ketik apa pun, jadi tidak
-          // adil kalau ini ikut mengunci akunnya karena "5x salah dalam 15 menit".
-          if (err && err.status === 409) {
-            setError(err.message || 'Sudah ada 2 perangkat lain yang sedang aktif memakai akun toko ini.');
+          // Anti brute-force sepenuhnya ditangani server (lihat catatan KEAMANAN di atas):
+          // kalau terlalu banyak percobaan gagal, server membalas status 429 dengan pesan
+          // sisa waktu kunci -- tampilkan APA ADANYA, jangan diseragamkan.
+          if (err && err.status === 429) {
+            setError(err.message || 'Terlalu banyak percobaan login gagal. Coba lagi beberapa saat lagi.');
+          } else if (err && err.status === 409) {
+            setError(err.message || 'Sudah ada perangkat lain yang sedang aktif memakai akun toko ini.');
           } else {
-            registerFailedAttempt(key);
             setError('Nama toko atau token salah.');
           }
         } finally {
@@ -2004,12 +2957,6 @@ const { useState, useEffect } = React;
       const handleAdminLogin = async (e) => {
         e.preventDefault();
         setError('');
-        const key = attemptKeyFor('admin');
-        const attempt = getLoginAttempts(key);
-        if (attempt.lockedUntil > Date.now()) {
-          setError(`Terlalu banyak percobaan gagal. Coba lagi dalam ${Math.ceil((attempt.lockedUntil - Date.now()) / 1000)} detik.`);
-          return;
-        }
         setLoading(true);
         try {
           if (adminExists === false) {
@@ -2024,12 +2971,13 @@ const { useState, useEffect } = React;
             return;
           }
           await auth.signInWithEmailAndPassword(ADMIN_EMAIL, adminPassword);
-          clearLoginAttempts(key);
           saveSession('admin', {});
           onLoggedIn({ role: 'admin' });
         } catch (err) {
-          registerFailedAttempt(key);
-          if (adminExists === false && /sudah/i.test(err.message || '')) {
+          // Anti brute-force sepenuhnya ditangani server -- lihat catatan KEAMANAN di atas.
+          if (err && err.status === 429) {
+            setError(err.message || 'Terlalu banyak percobaan login gagal. Coba lagi beberapa saat lagi.');
+          } else if (adminExists === false && /sudah/i.test(err.message || '')) {
             // Server bilang admin sebenarnya sudah ada (flag di sisi ini sempat tidak sinkron,
             // dan sudah otomatis dibetulkan oleh server barusan) — langsung alihkan ke form Login
             // supaya pengguna tidak bingung dan tidak coba "buat akun" berulang-ulang.
@@ -2112,7 +3060,7 @@ const { useState, useEffect } = React;
 
                   {storeDropdownOpen && !dirLoading && (
                     <div className="absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg animate-fadeIn overflow-hidden">
-                      {storeDirectory.length > 5 && (
+                      {storeDirectory.length > 4 && (
                         <div className="p-2 border-b border-slate-100">
                           <div className="relative">
                             <i data-lucide="search" className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
@@ -2127,7 +3075,10 @@ const { useState, useEffect } = React;
                           </div>
                         </div>
                       )}
-                      <ul className="max-h-56 overflow-y-auto py-1">
+                      {/* Dibatasi tinggi supaya HANYA ~4 toko yang terlihat sekaligus (tidak lagi
+                          memenuhi/menutupi layar saat daftar toko banyak) -- sisanya wajib discroll
+                          atau dicari lewat kotak pencarian di atas. */}
+                      <ul className="max-h-[168px] overflow-y-auto py-1 overscroll-contain">
                         {filteredStoreDirectory.length === 0 && (
                           <li className="px-3 py-2.5 text-xs text-slate-400 text-center">
                             {storeDirectory.length === 0 ? 'Tidak ada toko terdaftar' : `Tidak ada toko yang cocok dengan "${storeSearchQuery}".`}
@@ -2660,7 +3611,7 @@ const { useState, useEffect } = React;
           if (stopped) return;
           if (!document.hidden) {
             try {
-              const res = await fetch(`${WORKER_BASE}/api/stores-summary`, { headers: __authHeaders() });
+              const res = await __apiFetch(`${WORKER_BASE}/api/stores-summary`, { headers: __authHeaders() });
               const data = await res.json();
               const map = data.stores || {};
               const list = Object.keys(map).map(id => ({ id, ...map[id] })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -2687,7 +3638,7 @@ const { useState, useEffect } = React;
           if (stopped) return;
           if (!document.hidden) {
             try {
-              const res = await fetch(`${WORKER_BASE}/api/presence/status`, { headers: __authHeaders() });
+              const res = await __apiFetch(`${WORKER_BASE}/api/presence/status`, { headers: __authHeaders() });
               const data = await res.json();
               if (!stopped) setStoresPresence(data || {});
             } catch (e) { /* diam-diam, coba lagi di poll berikutnya */ }
@@ -2729,7 +3680,7 @@ const { useState, useEffect } = React;
       const loadDevices = async () => {
         setLoadingDevices(true);
         try {
-          const res = await fetch(`${WORKER_BASE}/api/admin/devices`, { headers: __authHeaders() });
+          const res = await __apiFetch(`${WORKER_BASE}/api/admin/devices`, { headers: __authHeaders() });
           const data = await res.json();
           setDevicesData(data || {});
         } catch (e) {
@@ -2757,7 +3708,7 @@ const { useState, useEffect } = React;
         const key = `${storeId}::${deviceId}`;
         setKickingDevice(key);
         try {
-          await fetch(`${WORKER_BASE}/api/admin/devices/kick`, {
+          await __apiFetch(`${WORKER_BASE}/api/admin/devices/kick`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
             body: JSON.stringify({ storeId, deviceId }),
@@ -2895,7 +3846,7 @@ const { useState, useEffect } = React;
         const refreshSummary = async () => {
           if (stopped) return;
           try {
-            const res = await fetch(`${WORKER_BASE}/api/chat/summary`, { headers: __authHeaders() });
+            const res = await __apiFetch(`${WORKER_BASE}/api/chat/summary`, { headers: __authHeaders() });
             const data = await res.json();
             const summaryMap = data.summary || {};
             const counts = {};
@@ -3108,7 +4059,7 @@ const { useState, useEffect } = React;
           // Kirim notifikasi otomatis ke toko lewat Chat, sebagai pemberitahuan laporan 7 hari lalu
           // telah dibersihkan oleh Admin.
           const notifText = `🧹 ${oldEntries.length} laporan penjualan & stok yang usianya sudah 7 hari atau lebih telah dibersihkan oleh Admin dari sistem, untuk menjaga performa aplikasi.`;
-          await fetch(`${WORKER_BASE}/api/chat`, {
+          await __apiFetch(`${WORKER_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
             body: JSON.stringify({ storeId: detailStore.id, senderLabel: 'Sistem (Otomatis)', text: notifText }),
@@ -3393,6 +4344,10 @@ const { useState, useEffect } = React;
                     <i data-lucide="book-open" className="w-4 h-4"></i>
                     <span>Panduan SOP</span>
                     <span className="ml-auto text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded-md">{sopCategories.length}</span>
+                  </button>
+                  <button onClick={() => { setTab('psikotes'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'psikotes' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="graduation-cap" className="w-4 h-4"></i>
+                    <span>Psikotes OJT</span>
                   </button>
                   <button data-tour="menu-chat" onClick={() => { setTab('chat'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'chat' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="message-circle" className="w-4 h-4"></i>
@@ -3778,6 +4733,10 @@ const { useState, useEffect } = React;
                   ))}
                 </div>
               </div>
+            )}
+
+            {tab === 'psikotes' && (
+              <AdminPsikotesTab stores={stores} />
             )}
 
             {tab === 'chat' && (
@@ -4356,6 +5315,22 @@ const { useState, useEffect } = React;
     // ROOT APLIKASI: MENANGANI SESI & ROUTING LOGIN
     // ==========================================
     function AppRoot() {
+      // ==========================================
+      // ROUTE PUBLIK: halaman Psikotes OJT (?psikotes=TOKEN di URL)
+      // ==========================================
+      // Dicek PALING AWAL, sebelum logika sesi admin/toko apa pun -- OJT yang membuka link
+      // ini TIDAK login sama sekali (anonim), jadi harus lolos sebelum layar Login normal.
+      const psikotesToken = new URLSearchParams(window.location.search).get('psikotes');
+      if (psikotesToken) {
+        return <PsikotesOjtPublicPage linkToken={psikotesToken} />;
+      }
+      // Link per-OJT yang didaftarkan admin ke toko tertentu (?ojt=TOKEN) -- nama & toko
+      // sudah otomatis terisi dari sisi server, OJT tidak isi form manual.
+      const ojtToken = new URLSearchParams(window.location.search).get('ojt');
+      if (ojtToken) {
+        return <PsikotesOjtPublicPage linkToken={ojtToken} assigned={true} />;
+      }
+
       const [session, setSession] = useState(() => loadSession());
       const [checking, setChecking] = useState(true);
       // Splash screen animasi masuk: tampil sebentar di awal, lalu otomatis hilang
@@ -4401,7 +5376,7 @@ const { useState, useEffect } = React;
         // Bukan satu-satunya jaring pengaman — kalau ini gagal (mis. jaringan putus),
         // status tetap otomatis jadi Offline lewat mekanisme kedaluwarsa heartbeat.
         if (session && session.role === 'store' && session.storeId) {
-          fetch(`${WORKER_BASE}/api/presence/offline`, {
+          __apiFetch(`${WORKER_BASE}/api/presence/offline`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
             body: JSON.stringify({ storeId: session.storeId, deviceId: getDeviceId() }),
@@ -4427,7 +5402,7 @@ const { useState, useEffect } = React;
         const doInactivityLogout = async () => {
           try {
             if (session.role === 'store' && session.storeId) {
-              await fetch(`${WORKER_BASE}/api/presence/offline`, {
+              await __apiFetch(`${WORKER_BASE}/api/presence/offline`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...__authHeaders() },
                 body: JSON.stringify({ storeId: session.storeId, deviceId: getDeviceId() }),
@@ -4535,6 +5510,63 @@ const { useState, useEffect } = React;
       const [stockItemDraft, setStockItemDraft] = useState({ nama: PRINTING_ITEM_OPTIONS[0], jumlah: '', satuan: 'Bag' });
       const [stockPrintData, setStockPrintData] = useState(null);
 
+      // ==========================================
+      // RIWAYAT CETAK (tersimpan LOKAL di perangkat masing-masing, via localStorage —
+      // BUKAN dikirim/disimpan ke server/Cloud, jadi tiap HP/laptop punya riwayatnya sendiri)
+      // ==========================================
+      // Setiap entri diberi "type" ('premix' / 'stock') supaya riwayat Premix dan Catatan
+      // Stok bisa selalu dipisahkan/difilter dengan jelas dan TIDAK tercampur saat ditampilkan.
+      const PRINT_HISTORY_KEY = 'tarobun_print_history_v1';
+      const [printHistory, setPrintHistory] = useState(() => {
+        try {
+          const raw = localStorage.getItem(PRINT_HISTORY_KEY);
+          const parsed = raw ? JSON.parse(raw) : [];
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (err) {
+          console.error('Gagal membaca riwayat cetak lokal:', err);
+          return [];
+        }
+      });
+      const [printHistoryFilter, setPrintHistoryFilter] = useState('all'); // 'all' | 'premix' | 'stock'
+      const [confirmDeleteHistoryId, setConfirmDeleteHistoryId] = useState(null);
+      const [confirmClearHistoryType, setConfirmClearHistoryType] = useState(null); // null | 'all' | 'premix' | 'stock'
+
+      const persistPrintHistory = (list) => {
+        try {
+          localStorage.setItem(PRINT_HISTORY_KEY, JSON.stringify(list));
+        } catch (err) {
+          console.error('Gagal menyimpan riwayat cetak lokal:', err);
+        }
+      };
+
+      const saveToPrintHistory = (type, data) => {
+        setPrintHistory(prev => {
+          const entry = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, type, data, savedAt: new Date().toISOString() };
+          // Batasi 200 entri terakhir per device supaya localStorage tidak membengkak.
+          const next = [entry, ...prev].slice(0, 200);
+          persistPrintHistory(next);
+          return next;
+        });
+      };
+
+      const deletePrintHistoryItem = (id) => {
+        setPrintHistory(prev => {
+          const next = prev.filter(h => h.id !== id);
+          persistPrintHistory(next);
+          return next;
+        });
+        setConfirmDeleteHistoryId(null);
+      };
+
+      const clearPrintHistory = (type) => {
+        setPrintHistory(prev => {
+          const next = type === 'all' ? [] : prev.filter(h => h.type !== type);
+          persistPrintHistory(next);
+          return next;
+        });
+        setConfirmClearHistoryType(null);
+      };
+
       const handlePremixFormChange = (field, value) => setPremixForm(prev => ({ ...prev, [field]: value }));
 
       const handlePremixPrint = (e) => {
@@ -4543,7 +5575,15 @@ const { useState, useEffect } = React;
           setNotification({ type: 'error', message: 'Lengkapi Nama Toko, Nama Barang, Tanggal Buat & Tanggal Exp terlebih dahulu.' });
           return;
         }
-        setPremixPrintData({ ...premixForm });
+        const dataToPrint = { ...premixForm };
+        // PENTING: pastikan data Catatan Stok yang lama dikosongkan lebih dulu supaya TIDAK
+        // ikut tercetak bersamaan dengan Label Premix di area cetak (lihat #thermalPrintArea).
+        setStockPrintData(null);
+        setPremixPrintData(dataToPrint);
+        // Simpan ke riwayat lokal (fitur "simpan setelah klik print") & langsung kosongkan
+        // kembali form-nya supaya siap dipakai untuk cetak berikutnya.
+        saveToPrintHistory('premix', dataToPrint);
+        setPremixForm({ namaToko: storeName || '', namaBarang: '', tanggalBuat: '', tanggalExp: '', asalBahan: '' });
       };
 
       // Begitu data cetak premix siap, panggil dialog print browser. Dialog print bawaan
@@ -4577,7 +5617,16 @@ const { useState, useEffect } = React;
           setNotification({ type: 'error', message: 'Tambahkan minimal 1 item sebelum mencetak.' });
           return;
         }
-        setStockPrintData({ namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: new Date() });
+        const now = new Date();
+        const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now };
+        // PENTING: pastikan data Label Premix yang lama dikosongkan lebih dulu supaya TIDAK
+        // ikut tercetak bersamaan dengan Catatan Stok di area cetak (lihat #thermalPrintArea).
+        setPremixPrintData(null);
+        setStockPrintData(dataToPrint);
+        // Simpan ke riwayat lokal & kosongkan kembali daftar item + nama toko.
+        saveToPrintHistory('stock', { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now.toISOString() });
+        setStockNoteItems([]);
+        setStockNoteStore(storeName || '');
       };
 
       useEffect(() => {
@@ -4586,6 +5635,18 @@ const { useState, useEffect } = React;
           return () => clearTimeout(t);
         }
       }, [stockPrintData]);
+
+      // Setelah dialog print browser ditutup (baik jadi dicetak maupun dibatalkan), kosongkan
+      // kembali area cetak. Ini jaring pengaman tambahan (selain pengosongan di atas) supaya
+      // area cetak tidak pernah menyimpan data lama yang bisa ikut tercetak di lain waktu.
+      useEffect(() => {
+        const handleAfterPrint = () => {
+          setPremixPrintData(null);
+          setStockPrintData(null);
+        };
+        window.addEventListener('afterprint', handleAfterPrint);
+        return () => window.removeEventListener('afterprint', handleAfterPrint);
+      }, []);
 
       // ==========================================
       // STATUS KONEKSI JARINGAN (sisi Toko)
@@ -4648,7 +5709,7 @@ const { useState, useEffect } = React;
         // dan tetap murni HTTP biasa, bukan WebSocket.
         let stoppedByServer = false;
         const sendHeartbeat = () => {
-          fetch(`${WORKER_BASE}/api/presence/ping`, {
+          __apiFetch(`${WORKER_BASE}/api/presence/ping`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
             body: JSON.stringify({ storeId, storeName, deviceId: getDeviceId() }),
@@ -5237,7 +6298,7 @@ useEffect(() => {
         const refreshSummary = async () => {
           if (stopped) return;
           try {
-            const res = await fetch(`${WORKER_BASE}/api/chat/summary`, { headers: __authHeaders() });
+            const res = await __apiFetch(`${WORKER_BASE}/api/chat/summary`, { headers: __authHeaders() });
             const data = await res.json();
             const s = data.summary;
             if (s) {
@@ -6594,13 +7655,17 @@ Daily inventory done✅
       };
 
       // Kirim foto ke Telegram sekali percobaan (dipakai internal oleh sendPhotoToTelegram)
-      const sendPhotoToTelegramOnce = async (base64DataUrl, caption, token, chatId) => {
-        const blob = dataUrlToBlob(base64DataUrl);
+      const sendPhotoToTelegramOnce = async (photoSrc, caption, token, chatId) => {
         const formData = new FormData();
         formData.append('chat_id', chatId);
         formData.append('caption', caption);
         formData.append('parse_mode', 'Markdown');
-        formData.append('photo', blob, 'foto.jpg');
+        if (/^data:/.test(photoSrc)) {
+          const blob = dataUrlToBlob(photoSrc);
+          formData.append('photo', blob, 'foto.jpg');
+        } else {
+          formData.append('photo', photoSrc);
+        }
 
         // Batasi waktu tunggu agar tidak menggantung tanpa batas saat koneksi HP lemah/lambat
         const controller = new AbortController();
@@ -6840,16 +7905,24 @@ Daily inventory done✅
       return (
         <div className="min-h-screen bg-slate-50 text-slate-800">
           {showUpdatePopup && systemUpdate && (
-            <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 animate-fadeIn">
-              <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 border border-purple-100 animate-scaleIn">
-                <div className="w-14 h-14 rounded-full bg-purple-100 flex items-center justify-center text-2xl mx-auto mb-4">
+            // RESPONSIF (fix): sebelumnya kartu ini tidak punya batas tinggi/scroll, jadi kalau
+            // teks update panjang (banyak baris/emoji), di layar HP (bukan mode desktop, viewport
+            // pendek) kartu bisa melebihi tinggi layar — bagian atas/tombol "Paham" jadi terpotong
+            // dan tidak terjangkau. Sekarang: overlay boleh discroll (overflow-y-auto + py-6) dan
+            // kartu dibatasi max-h-[85vh] dengan area teks (bukan seluruh kartu) yang discroll
+            // sendiri, supaya ikon & tombol "Paham" tetap selalu terlihat/terjangkau di kartu yang sama.
+            <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 py-6 overflow-y-auto animate-fadeIn">
+              <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 border border-purple-100 animate-scaleIn max-h-[85vh] flex flex-col">
+                <div className="w-14 h-14 rounded-full bg-purple-100 flex items-center justify-center text-2xl mx-auto mb-4 shrink-0">
                   📢
                 </div>
-                <h3 className="text-center font-bold text-slate-800 text-base mb-2">Update Sistem</h3>
-                <p className="text-center text-sm text-slate-600 whitespace-pre-line mb-5">{systemUpdate.text}</p>
+                <h3 className="text-center font-bold text-slate-800 text-base mb-2 shrink-0">Update Sistem</h3>
+                <div className="overflow-y-auto min-h-0 mb-5 pr-1">
+                  <p className="text-center text-sm text-slate-600 whitespace-pre-line">{systemUpdate.text}</p>
+                </div>
                 <button
                   onClick={dismissSystemUpdate}
-                  className="w-full bg-purple-800 hover:bg-purple-900 text-white font-bold py-3 rounded-xl text-sm transition-all"
+                  className="w-full bg-purple-800 hover:bg-purple-900 text-white font-bold py-3 rounded-xl text-sm transition-all shrink-0"
                 >
                   Paham
                 </button>
@@ -6995,6 +8068,10 @@ Daily inventory done✅
                     <i data-lucide="message-circle" className="w-4 h-4"></i>
                     <span>Chat Admin</span>
                     {unreadChat > 0 && <span className="ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md">{unreadChat}</span>}
+                  </button>
+                  <button data-tour="menu-psikotes-ojt" onClick={() => { setActiveTab('psikotesOjt'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'psikotesOjt' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="graduation-cap" className="w-4 h-4"></i>
+                    <span>Progres OJT</span>
                   </button>
 
                   <div className="pt-3 mt-3 border-t border-slate-100 space-y-1">
@@ -8608,6 +9685,10 @@ Daily inventory done✅
                 <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
                   <button onClick={() => setPrintingSubTab('premix')} className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all ${printingSubTab === 'premix' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Premix</button>
                   <button onClick={() => setPrintingSubTab('stock')} className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all ${printingSubTab === 'stock' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Catatan Stok</button>
+                  <button onClick={() => setPrintingSubTab('history')} className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1 ${printingSubTab === 'history' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>
+                    <i data-lucide="history" className="w-3.5 h-3.5"></i>
+                    <span>Riwayat</span>
+                  </button>
                 </div>
 
                 {printingSubTab === 'premix' && (
@@ -8688,6 +9769,113 @@ Daily inventory done✅
                     </button>
                   </div>
                 )}
+
+                {printingSubTab === 'history' && (() => {
+                  const filteredHistory = printHistory.filter(h => printHistoryFilter === 'all' ? true : h.type === printHistoryFilter);
+                  return (
+                    <div className="space-y-3">
+                      <div className="bg-purple-50 border border-purple-100 rounded-xl px-3 py-2.5 flex items-start gap-2">
+                        <i data-lucide="smartphone" className="w-3.5 h-3.5 text-purple-700 shrink-0 mt-0.5"></i>
+                        <p className="text-[11px] text-purple-800 leading-relaxed">Riwayat ini tersimpan <b>hanya di perangkat ini</b> (localStorage), tidak dikirim ke server. Kalau ganti HP/browser atau membersihkan data browser, riwayat ini akan hilang.</p>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex bg-slate-100 rounded-xl p-1 gap-1 flex-1">
+                          <button onClick={() => setPrintHistoryFilter('all')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-all ${printHistoryFilter === 'all' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Semua</button>
+                          <button onClick={() => setPrintHistoryFilter('premix')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-all ${printHistoryFilter === 'premix' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Premix</button>
+                          <button onClick={() => setPrintHistoryFilter('stock')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-all ${printHistoryFilter === 'stock' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Catatan Stok</button>
+                        </div>
+                        {filteredHistory.length > 0 && (
+                          <button
+                            onClick={() => setConfirmClearHistoryType(printHistoryFilter)}
+                            className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-100 px-2.5 py-2 rounded-xl"
+                          >
+                            <i data-lucide="trash-2" className="w-3 h-3"></i>
+                            <span>Hapus Semua</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {filteredHistory.length === 0 ? (
+                        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
+                          <i data-lucide="inbox" className="w-8 h-8 text-slate-300 mx-auto mb-2"></i>
+                          <p className="text-xs text-slate-500">Belum ada riwayat cetak{printHistoryFilter !== 'all' ? (printHistoryFilter === 'premix' ? ' Premix' : ' Catatan Stok') : ''}.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {filteredHistory.map(h => (
+                            <div key={h.id} className="bg-white rounded-2xl border border-slate-200 p-3.5">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${h.type === 'premix' ? 'bg-wheat-100 text-wheat-600' : 'bg-brand-100 text-brand-700'}`}>
+                                      {h.type === 'premix' ? 'PREMIX' : 'CATATAN STOK'}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400">
+                                      {new Date(h.savedAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  </div>
+                                  {h.type === 'premix' ? (
+                                    <div className="text-xs text-slate-600 space-y-0.5">
+                                      <p className="font-semibold text-slate-800 truncate">{h.data.namaBarang}</p>
+                                      <p className="truncate">Toko: {h.data.namaToko}</p>
+                                      <p className="truncate">Buat: {formatIndonesianDate(h.data.tanggalBuat)} &middot; Exp: {formatIndonesianDate(h.data.tanggalExp)}</p>
+                                      {h.data.asalBahan && <p className="truncate">Asal: {h.data.asalBahan}</p>}
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-slate-600 space-y-0.5">
+                                      <p className="font-semibold text-slate-800 truncate">Toko: {h.data.namaToko}</p>
+                                      <p>{(h.data.items || []).length} item</p>
+                                      <p className="truncate text-slate-500">
+                                        {(h.data.items || []).map(it => `${it.nama} (${it.jumlah} ${it.satuan})`).join(', ')}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                                <button onClick={() => setConfirmDeleteHistoryId(h.id)} className="shrink-0 text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg border border-rose-100">
+                                  <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Konfirmasi hapus 1 entri riwayat cetak */}
+            {confirmDeleteHistoryId && (
+              <div className="fixed inset-0 z-[95] bg-black/50 flex items-center justify-center p-4 animate-fadeIn">
+                <div className="bg-white rounded-2xl animate-scaleIn w-full max-w-sm p-6">
+                  <h3 className="font-bold text-slate-800 mb-2">Hapus Riwayat Ini?</h3>
+                  <p className="text-xs text-slate-500 mb-4">Entri riwayat cetak ini akan dihapus permanen dari perangkat ini dan tidak bisa dikembalikan.</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setConfirmDeleteHistoryId(null)} className="flex-1 bg-slate-100 text-slate-600 font-bold py-2.5 rounded-xl text-sm">Batal</button>
+                    <button onClick={() => deletePrintHistoryItem(confirmDeleteHistoryId)} className="flex-1 bg-rose-600 text-white font-bold py-2.5 rounded-xl text-sm">Ya, Hapus</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Konfirmasi hapus semua riwayat cetak (sesuai filter yang aktif) */}
+            {confirmClearHistoryType && (
+              <div className="fixed inset-0 z-[95] bg-black/50 flex items-center justify-center p-4 animate-fadeIn">
+                <div className="bg-white rounded-2xl animate-scaleIn w-full max-w-sm p-6">
+                  <h3 className="font-bold text-slate-800 mb-2">Hapus Semua Riwayat?</h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                    {confirmClearHistoryType === 'all'
+                      ? 'Seluruh riwayat cetak (Premix & Catatan Stok) di perangkat ini akan dihapus permanen.'
+                      : `Seluruh riwayat cetak ${confirmClearHistoryType === 'premix' ? 'Premix' : 'Catatan Stok'} di perangkat ini akan dihapus permanen.`}
+                    {' '}Tindakan ini tidak bisa dibatalkan.
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setConfirmClearHistoryType(null)} className="flex-1 bg-slate-100 text-slate-600 font-bold py-2.5 rounded-xl text-sm">Batal</button>
+                    <button onClick={() => clearPrintHistory(confirmClearHistoryType)} className="flex-1 bg-rose-600 text-white font-bold py-2.5 rounded-xl text-sm">Ya, Hapus</button>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -8867,8 +10055,132 @@ Daily inventory done✅
               <ChatPanel storeId={storeId} senderRole="store" senderLabel={storeName} title="Chat dengan Admin" />
             )}
 
+            {activeTab === 'psikotesOjt' && (
+              <StorePsikotesTab />
+            )}
+
           </main>
 
+        </div>
+      );
+    }
+
+    // ==========================================
+    // TOKO: Tab "Progres OJT" -- pantau skor & status psikotes OJT yang ditempatkan di toko ini
+    // ==========================================
+    function StorePsikotesTab() {
+      const [attempts, setAttempts] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [loadError, setLoadError] = useState(''); // BUGFIX: sebelumnya kalau gagal memuat
+      // (koneksi putus, sesi kadaluarsa, atau origin APK belum diizinkan di server), tab ini
+      // hanya diam menampilkan "Belum ada OJT..." tanpa keterangan -- terlihat seperti error/tidak
+      // bisa dibuka padahal sebenarnya gagal ambil data. Sekarang errornya ditampilkan jelas.
+      const [detailId, setDetailId] = useState(null); // attempt id yang riwayat jawabannya sedang dibuka
+      const [detailAnswers, setDetailAnswers] = useState(null);
+      const [detailLoading, setDetailLoading] = useState(false);
+
+      const load = async () => {
+        setLoading(true);
+        setLoadError('');
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/store/psikotes/attempts`, { headers: __authHeaders() });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) { setAttempts(data.attempts || []); }
+          else if (res.status === 401) { setLoadError('Sesi login sudah berakhir. Silakan keluar lalu masuk (login) lagi.'); }
+          else { setLoadError(data.error || `Gagal memuat data (status ${res.status}).`); }
+        } catch (err) {
+          setLoadError('Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.');
+        } finally { setLoading(false); }
+      };
+      useEffect(() => { load(); }, []);
+
+      const openDetail = async (attemptId) => {
+        if (detailId === attemptId) { setDetailId(null); setDetailAnswers(null); return; }
+        setDetailId(attemptId);
+        setDetailAnswers(null);
+        setDetailLoading(true);
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/store/psikotes/attempts/${attemptId}/answers`, { headers: __authHeaders() });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) setDetailAnswers(data.answers || []);
+          else setDetailAnswers([]);
+        } catch (err) {
+          setDetailAnswers([]);
+        } finally { setDetailLoading(false); }
+      };
+
+      const statusBadge = (status) => {
+        if (status === 'blocked') return <span className="text-[10px] bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded-md">Diblokir</span>;
+        if (status === 'completed') return <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md">Selesai</span>;
+        return <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-1 rounded-md">Sedang Mengerjakan</span>;
+      };
+
+      return (
+        <div className="max-w-2xl mx-auto space-y-4">
+          <div>
+            <h2 className="font-bold text-slate-700 text-base">Progres OJT</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Skor & status psikotes OJT yang ditempatkan di toko ini oleh admin.</p>
+          </div>
+
+          {loading ? (
+            <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>
+          ) : loadError ? (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center space-y-3">
+              <i data-lucide="alert-triangle" className="w-6 h-6 text-rose-500 mx-auto"></i>
+              <p className="text-xs text-rose-700 font-semibold">{loadError}</p>
+              <button onClick={load} className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2 rounded-xl">Coba Lagi</button>
+            </div>
+          ) : attempts.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center text-slate-500 text-sm">Belum ada OJT yang didaftarkan admin ke toko ini.</div>
+          ) : (
+            <div className="space-y-2">
+              {attempts.map(a => (
+                <div key={a.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <button onClick={() => openDetail(a.id)} className="w-full text-left p-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-800 text-sm truncate">{a.ojt_name}</p>
+                      <p className="text-xs text-slate-500 truncate">{a.test_title}</p>
+                      {a.auto_score !== null && a.auto_score !== undefined && <p className="text-xs text-purple-700 font-bold mt-0.5">Skor: {a.auto_score}{a.manual_score !== null && a.manual_score !== undefined ? ` • Manual: ${a.manual_score}` : ''}</p>}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {statusBadge(a.status)}
+                      <i data-lucide={detailId === a.id ? 'chevron-up' : 'chevron-down'} className="w-4 h-4 text-slate-400"></i>
+                    </div>
+                  </button>
+                  {detailId === a.id && (
+                    <div className="border-t border-slate-100 p-4 bg-slate-50 space-y-3">
+                      {detailLoading ? (
+                        <div className="text-center text-slate-400 text-xs py-4"><i data-lucide="loader" className="w-4 h-4 animate-spin mx-auto"></i></div>
+                      ) : !detailAnswers || detailAnswers.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-2">Belum ada jawaban tersimpan.</p>
+                      ) : (
+                        detailAnswers.map((ans, i) => (
+                          <div key={ans.question_id} className="bg-white rounded-xl border border-slate-200 p-3 space-y-1.5">
+                            <p className="text-xs font-semibold text-slate-700">{i + 1}. {ans.question_text}</p>
+                            {ans.question_type === 'pilihan_ganda' ? (
+                              <div className="space-y-1">
+                                {ans.options.map((opt, oi) => {
+                                  const isChosen = String(ans.answer_text) === String(oi);
+                                  const isCorrectOpt = ans.correct_index === oi;
+                                  return (
+                                    <div key={oi} className={`text-[11px] px-2 py-1 rounded-lg ${isChosen && isCorrectOpt ? 'bg-emerald-50 text-emerald-700 font-semibold' : isChosen ? 'bg-rose-50 text-rose-700 font-semibold' : isCorrectOpt ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                      {opt} {isChosen && '• dipilih'} {isCorrectOpt && '• kunci jawaban'}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-slate-600 whitespace-pre-wrap bg-slate-50 rounded-lg p-2">{ans.answer_text || <span className="text-slate-400">Tidak dijawab</span>}</p>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       );
     }
@@ -8893,7 +10205,7 @@ Daily inventory done✅
 
         (async () => {
           try {
-            const res = await fetch(`${WORKER_BASE}/api/chat?storeId=${encodeURIComponent(storeId)}&limit=200`, { headers: __authHeaders() });
+            const res = await __apiFetch(`${WORKER_BASE}/api/chat?storeId=${encodeURIComponent(storeId)}&limit=200`, { headers: __authHeaders() });
             const data = await res.json();
             if (!stopped && data.messages) setMessages(data.messages);
           } catch (e) { /* riwayat gagal dimuat, tapi long-poll di bawah tetap coba jalan */ }
@@ -8917,7 +10229,7 @@ Daily inventory done✅
       // Tandai terbaca di server (bukan cuma localStorage) begitu panel chat ini dibuka,
       // supaya badge unread akurat lintas device juga.
       useEffect(() => {
-        fetch(`${WORKER_BASE}/api/chat/mark-read`, {
+        __apiFetch(`${WORKER_BASE}/api/chat/mark-read`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...__authHeaders() },
           body: JSON.stringify({ storeId }),
@@ -8935,7 +10247,7 @@ Daily inventory done✅
         setSending(true);
         const optimisticMsg = { sender: senderRole, senderLabel, text: trimmed, timestamp: Date.now() };
         try {
-          const res = await fetch(`${WORKER_BASE}/api/chat`, {
+          const res = await __apiFetch(`${WORKER_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
             body: JSON.stringify({ storeId, senderLabel, text: trimmed }),
@@ -8958,7 +10270,7 @@ Daily inventory done✅
       const handleEndSession = async () => {
         setEnding(true);
         try {
-          await fetch(`${WORKER_BASE}/api/chat/end-session`, {
+          await __apiFetch(`${WORKER_BASE}/api/chat/end-session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
             body: JSON.stringify({ storeId }),
@@ -9045,16 +10357,41 @@ Daily inventory done✅
     class AppErrorBoundary extends React.Component {
       constructor(props) {
         super(props);
-        this.state = { hasError: false, errorInfo: '' };
+        this.state = { hasError: false, errorInfo: '', errorStack: '', showDetail: false };
       }
       static getDerivedStateFromError(error) {
-        return { hasError: true, errorInfo: (error && error.message) ? error.message : String(error) };
+        return {
+          hasError: true,
+          errorInfo: (error && error.message) ? error.message : String(error),
+          errorStack: (error && error.stack) ? error.stack : '',
+        };
       }
       componentDidCatch(error, info) {
         console.error('Tarobun App Error (ditangkap ErrorBoundary):', error, info);
       }
       handleReload = () => {
-        this.setState({ hasError: false, errorInfo: '' });
+        this.setState({ hasError: false, errorInfo: '', errorStack: '', showDetail: false });
+        window.location.reload();
+      };
+      // BUGFIX: sebelumnya satu-satunya opsi pemulihan adalah "muat ulang" biasa, yang TIDAK
+      // membantu kalau penyebab error justru data cache lokal yang sudah usang/tidak cocok lagi
+      // dengan versi aplikasi terbaru (localStorage tarobun_*, atau Service Worker yang menyimpan
+      // versi lama file). Tombol ini membersihkan cache lokal & Service Worker dulu sebelum muat
+      // ulang, supaya aplikasi benar-benar mengambil versi & data terbaru dari server.
+      handleHardReset = async () => {
+        try {
+          Object.keys(localStorage).forEach(k => { if (k.startsWith('tarobun_')) localStorage.removeItem(k); });
+        } catch (e) {}
+        try {
+          if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map(r => r.unregister()));
+          }
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(k => caches.delete(k)));
+          }
+        } catch (e) {}
         window.location.reload();
       };
       render() {
@@ -9075,6 +10412,23 @@ Daily inventory done✅
                 >
                   Muat Ulang Halaman
                 </button>
+                <button
+                  onClick={this.handleHardReset}
+                  className="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 font-bold py-2.5 rounded-xl text-sm"
+                >
+                  Bersihkan Cache &amp; Muat Ulang
+                </button>
+                <p className="text-[10px] text-slate-400">Kalau kendala terus terjadi setelah "Bersihkan Cache", pakai tombol ini lalu tunjukkan detail teknis di bawah ke admin.</p>
+                <button
+                  type="button"
+                  onClick={() => this.setState(s => ({ showDetail: !s.showDetail }))}
+                  className="text-[10px] text-slate-400 underline"
+                >
+                  {this.state.showDetail ? 'Sembunyikan detail teknis' : 'Lihat detail teknis'}
+                </button>
+                {this.state.showDetail && (
+                  <pre className="text-left text-[9px] text-rose-600 bg-rose-50 rounded-lg p-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">{this.state.errorInfo}{this.state.errorStack ? '\n' + this.state.errorStack : ''}</pre>
+                )}
               </div>
             </div>
           );

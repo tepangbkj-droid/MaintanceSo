@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>Psikotes OJT — Tarobun</title>
+<meta name="description" content="Halaman pengerjaan psikotes OJT Tarobun SO Mandiri.">
+
+<!-- Sama seperti index.html: halaman internal, tidak perlu ke-index search engine -->
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<link rel="apple-touch-icon" href="icon-512.png">
+
+<!-- File ini SENGAJA berdiri sendiri, terpisah dari index.html (yang isinya seluruh app
+     admin/toko, ~600KB). Tujuannya supaya OJT yang cuma perlu mengerjakan psikotes tidak
+     harus memuat seluruh aplikasi admin -- cukup halaman ringan ini saja. -->
+<script src="https://unpkg.com/react@18/umd/react.development.js" defer></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" defer></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.js" defer></script>
+<script src="https://cdn.tailwindcss.com" defer></script>
+<script src="https://unpkg.com/lucide@latest" defer crossorigin="anonymous"></script>
+
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/400.css">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/600.css">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/700.css">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css">
+
+<script>
+  window.addEventListener('load', function () {
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { brand: { purple: '#6D28D9', dark: '#1E1B4B' } },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            display: ['"Plus Jakarta Sans"', 'Inter', 'ui-sans-serif', 'sans-serif'],
+          },
+        },
+      },
+    };
+  });
+</script>
+<style>
+  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+</style>
+</head>
+<body class="bg-slate-50">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+// ==========================================
+// KONEKSI KE CLOUDFLARE WORKER (backend yang sama dengan index.html)
+// ==========================================
+const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
+
+let _lucideScheduled = false;
+const scheduleLucideIcons = () => {
+  if (_lucideScheduled) return;
+  _lucideScheduled = true;
+  requestAnimationFrame(() => {
+    _lucideScheduled = false;
+    if (window.lucide) window.lucide.createIcons();
+  });
+};
+
+// ==========================================
+// HALAMAN PUBLIK: Psikotes OJT (dibuka lewat link, TANPA login)
+// ==========================================
+// Alur: form Nama+Penempatan (link umum, ?psikotes=) ATAU konfirmasi nama+toko yang sudah
+// ditentukan admin (link per-OJT, ?ojt=) -> kerjakan soal satu-satu -> selesai.
+// Anti-keluar: kalau tab/app di-minimize atau pindah tab saat status 'taking', langsung
+// dilaporkan ke server (flag-leave) dan attempt ditandai 'blocked'.
+function PsikotesOjtPublicPage({ linkToken, assigned }) {
+  const storageKey = `tarobun_psikotes_attempt_${linkToken}`;
+  const infoUrl = assigned ? `${WORKER_BASE}/api/psikotes/public/ojt/${linkToken}` : `${WORKER_BASE}/api/psikotes/public/${linkToken}`;
+  const startUrl = assigned ? `${WORKER_BASE}/api/psikotes/public/ojt/${linkToken}/start` : `${WORKER_BASE}/api/psikotes/public/${linkToken}/start`;
+  const [phase, setPhase] = useState('loading'); // loading | form | confirm | taking | blocked | done | locked | error
+  const [errorMsg, setErrorMsg] = useState('');
+  const [test, setTest] = useState(null);
+  const [name, setName] = useState('');
+  const [penempatan, setPenempatan] = useState('');
+  const [assignedInfo, setAssignedInfo] = useState(null);
+  const [submittingStart, setSubmittingStart] = useState(false);
+  const [attempt, setAttempt] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [qIndex, setQIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { scheduleLucideIcons(); });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(infoUrl);
+        const data = await res.json();
+        if (!res.ok) { setErrorMsg(data.error || 'Link tidak valid'); setPhase('error'); return; }
+        setTest(data.test);
+        if (assigned) setAssignedInfo({ ojtName: data.ojtName, storeName: data.storeName });
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            const statusRes = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${parsed.attemptId}/status?attemptSecret=${encodeURIComponent(parsed.attemptSecret)}`);
+            const statusData = await statusRes.json();
+            if (statusRes.ok) {
+              if (statusData.status === 'blocked') { setAttempt(parsed); setPhase('blocked'); return; }
+              if (statusData.status === 'completed') { setPhase('done'); return; }
+            }
+          } catch (e) { /* kalau gagal cek, biarkan lanjut ke form biasa */ }
+        }
+        if (assigned && data.alreadyUsed) {
+          setErrorMsg('Link ini sudah pernah dipakai untuk memulai psikotes. Kalau ini bukan kamu, hubungi admin/toko.');
+          setPhase('error');
+          return;
+        }
+        if (data.test.locked) { setPhase('locked'); return; }
+        setPhase(assigned ? 'confirm' : 'form');
+      } catch (e) {
+        setErrorMsg('Gagal memuat halaman psikotes. Periksa koneksi internet.');
+        setPhase('error');
+      }
+    })();
+  }, [linkToken]);
+
+  const handleStart = async () => {
+    if (!assigned && (!name.trim() || !penempatan.trim())) return;
+    setSubmittingStart(true);
+    try {
+      const res = await fetch(startUrl, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(assigned ? {} : { name: name.trim(), penempatan: penempatan.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErrorMsg(data.error || 'Gagal memulai psikotes'); setSubmittingStart(false); return; }
+      const attemptInfo = { attemptId: data.attemptId, attemptSecret: data.attemptSecret };
+      localStorage.setItem(storageKey, JSON.stringify(attemptInfo));
+      setAttempt(attemptInfo);
+      setQuestions(data.questions);
+      setPhase('taking');
+    } catch (e) {
+      setErrorMsg('Gagal memulai psikotes. Periksa koneksi internet.');
+    } finally {
+      setSubmittingStart(false);
+    }
+  };
+
+  useEffect(() => {
+    if (phase !== 'taking' || !attempt) return;
+    const reportLeave = () => {
+      navigator.sendBeacon
+        ? navigator.sendBeacon(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, new Blob([JSON.stringify({ attemptSecret: attempt.attemptSecret })], { type: 'application/json' }))
+        : fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ attemptSecret: attempt.attemptSecret }), keepalive: true }).catch(() => {});
+      setPhase('blocked');
+    };
+    const onVisibility = () => { if (document.hidden) reportLeave(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', reportLeave);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', reportLeave);
+    };
+  }, [phase, attempt]);
+
+  useEffect(() => {
+    if (phase !== 'blocked' || !attempt) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/status?attemptSecret=${encodeURIComponent(attempt.attemptSecret)}`);
+        const data = await res.json();
+        if (res.ok && data.status === 'in_progress') setPhase('taking');
+      } catch (e) { /* diamkan, coba lagi di interval berikutnya */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [phase, attempt]);
+
+  const saveAnswer = async (questionId, value) => {
+    setAnswers(prev => ({ ...prev, [questionId]: value }));
+    try {
+      await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/answer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attemptSecret: attempt.attemptSecret, questionId, answer: value }),
+      });
+    } catch (e) { /* best-effort; jawaban lokal tetap kelihatan tersimpan di UI */ }
+  };
+
+  const handleFinish = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/finish`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attemptSecret: attempt.attemptSecret }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        localStorage.removeItem(storageKey);
+        setPhase('done');
+      } else {
+        setErrorMsg(data.error || 'Gagal mengumpulkan jawaban');
+      }
+    } catch (e) {
+      setErrorMsg('Gagal mengumpulkan jawaban. Periksa koneksi internet lalu coba lagi.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const Shell = ({ children }) => (
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">{children}</div>
+    </div>
+  );
+
+  if (phase === 'loading') {
+    return <Shell><div className="text-center text-slate-500"><i data-lucide="loader" className="w-8 h-8 animate-spin mx-auto mb-2"></i>Memuat...</div></Shell>;
+  }
+  if (phase === 'error') {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-2">
+      <i data-lucide="alert-triangle" className="w-10 h-10 text-rose-500 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Tidak Bisa Membuka Psikotes</h2>
+      <p className="text-sm text-slate-500">{errorMsg}</p>
+    </div></Shell>;
+  }
+  if (phase === 'locked') {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-2">
+      <i data-lucide="lock" className="w-10 h-10 text-amber-500 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Psikotes Dikunci</h2>
+      <p className="text-sm text-slate-500">Psikotes ini sedang dikunci oleh admin. Hubungi admin/toko untuk info lebih lanjut.</p>
+    </div></Shell>;
+  }
+  if (phase === 'blocked') {
+    return <Shell><div className="bg-white rounded-2xl border border-rose-200 shadow-sm p-6 text-center space-y-2">
+      <i data-lucide="shield-alert" className="w-10 h-10 text-rose-500 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Akses Diblokir</h2>
+      <p className="text-sm text-slate-500">Kamu terdeteksi keluar dari halaman psikotes saat sedang mengerjakan. Hubungi admin/toko untuk membuka blokir. Halaman ini akan otomatis lanjut begitu diizinkan.</p>
+    </div></Shell>;
+  }
+  if (phase === 'done') {
+    return <Shell><div className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-6 text-center space-y-2">
+      <i data-lucide="check-circle-2" className="w-10 h-10 text-emerald-500 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Psikotes Selesai</h2>
+      <p className="text-sm text-slate-500">Terima kasih, jawabanmu sudah tersimpan. Hasilnya akan direview oleh admin/toko.</p>
+    </div></Shell>;
+  }
+  if (phase === 'confirm') {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div className="text-center space-y-1">
+        <i data-lucide="clipboard-list" className="w-9 h-9 text-purple-700 mx-auto"></i>
+        <h2 className="font-bold text-slate-800 text-lg">{test?.title}</h2>
+        {test?.description && <p className="text-xs text-slate-500">{test.description}</p>}
+      </div>
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+        <div className="flex justify-between text-xs"><span className="text-slate-500">Nama</span><span className="font-semibold text-slate-800">{assignedInfo?.ojtName}</span></div>
+        <div className="flex justify-between text-xs"><span className="text-slate-500">Penempatan Toko</span><span className="font-semibold text-slate-800">{assignedInfo?.storeName}</span></div>
+      </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+        Setelah mulai, jangan pindah tab/aplikasi lain sampai selesai — kalau keluar, akses akan otomatis diblokir dan butuh izin admin untuk dibuka lagi. Link ini hanya bisa dipakai satu kali.
+      </div>
+      {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
+      <button onClick={handleStart} disabled={submittingStart} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+        {submittingStart ? 'Memulai...' : 'Mulai Psikotes'}
+      </button>
+    </div></Shell>;
+  }
+  if (phase === 'form') {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div className="text-center space-y-1">
+        <i data-lucide="clipboard-list" className="w-9 h-9 text-purple-700 mx-auto"></i>
+        <h2 className="font-bold text-slate-800 text-lg">{test?.title}</h2>
+        {test?.description && <p className="text-xs text-slate-500">{test.description}</p>}
+      </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+        Setelah mulai, jangan pindah tab/aplikasi lain sampai selesai — kalau keluar, akses akan otomatis diblokir dan butuh izin admin untuk dibuka lagi.
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-slate-600">Nama Lengkap</label>
+        <input value={name} onChange={e => setName(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Nama kamu" />
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-slate-600">Lokasi Penempatan</label>
+        <input value={penempatan} onChange={e => setPenempatan(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Contoh: Toko Cabang A" />
+      </div>
+      {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
+      <button onClick={handleStart} disabled={submittingStart || !name.trim() || !penempatan.trim()} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+        {submittingStart ? 'Memulai...' : 'Mulai Psikotes'}
+      </button>
+    </div></Shell>;
+  }
+
+  // phase === 'taking'
+  const q = questions[qIndex];
+  const allAnswered = questions.every(qq => answers[qq.id] !== undefined && answers[qq.id] !== '');
+  return (
+    <div className="min-h-screen bg-slate-50 p-4">
+      <div className="max-w-md mx-auto space-y-4">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sticky top-4 z-10">
+          <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
+            <span>Soal {qIndex + 1} dari {questions.length}</span>
+            <span>{Object.keys(answers).length}/{questions.length} terjawab</span>
+          </div>
+          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div className="h-full bg-purple-700 rounded-full transition-all" style={{ width: `${((qIndex + 1) / questions.length) * 100}%` }}></div>
+          </div>
+        </div>
+
+        {q && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+            <p className="font-semibold text-slate-800 text-sm whitespace-pre-wrap">{q.text}</p>
+            {q.type === 'pilihan_ganda' ? (
+              <div className="space-y-2">
+                {q.options.map((opt, i) => (
+                  <button key={i} onClick={() => saveAnswer(q.id, String(i))}
+                    className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-all ${String(answers[q.id]) === String(i) ? 'bg-purple-800 text-white border-purple-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <textarea value={answers[q.id] || ''} onChange={e => saveAnswer(q.id, e.target.value)} rows={4}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Tulis jawabanmu di sini..." />
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={() => setQIndex(i => Math.max(0, i - 1))} disabled={qIndex === 0}
+            className="flex-1 bg-white border border-slate-200 disabled:opacity-40 text-slate-700 font-semibold py-2.5 rounded-xl text-sm">Sebelumnya</button>
+          {qIndex < questions.length - 1 ? (
+            <button onClick={() => setQIndex(i => Math.min(questions.length - 1, i + 1))}
+              className="flex-1 bg-purple-800 hover:bg-purple-900 text-white font-semibold py-2.5 rounded-xl text-sm">Selanjutnya</button>
+          ) : (
+            <button onClick={handleFinish} disabled={saving || !allAnswered}
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
+              {saving ? 'Mengirim...' : 'Kumpulkan Jawaban'}
+            </button>
+          )}
+        </div>
+        {!allAnswered && qIndex === questions.length - 1 && (
+          <p className="text-xs text-center text-slate-400">Jawab semua soal dulu sebelum mengumpulkan.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const params = new URLSearchParams(window.location.search);
+  const ojtToken = params.get('ojt');
+  const psikotesToken = params.get('psikotes');
+
+  if (ojtToken) return <PsikotesOjtPublicPage linkToken={ojtToken} assigned={true} />;
+  if (psikotesToken) return <PsikotesOjtPublicPage linkToken={psikotesToken} assigned={false} />;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-2 max-w-md">
+        <i data-lucide="link-2-off" className="w-10 h-10 text-slate-400 mx-auto"></i>
+        <h2 className="font-bold text-slate-800">Link Tidak Lengkap</h2>
+        <p className="text-sm text-slate-500">Buka halaman ini menggunakan link psikotes yang dibagikan admin/toko.</p>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+window.addEventListener('load', () => { if (window.lucide) window.lucide.createIcons(); });
+</script>
+</body>
+</html>

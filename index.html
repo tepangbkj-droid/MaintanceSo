@@ -2491,7 +2491,7 @@ const { useState, useEffect } = React;
                 <div className="space-y-1.5">
                   {q.image_url ? (
                     <div className="relative inline-block">
-                      <img src={`${WORKER_BASE}/media/${q.image_url}`} alt="Gambar soal" className="max-h-40 rounded-xl border border-slate-200 object-cover" />
+                      <img src={`${WORKER_BASE}/api/media/file/${q.image_url}`} alt="Gambar soal" className="max-h-40 rounded-xl border border-slate-200 object-cover" />
                       <button onClick={() => removeImage(qi)} className="absolute top-1 right-1 bg-rose-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-bold hover:bg-rose-600" title="Hapus gambar"><i data-lucide="x" className="w-3 h-3"></i></button>
                     </div>
                   ) : (

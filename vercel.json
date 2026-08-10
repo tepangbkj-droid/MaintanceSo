@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/s/:slug",
+      "destination": "https://tarobun-api.tepangbkj8.workers.dev/s/:slug"
+    }
+  ]
+}

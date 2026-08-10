@@ -436,71 +436,72 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       </button>
     </div></Shell>;
   }
-
-  // phase === 'taking'
-  const q = questions[qIndex];
-  const allAnswered = questions.every(qq => answers[qq.id] !== undefined && answers[qq.id] !== '');
-  return (
-    <div className="min-h-screen bg-slate-50 p-4">
-      <div className="max-w-md mx-auto space-y-4">
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sticky top-4 z-10">
-          <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
-            <span>Soal {qIndex + 1} dari {questions.length}</span>
-            <div className="flex items-center gap-3">
-              {timerSeconds !== null && (
-                <span className={`font-bold tabular-nums ${timerSeconds <= 60 ? 'text-rose-600' : timerSeconds <= 300 ? 'text-amber-600' : 'text-slate-600'}`}>
-                  ⏱ {String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:{String(timerSeconds % 60).padStart(2, '0')}
-                </span>
-              )}
-              <span>{Object.keys(answers).length}/{questions.length} terjawab</span>
+  // ✅ PERBAIKAN: Tambah if statement yang hilang!
+  if (phase === 'taking') {
+    const q = questions[qIndex];
+    const allAnswered = questions.every(qq => answers[qq.id] !== undefined && answers[qq.id] !== '');
+    return (
+      <div className="min-h-screen bg-slate-50 p-4">
+        <div className="max-w-md mx-auto space-y-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sticky top-4 z-10">
+            <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
+              <span>Soal {qIndex + 1} dari {questions.length}</span>
+              <div className="flex items-center gap-3">
+                {timerSeconds !== null && (
+                  <span className={`font-bold tabular-nums ${timerSeconds <= 60 ? 'text-rose-600' : timerSeconds <= 300 ? 'text-amber-600' : 'text-slate-600'}`}>
+                    ⏱ {String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:{String(timerSeconds % 60).padStart(2, '0')}
+                  </span>
+                )}
+                <span>{Object.keys(answers).length}/{questions.length} terjawab</span>
+              </div>
+            </div>
+            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-purple-700 rounded-full transition-all" style={{ width: `${((qIndex + 1) / questions.length) * 100}%` }}></div>
             </div>
           </div>
-          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-            <div className="h-full bg-purple-700 rounded-full transition-all" style={{ width: `${((qIndex + 1) / questions.length) * 100}%` }}></div>
-          </div>
-        </div>
 
-        {q && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
-            <p className="font-semibold text-slate-800 text-sm whitespace-pre-wrap">{q.text}</p>
-            {q.image_url && (
-              <img src={`${WORKER_BASE}/api/media/file/${q.image_url}`} alt="Gambar soal" className="w-full rounded-xl border border-slate-200 object-contain max-h-64" />
-            )}
-            {q.type === 'pilihan_ganda' ? (
-              <div className="space-y-2">
-                {q.options.map((opt, i) => (
-                  <button key={i} onClick={() => saveAnswer(q.id, String(i))}
-                    className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-all ${String(answers[q.id]) === String(i) ? 'bg-purple-800 text-white border-purple-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
-                    {opt}
-                  </button>
-                ))}
-              </div>
+          {q && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+              <p className="font-semibold text-slate-800 text-sm whitespace-pre-wrap">{q.text}</p>
+              {q.image_url && (
+                <img src={`${WORKER_BASE}/api/media/file/${q.image_url}`} alt="Gambar soal" className="w-full rounded-xl border border-slate-200 object-contain max-h-64" />
+              )}
+              {q.type === 'pilihan_ganda' ? (
+                <div className="space-y-2">
+                  {q.options.map((opt, i) => (
+                    <button key={i} onClick={() => saveAnswer(q.id, String(i))}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-all ${String(answers[q.id]) === String(i) ? 'bg-purple-800 text-white border-purple-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <textarea value={answers[q.id] || ''} onChange={e => saveAnswer(q.id, e.target.value)} rows={4}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Tulis jawabanmu di sini..." />
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button onClick={() => setQIndex(i => Math.max(0, i - 1))} disabled={qIndex === 0}
+              className="flex-1 bg-white border border-slate-200 disabled:opacity-40 text-slate-700 font-semibold py-2.5 rounded-xl text-sm">Sebelumnya</button>
+            {qIndex < questions.length - 1 ? (
+              <button onClick={() => setQIndex(i => Math.min(questions.length - 1, i + 1))}
+                className="flex-1 bg-purple-800 hover:bg-purple-900 text-white font-semibold py-2.5 rounded-xl text-sm">Selanjutnya</button>
             ) : (
-              <textarea value={answers[q.id] || ''} onChange={e => saveAnswer(q.id, e.target.value)} rows={4}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Tulis jawabanmu di sini..." />
+              <button onClick={handleFinish} disabled={saving || !allAnswered}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
+                {saving ? 'Mengirim...' : 'Kumpulkan Jawaban'}
+              </button>
             )}
           </div>
-        )}
-
-        <div className="flex gap-2">
-          <button onClick={() => setQIndex(i => Math.max(0, i - 1))} disabled={qIndex === 0}
-            className="flex-1 bg-white border border-slate-200 disabled:opacity-40 text-slate-700 font-semibold py-2.5 rounded-xl text-sm">Sebelumnya</button>
-          {qIndex < questions.length - 1 ? (
-            <button onClick={() => setQIndex(i => Math.min(questions.length - 1, i + 1))}
-              className="flex-1 bg-purple-800 hover:bg-purple-900 text-white font-semibold py-2.5 rounded-xl text-sm">Selanjutnya</button>
-          ) : (
-            <button onClick={handleFinish} disabled={saving || !allAnswered}
-              className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
-              {saving ? 'Mengirim...' : 'Kumpulkan Jawaban'}
-            </button>
+          {!allAnswered && qIndex === questions.length - 1 && (
+            <p className="text-xs text-center text-slate-400">Jawab semua soal dulu sebelum mengumpulkan.</p>
           )}
         </div>
-        {!allAnswered && qIndex === questions.length - 1 && (
-          <p className="text-xs text-center text-slate-400">Jawab semua soal dulu sebelum mengumpulkan.</p>
-        )}
       </div>
-    </div>
-  );
+    );
+  }
 }
 
 function App() {

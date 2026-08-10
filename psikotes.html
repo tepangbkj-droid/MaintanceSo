@@ -46,13 +46,15 @@
 </script>
 <style>
   body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+  @keyframes tarobunFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fadeIn { animation: tarobunFadeIn 0.2s ease-out; }
 </style>
 </head>
 <body class="bg-slate-50">
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 // ==========================================
 // KONEKSI KE CLOUDFLARE WORKER (backend yang sama dengan index.html)
@@ -76,6 +78,21 @@ const scheduleLucideIcons = () => {
 // ditentukan admin (link per-OJT, ?ojt=) -> kerjakan soal satu-satu -> selesai.
 // Anti-keluar: kalau tab/app di-minimize atau pindah tab saat status 'taking', langsung
 // dilaporkan ke server (flag-leave) dan attempt ditandai 'blocked'.
+// PERBAIKAN INPUT/KEYBOARD (penting): komponen ini SEBELUMNYA didefinisikan DI DALAM
+// PsikotesOjtPublicPage (dibuat ulang setiap render). Karena React menganggap komponen
+// yang "dibuat ulang" itu sebagai TIPE BARU, seluruh isi <Shell> (termasuk input Nama &
+// Lokasi Penempatan) ikut di-unmount+mount ulang SETIAP KALI state berubah -- termasuk
+// setiap kali user mengetik satu huruf. Akibatnya input kehilangan fokus dan keyboard HP
+// otomatis tertutup setelah tiap huruf, harus dibuka lagi manual. Dipindah jadi komponen
+// tingkat-atas (stabil, tidak dibuat ulang) supaya fokus/keyboard tetap terjaga saat mengetik.
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">{children}</div>
+    </div>
+  );
+}
+
 function PsikotesOjtPublicPage({ linkToken, assigned }) {
   const storageKey = `tarobun_psikotes_attempt_${linkToken}`;
   const infoUrl = assigned ? `${WORKER_BASE}/api/psikotes/public/ojt/${linkToken}` : `${WORKER_BASE}/api/psikotes/public/${linkToken}`;
@@ -85,6 +102,16 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
   const [test, setTest] = useState(null);
   const [name, setName] = useState('');
   const [penempatan, setPenempatan] = useState('');
+  // ---- Kombobox "Pilih Toko/Outlet" untuk penempatan (link umum, ?psikotes=) ----
+  // Diambil dari data outlet SUNGGUHAN yang sudah terdaftar admin (storeDirectory), BUKAN
+  // lagi field teks bebas -- supaya penempatan yang dipilih OJT selalu cocok dengan data
+  // outlet yang ada (menghindari typo/nama toko yang salah/tidak baku).
+  const [storeDirectory, setStoreDirectory] = useState([]);
+  const [dirLoading, setDirLoading] = useState(true);
+  const [dirError, setDirError] = useState(false);
+  const [storeDropdownOpen, setStoreDropdownOpen] = useState(false);
+  const [storeSearchQuery, setStoreSearchQuery] = useState('');
+  const storeDropdownRef = useRef(null);
   const [assignedInfo, setAssignedInfo] = useState(null);
   const [submittingStart, setSubmittingStart] = useState(false);
   const [attempt, setAttempt] = useState(null);
@@ -96,6 +123,45 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
   const [timerExpired, setTimerExpired] = useState(false);
 
   useEffect(() => { scheduleLucideIcons(); });
+
+  // Ambil daftar outlet/toko sungguhan (dipakai kombobox "Lokasi Penempatan") -- hanya
+  // perlu untuk link umum (?psikotes=, assigned=false), karena link per-OJT (?ojt=) sudah
+  // punya penempatan tetap yang ditentukan admin sebelumnya (lihat fase 'confirm').
+  // Endpoint ini publik (tidak perlu login), sama seperti yang dipakai layar login toko.
+  useEffect(() => {
+    if (assigned) { setDirLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${WORKER_BASE}/api/rtdb/get?path=storeDirectory`);
+        const data = await res.json();
+        if (cancelled) return;
+        const dir = data.value || {};
+        const list = Object.keys(dir).map(id => ({ id, name: dir[id] })).sort((a, b) => a.name.localeCompare(b.name));
+        setStoreDirectory(list);
+      } catch (e) {
+        if (!cancelled) setDirError(true);
+      } finally {
+        if (!cancelled) setDirLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [assigned]);
+
+  // Tutup dropdown "Lokasi Penempatan" saat klik/tap di luar area kombobox.
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (storeDropdownRef.current && !storeDropdownRef.current.contains(e.target)) {
+        setStoreDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  const filteredStoreDirectory = storeDirectory.filter(s =>
+    !storeSearchQuery.trim() || s.name.toLowerCase().includes(storeSearchQuery.trim().toLowerCase())
+  );
 
   useEffect(() => {
     (async () => {
@@ -233,12 +299,6 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
     }
   };
 
-  const Shell = ({ children }) => (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">{children}</div>
-    </div>
-  );
-
   if (phase === 'loading') {
     return <Shell><div className="text-center text-slate-500"><i data-lucide="loader" className="w-8 h-8 animate-spin mx-auto mb-2"></i>Memuat...</div></Shell>;
   }
@@ -300,13 +360,75 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
         Setelah mulai, jangan pindah tab/aplikasi lain sampai selesai — kalau keluar, akses akan otomatis diblokir dan butuh izin admin untuk dibuka lagi.
       </div>
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
+        Isi <strong>Nama Lengkap</strong> dan pilih <strong>Lokasi Penempatan</strong> sesuai data sebenarnya. Data ini dipakai admin/toko untuk merekap hasil psikotes kamu — kalau nama atau toko yang dipilih salah, hasilnya bisa tertukar dengan OJT lain.
+      </div>
       <div>
         <label className="text-xs font-semibold text-slate-600">Nama Lengkap</label>
         <input value={name} onChange={e => setName(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Nama kamu" />
       </div>
-      <div>
+      <div ref={storeDropdownRef} className="relative">
         <label className="text-xs font-semibold text-slate-600">Lokasi Penempatan</label>
-        <input value={penempatan} onChange={e => setPenempatan(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Contoh: Toko Cabang A" />
+        {/* Kombobox "Pilih Toko/Outlet": daftar diambil dari data outlet yang sudah terdaftar
+            admin (storeDirectory), bukan lagi ketikan bebas -- supaya penempatan yang dipilih
+            OJT pasti cocok dengan data outlet yang ada. Daftar dibatasi tinggi & bisa discroll,
+            plus ada kolom pencarian, supaya saat toko banyak tidak menutupi seluruh layar. */}
+        <button
+          type="button"
+          disabled={dirLoading}
+          onClick={() => setStoreDropdownOpen(o => !o)}
+          className="mt-1 w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm bg-white flex items-center justify-between gap-2 disabled:opacity-60 text-left"
+        >
+          <span className={`truncate ${penempatan ? 'text-slate-800' : 'text-slate-400'}`}>
+            {dirLoading ? 'Memuat daftar toko...' : (penempatan || (storeDirectory.length === 0 ? 'Pilih toko/outlet' : '-- Pilih Toko/Outlet --'))}
+          </span>
+          <i data-lucide="chevron-down" className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${storeDropdownOpen ? 'rotate-180' : ''}`}></i>
+        </button>
+
+        {storeDropdownOpen && !dirLoading && storeDirectory.length > 0 && (
+          <div className="absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg animate-fadeIn overflow-hidden">
+            {storeDirectory.length > 4 && (
+              <div className="p-2 border-b border-slate-100">
+                <div className="relative">
+                  <i data-lucide="search" className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={storeSearchQuery}
+                    onChange={e => setStoreSearchQuery(e.target.value)}
+                    placeholder="Cari nama toko/outlet..."
+                    className="w-full pl-8 pr-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+              </div>
+            )}
+            {/* Dibatasi tinggi supaya HANYA ~4 toko yang terlihat sekaligus (tidak menutupi
+                layar saat daftar toko banyak) -- sisanya wajib discroll atau dicari. */}
+            <ul className="max-h-[168px] overflow-y-auto py-1 overscroll-contain">
+              {filteredStoreDirectory.length === 0 && (
+                <li className="px-3 py-2.5 text-xs text-slate-400 text-center">Tidak ada toko yang cocok dengan "{storeSearchQuery}".</li>
+              )}
+              {filteredStoreDirectory.map(s => (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    onClick={() => { setPenempatan(s.name); setStoreDropdownOpen(false); setStoreSearchQuery(''); }}
+                    className={`w-full text-left px-3 py-2 text-sm truncate ${penempatan === s.name ? 'bg-purple-50 text-purple-800 font-semibold' : 'text-slate-700 hover:bg-slate-50'}`}
+                  >
+                    {s.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Fallback: kalau daftar outlet gagal/kosong dimuat, tetap izinkan ketik manual
+            supaya OJT tidak terjebak tidak bisa mulai psikotes sama sekali. */}
+        {!dirLoading && storeDirectory.length === 0 && (
+          <input value={penempatan} onChange={e => setPenempatan(e.target.value)} className="mt-2 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Contoh: Toko Cabang A" />
+        )}
+        {dirError && <p className="text-[11px] text-amber-600 mt-1">Gagal memuat daftar toko dari server. Kamu masih bisa ketik nama toko secara manual di atas.</p>}
       </div>
       {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
       <button onClick={handleStart} disabled={submittingStart || !name.trim() || !penempatan.trim()} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">

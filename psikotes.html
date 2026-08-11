@@ -8,7 +8,7 @@
 
 <!-- Sama seperti index.html: halaman internal, tidak perlu ke-index search engine -->
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
 <meta http-equiv="X-Content-Type-Options" content="nosniff">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 
@@ -28,6 +28,46 @@
 <link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/600.css">
 <link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/700.css">
 <link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css">
+
+<script>
+  // ==========================================
+  // FIX: konflik lucide.createIcons() vs React DOM reconciliation
+  // (SAMA seperti perbaikan di index.html -- halaman ini juga memakai
+  // scheduleLucideIcons()/lucide.createIcons() di useEffect tiap render,
+  // jadi rentan bug yang sama persis: React mencoba removeChild/insertBefore
+  // elemen <i data-lucide> yang SUDAH diganti Lucide jadi <svg> di luar
+  // sepengetahuan React, browser melempar NotFoundError, dan karena
+  // sebelumnya TIDAK ada ErrorBoundary di halaman ini, error tsb membuat
+  // SELURUH render React gagal -- hasilnya layar putih kosong total.
+  // Patch ini membuat removeChild/insertBefore "defensif": kalau node yang
+  // diminta dihapus/disisipkan ternyata bukan child dari parent tsb, jangan
+  // lempar error, cukup diam saja. Tidak mengubah tampilan apa pun yang
+  // terlihat pengguna -- hanya mencegah crash akibat DOM sudah berubah duluan.
+  // ==========================================
+  (function () {
+    const origRemoveChild = Node.prototype.removeChild;
+    Node.prototype.removeChild = function (child) {
+      if (child.parentNode !== this) {
+        if (console && console.warn) {
+          console.warn('[Psikotes] Diabaikan: removeChild pada node yang sudah tidak jadi child (biasanya akibat lucide.createIcons()).', child);
+        }
+        return child;
+      }
+      return origRemoveChild.call(this, child);
+    };
+
+    const origInsertBefore = Node.prototype.insertBefore;
+    Node.prototype.insertBefore = function (newNode, refNode) {
+      if (refNode && refNode.parentNode !== this) {
+        if (console && console.warn) {
+          console.warn('[Psikotes] Diabaikan: insertBefore dengan referenceNode yang sudah tidak jadi child (biasanya akibat lucide.createIcons()).', refNode);
+        }
+        return this.appendChild(newNode);
+      }
+      return origInsertBefore.call(this, newNode, refNode);
+    };
+  })();
+</script>
 
 <script>
   window.addEventListener('load', function () {
@@ -523,8 +563,72 @@ function App() {
   );
 }
 
+// ==========================================
+// ErrorBoundary (SAMA seperti index.html): jaring pengaman terakhir.
+// Kalau ada error React yang lolos dari patch removeChild/insertBefore di
+// atas (atau sebab lain), tanpa ini layar akan putih kosong tanpa keterangan
+// apa pun. Dengan ini, error tertangkap dan pengguna melihat pesan jelas +
+// tombol "Muat Ulang" -- bukan halaman kosong yang membingungkan.
+// ==========================================
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, errorInfo: '', errorStack: '', showDetail: false };
+  }
+  static getDerivedStateFromError(error) {
+    return {
+      hasError: true,
+      errorInfo: (error && error.message) ? error.message : String(error),
+      errorStack: (error && error.stack) ? error.stack : '',
+    };
+  }
+  componentDidCatch(error, info) {
+    console.error('Psikotes App Error (ditangkap ErrorBoundary):', error, info);
+  }
+  handleReload = () => {
+    this.setState({ hasError: false, errorInfo: '', errorStack: '', showDetail: false });
+    window.location.reload();
+  };
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 max-w-sm w-full text-center space-y-3">
+            <div className="w-14 h-14 rounded-full bg-rose-50 flex items-center justify-center mx-auto">
+              <i data-lucide="alert-triangle" className="w-7 h-7 text-rose-500"></i>
+            </div>
+            <h2 className="font-bold text-slate-800 text-lg">Ups, terjadi kendala tampilan</h2>
+            <p className="text-xs text-slate-500">Silakan muat ulang halaman untuk melanjutkan.</p>
+            <button
+              onClick={this.handleReload}
+              className="w-full bg-purple-800 hover:bg-purple-900 text-white font-bold py-2.5 rounded-xl text-sm"
+            >
+              Muat Ulang Halaman
+            </button>
+            <button
+              type="button"
+              onClick={() => this.setState(s => ({ showDetail: !s.showDetail }))}
+              className="text-[10px] text-slate-400 underline"
+            >
+              {this.state.showDetail ? 'Sembunyikan detail teknis' : 'Lihat detail teknis'}
+            </button>
+            {this.state.showDetail && (
+              <pre className="text-left text-[9px] text-rose-600 bg-rose-50 rounded-lg p-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">{this.state.errorInfo}{this.state.errorStack ? '\n' + this.state.errorStack : ''}</pre>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Psikotes App - Promise ditolak tanpa ditangani:', event.reason);
+});
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+root.render(<AppErrorBoundary><App /></AppErrorBoundary>);
 window.addEventListener('load', () => { if (window.lucide) window.lucide.createIcons(); });
 </script>
 </body>

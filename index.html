@@ -6258,18 +6258,18 @@ const { useState, useEffect } = React;
         gagalBakingReguler:   { label: 'Gagal Baking Reguler Proofing',   short: 'Reg Proofing',     color: 'yellow', icon: 'flame',       wasteKey: 'doughGagalBakingRegulerProofing' },
       };
 
-      // Semua kategori (termasuk backward-compat label lama) untuk display di riwayat & admin
+      // WASTE_CATEGORIES — dipakai untuk lookup label/icon saat render foto lama
+      // (data baru menggunakan tipe + kategori dari RIJEK_SUB_CATEGORIES / RIWAYAT_GROUPS)
       const WASTE_CATEGORIES = {
         fdNempel:             { ...RIJEK_SUB_CATEGORIES.fdNempel,             tipe: 'bunRijek',    isWaste: false },
         bunRejectThawing:     { ...RIJEK_SUB_CATEGORIES.bunRejectThawing,     tipe: 'bunRijek',    isWaste: false },
         doughPecahProofing:   { ...RIJEK_SUB_CATEGORIES.doughPecahProofing,   tipe: 'bunRijek',    isWaste: false },
         gagalBakingOvernight: { ...RIJEK_SUB_CATEGORIES.gagalBakingOvernight, tipe: 'bunRijek',    isWaste: false },
         gagalBakingReguler:   { ...RIJEK_SUB_CATEGORIES.gagalBakingReguler,   tipe: 'bunRijek',    isWaste: false },
-        bunWaste:             { label: 'Bun Waste',     short: 'Bun Waste',   tipe: 'bunWaste',    isWaste: true,  color: 'slate',  icon: 'trash',      wasteKey: 'wasteBun' },
-        rijekBarang:          { label: 'Rijek Barang',  short: 'Rijek Barang',tipe: 'rijekBarang', isWaste: false, color: 'indigo', icon: 'package-x',  wasteKey: null },
-        // label lama (backward compat)
-        bunRijek:             { label: 'Bun Rijek',     short: 'Bun Rijek',   tipe: 'bunRijek',    isWaste: false, color: 'rose',   icon: 'image-off',  wasteKey: null },
-        rijekBarangLama:      { label: 'Rijek Barang',  short: 'Rijek Barang',tipe: 'rijekBarang', isWaste: false, color: 'indigo', icon: 'package-x',  wasteKey: null },
+        bunWaste:             { label: 'Bun Waste',    short: 'Bun Waste',    tipe: 'bunWaste',    isWaste: true,  color: 'slate',  icon: 'trash-2',   wasteKey: 'wasteBun' },
+        rijekBarang:          { label: 'Rijek Barang', short: 'Rijek Barang', tipe: 'rijekBarang', isWaste: false, color: 'indigo', icon: 'package-x', wasteKey: null },
+        // backward compat — foto lama dari versi sebelumnya tetap terbaca
+        bunRijek:             { label: 'Bun Rijek',    short: 'Bun Rijek',    tipe: 'bunRijek',    isWaste: false, color: 'rose',   icon: 'image-off', wasteKey: null },
       };
 
       // Tailwind CDN (JIT) hanya mendeteksi nama class literal di source, bukan hasil interpolasi string.
@@ -7741,17 +7741,27 @@ Daily inventory done✅
         }
       };
 
-      // Kelompokkan foto berdasarkan kategori, lengkap dengan total jumlah
+      // Kelompokkan foto menjadi 3 grup tampilan:
+      // - bunRijek  → semua sub-kategori rijek (fdNempel, bunRejectThawing, dll) + foto lama bertipe bunRijek
+      // - rijekBarang → dokumentasi barang rijek
+      // - bunWaste  → waste bun
+      const RIWAYAT_GROUPS = {
+        bunRijek:    { label: 'Bun Rijek',    icon: 'image-off',  color: 'rose',   desc: 'Kumpulan semua sub-kategori rijek bun' },
+        rijekBarang: { label: 'Rijek Barang', icon: 'package-x',  color: 'indigo', desc: 'Dokumentasi rijek barang' },
+        bunWaste:    { label: 'Bun Waste',    icon: 'trash-2',    color: 'slate',  desc: 'Bun tidak terpakai / waste' },
+      };
+
+      // Sub-kategori yang termasuk dalam grup bunRijek
+      const BUN_RIJEK_SUB_KEYS = new Set(['fdNempel','bunRejectThawing','doughPecahProofing','gagalBakingOvernight','gagalBakingReguler','bunRijek']);
+
       const groupWasteFotosByCategory = (list) => {
-        const groups = {};
-        Object.keys(WASTE_CATEGORIES).forEach(key => {
-          groups[key] = { items: [], total: 0 };
-        });
+        const groups = { bunRijek: { items: [], total: 0 }, rijekBarang: { items: [], total: 0 }, bunWaste: { items: [], total: 0 } };
         list.forEach(item => {
-          const cat = groups[item.kategori] ? item.kategori : 'bunRijek';
-          if (!groups[cat]) groups[cat] = { items: [], total: 0 };
-          groups[cat].items.push(item);
-          groups[cat].total += numVal(item.jumlah);
+          const tipe = item.tipe || (BUN_RIJEK_SUB_KEYS.has(item.kategori) ? 'bunRijek' : item.kategori === 'rijekBarang' ? 'rijekBarang' : item.kategori === 'bunWaste' ? 'bunWaste' : 'bunRijek');
+          const grp = tipe === 'bunWaste' ? 'bunWaste' : tipe === 'rijekBarang' ? 'rijekBarang' : 'bunRijek';
+          if (!groups[grp]) groups[grp] = { items: [], total: 0 };
+          groups[grp].items.push(item);
+          groups[grp].total += numVal(item.jumlah);
         });
         return groups;
       };
@@ -9898,52 +9908,92 @@ Daily inventory done✅
                     </span>
                   </div>
 
-                  {Object.keys(WASTE_CATEGORIES).map(key => {
-                    const cat = WASTE_CATEGORIES[key];
-                    const styles = WASTE_COLOR_STYLES[cat.color];
-                    const group = wasteFotoGroups[key] || { items: [], total: 0 };
+                  {Object.entries(RIWAYAT_GROUPS).map(([grpKey, grp]) => {
+                    const styles = WASTE_COLOR_STYLES[grp.color] || WASTE_COLOR_STYLES['slate'];
+                    const group = wasteFotoGroups[grpKey] || { items: [], total: 0 };
+                    const isBunRijek = grpKey === 'bunRijek';
                     return (
-                      <div key={key} className={`rounded-xl border p-4 ${styles.cardBorder} ${styles.cardBg}`}>
+                      <div key={grpKey} className={`rounded-2xl border p-4 ${styles.cardBorder} ${styles.cardBg}`}>
+
+                        {/* Header grup */}
                         <div className="flex justify-between items-center mb-3">
-                          <div className="flex items-center gap-2">
-                            <i data-lucide={cat.icon} className={`w-4 h-4 ${styles.icon}`}></i>
-                            <span className="font-bold text-sm text-slate-700">{cat.label}</span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <i data-lucide={grp.icon} className={`w-4 h-4 ${styles.icon}`}></i>
+                            <span className="font-bold text-sm text-slate-800">{grp.label}</span>
                             <span className={`text-xs font-black px-2 py-0.5 rounded-md ${styles.badge}`}>
                               Total: {group.total} pcs
                             </span>
+                            {isBunRijek && group.items.length > 0 && (
+                              <span className="text-[10px] text-slate-500">{group.items.length} foto</span>
+                            )}
                           </div>
                           <button
-                            onClick={() => handleSendCategoryRecapToTelegram(key)}
-                            disabled={sendingCategory === key || group.items.length === 0}
-                            className="bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm"
+                            onClick={() => handleSendCategoryRecapToTelegram(grpKey)}
+                            disabled={sendingCategory === grpKey || group.items.length === 0}
+                            className="bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm shrink-0"
                           >
-                            <i data-lucide={sendingCategory === key ? 'loader' : 'send'} className={`w-3 h-3 ${sendingCategory === key ? 'animate-spin' : ''}`}></i>
+                            <i data-lucide={sendingCategory === grpKey ? 'loader' : 'send'} className={`w-3 h-3 ${sendingCategory === grpKey ? 'animate-spin' : ''}`}></i>
                             <span>Kirim</span>
                           </button>
                         </div>
 
+                        {/* Sub-kategori ringkasan — hanya untuk Bun Rijek */}
+                        {isBunRijek && group.items.length > 0 && (() => {
+                          const subTotals = {};
+                          group.items.forEach(it => {
+                            const subCat = RIJEK_SUB_CATEGORIES[it.kategori];
+                            const label = subCat ? subCat.short : (it.kategori || 'Lainnya');
+                            subTotals[label] = (subTotals[label] || 0) + numVal(it.jumlah);
+                          });
+                          return (
+                            <div className="flex flex-wrap gap-1.5 mb-3">
+                              {Object.entries(subTotals).map(([label, qty]) => (
+                                <span key={label} className="text-[10px] bg-white border border-rose-200 text-rose-700 font-semibold px-2 py-0.5 rounded-full">
+                                  {label}: {qty} pcs
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Foto grid atau empty state */}
                         {group.items.length === 0 ? (
-                          <p className="text-xs text-slate-600 text-center py-4">Belum ada foto pada kategori ini untuk tanggal {formatIndonesianDate(wasteFotoViewDate)}.</p>
+                          <p className="text-xs text-slate-500 text-center py-5">
+                            Belum ada foto {grp.label} untuk tanggal {formatIndonesianDate(wasteFotoViewDate)}.
+                          </p>
                         ) : (
                           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                            {group.items.map(item => (
-                              <div key={item.firebaseKey} className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
-                                <img src={item.foto} alt={cat.short} className="w-full h-24 object-cover" />
-                                <div className="p-2 space-y-0.5">
-                                  <p className="text-xs font-bold text-slate-700">{item.jumlah} pcs</p>
-                                  <p className="text-[10px] text-slate-500 line-clamp-2">{item.keterangan || '-'}</p>
-                                  <p className="text-[9px] text-slate-600">{formatIndonesianDate(item.tanggal)}</p>
-                                  <div className="flex items-center justify-between pt-1">
-                                    <button onClick={() => handleSendSingleWasteFotoToTelegram(item)} className="text-sky-600 hover:bg-sky-50 p-1 rounded-md" title="Kirim ke Telegram">
-                                      <i data-lucide="send" className="w-3.5 h-3.5"></i>
-                                    </button>
-                                    <button onClick={() => handleDeleteWasteFoto(item.firebaseKey)} className="text-rose-600 hover:bg-rose-50 p-1 rounded-md" title="Hapus">
-                                      <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
-                                    </button>
+                            {group.items.map(item => {
+                              const subCat = RIJEK_SUB_CATEGORIES[item.kategori];
+                              const subLabel = subCat ? subCat.short : null;
+                              const subColor = subCat ? (WASTE_COLOR_STYLES[subCat.color] || WASTE_COLOR_STYLES['slate']) : null;
+                              return (
+                                <div key={item.firebaseKey} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                                  <div className="relative">
+                                    <img src={item.foto} alt={grp.label} className="w-full h-28 object-cover" />
+                                    {/* Badge sub-kategori di pojok foto */}
+                                    {isBunRijek && subLabel && (
+                                      <span className={`absolute top-1.5 left-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow ${subColor ? subColor.badge : 'bg-slate-100 text-slate-700'}`}>
+                                        {subLabel}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="p-2 space-y-0.5">
+                                    <p className="text-xs font-bold text-slate-700">{item.jumlah} pcs</p>
+                                    {item.keterangan ? <p className="text-[10px] text-slate-500 line-clamp-2">{item.keterangan}</p> : null}
+                                    <p className="text-[9px] text-slate-400">{formatIndonesianDate(item.tanggal)}</p>
+                                    <div className="flex items-center justify-between pt-1">
+                                      <button onClick={() => handleSendSingleWasteFotoToTelegram(item)} className="text-sky-600 hover:bg-sky-50 p-1 rounded-md" title="Kirim ke Telegram">
+                                        <i data-lucide="send" className="w-3.5 h-3.5"></i>
+                                      </button>
+                                      <button onClick={() => handleDeleteWasteFoto(item.firebaseKey)} className="text-rose-600 hover:bg-rose-50 p-1 rounded-md" title="Hapus">
+                                        <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>

@@ -2966,23 +2966,26 @@ const { useState, useEffect } = React;
 
         const tryLoad = () => {
           attempt += 1;
-          db.ref('storeDirectory').once('value')
-            .then(snap => {
+          // Pakai Cloudflare Worker (HTTPS biasa) bukan Firebase WebSocket supaya
+          // tidak kena blokir jaringan seluler yang sering memblokir koneksi WebSocket.
+          __apiFetch(`${WORKER_BASE}/api/rtdb?path=storeDirectory`)
+            .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+            .then(data => {
               if (cancelled) return;
-              const data = snap.val() || {};
-              const list = Object.keys(data).map(id => ({ id, name: data[id] })).sort((a, b) => a.name.localeCompare(b.name));
+              const raw = data.value || {};
+              const list = Object.keys(raw).map(id => ({ id, name: raw[id] })).sort((a, b) => a.name.localeCompare(b.name));
               setStoreDirectory(list);
               setDirLoading(false);
               setDirError(false);
               setDirFromCache(false);
-              setDirBackgroundSync(false); // data terbaru sudah datang, berhenti menandai "menyegarkan"
+              setDirBackgroundSync(false);
               try { localStorage.setItem('tarobun_dir_cache', JSON.stringify(list)); } catch (e) {}
             })
             .catch((err) => {
               if (cancelled) return;
               setDirErrorDetail(String(err && err.message ? err.message : err));
               if (attempt < MAX_ATTEMPTS) {
-                setTimeout(tryLoad, 1000 * attempt); // jeda makin lama tiap percobaan ulang
+                setTimeout(tryLoad, 1000 * attempt);
               } else {
                 setDirBackgroundSync(false);
                 useDirCacheFallback();

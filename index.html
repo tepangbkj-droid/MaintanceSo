@@ -2968,7 +2968,7 @@ const { useState, useEffect } = React;
           attempt += 1;
           // Pakai Cloudflare Worker (HTTPS biasa) bukan Firebase WebSocket supaya
           // tidak kena blokir jaringan seluler yang sering memblokir koneksi WebSocket.
-          __apiFetch(`${WORKER_BASE}/api/rtdb?path=storeDirectory`)
+          __apiFetch(`${WORKER_BASE}/api/rtdb/get?path=storeDirectory`)
             .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
             .then(data => {
               if (cancelled) return;

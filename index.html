@@ -2948,58 +2948,31 @@ const { useState, useEffect } = React;
         let attempt = 0;
         const MAX_ATTEMPTS = 3;
 
+        // Reset semua state dulu sebelum mulai
+        setDirError(false);
+        setDirFromCache(false);
+        setAdminCheckError(false);
+
+        // Cek cache dulu — tampilkan instan kalau ada, sambil fetch terbaru di belakang
         let hasCache = false;
         try {
           const cached = JSON.parse(localStorage.getItem('tarobun_dir_cache') || 'null');
           if (cached && cached.length > 0) {
             hasCache = true;
             setStoreDirectory(cached);
-            setDirLoading(false);       // sudah ada data untuk dipakai, tidak perlu blocking
-            setDirBackgroundSync(true); // tandai sedang disegarkan diam-diam
+            setDirLoading(false);
+            setDirBackgroundSync(true); // sedang ambil data terbaru di belakang layar
           }
         } catch (e) {}
 
-        setDirLoading(hasCache ? false : true);
-        setDirError(false);
-        setDirFromCache(false);   // selalu reset — jangan biarkan notif lama tersisa
-        setDirBackgroundSync(false);
-        setAdminCheckError(false);
+        if (!hasCache) {
+          setDirLoading(true);
+          setDirBackgroundSync(false);
+        }
 
-        const tryLoad = () => {
-          attempt += 1;
-          // Pakai Cloudflare Worker (HTTPS biasa) bukan Firebase WebSocket supaya
-          // tidak kena blokir jaringan seluler yang sering memblokir koneksi WebSocket.
-          __apiFetch(`${WORKER_BASE}/api/rtdb/get?path=storeDirectory`)
-            .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
-            .then(data => {
-              if (cancelled) return;
-              const raw = data.value || {};
-              const list = Object.keys(raw).map(id => ({ id, name: raw[id] })).sort((a, b) => a.name.localeCompare(b.name));
-              setStoreDirectory(list);
-              setDirLoading(false);
-              setDirError(false);
-              setDirFromCache(false);
-              setDirBackgroundSync(false);
-              try { localStorage.setItem('tarobun_dir_cache', JSON.stringify(list)); } catch (e) {}
-            })
-            .catch((err) => {
-              if (cancelled) return;
-              setDirErrorDetail(String(err && err.message ? err.message : err));
-              if (attempt < MAX_ATTEMPTS) {
-                setTimeout(tryLoad, 1000 * attempt);
-              } else {
-                setDirBackgroundSync(false);
-                useDirCacheFallback();
-              }
-            });
-        };
-
-        // Kalau semua percobaan koneksi ke database gagal (jaringan benar-benar bermasalah),
-        // jangan langsung "buntu" — pakai daftar toko terakhir yang berhasil dimuat & tersimpan
-        // di HP ini (localStorage), supaya toko/admin tetap bisa mencoba login sambil menunggu
-        // koneksi pulih. Tombol "Muat Ulang" tetap tersedia untuk coba ambil data terbaru lagi.
         const useDirCacheFallback = () => {
           setDirLoading(false);
+          setDirBackgroundSync(false);
           try {
             const cached = JSON.parse(localStorage.getItem('tarobun_dir_cache') || 'null');
             if (cached && cached.length > 0) {
@@ -3011,6 +2984,39 @@ const { useState, useEffect } = React;
           } catch (e) {}
           setDirError(true);
         };
+
+        const tryLoad = () => {
+          attempt += 1;
+          __apiFetch(`${WORKER_BASE}/api/rtdb/get?path=storeDirectory`)
+            .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+            .then(data => {
+              if (cancelled) return;
+              const raw = data.value || {};
+              // storeDirectory di D1: { storeId: namaTokoString }
+              const list = Object.entries(raw)
+                .map(([id, val]) => ({ id, name: typeof val === 'string' ? val : (val && val.name) || id }))
+                .filter(s => s.name)
+                .sort((a, b) => a.name.localeCompare(b.name));
+              setStoreDirectory(list);
+              setDirLoading(false);
+              setDirFromCache(false);
+              setDirBackgroundSync(false);
+              setDirError(false);
+              try { localStorage.setItem('tarobun_dir_cache', JSON.stringify(list)); } catch (e) {}
+            })
+            .catch(err => {
+              if (cancelled) return;
+              setDirErrorDetail(String(err && err.message ? err.message : err));
+              if (attempt < MAX_ATTEMPTS) {
+                setTimeout(tryLoad, 1000 * attempt);
+              } else {
+                useDirCacheFallback();
+              }
+            });
+        };
+
+        // Panggil tryLoad SETELAH state di-set supaya tidak race condition
+        tryLoad();
 
         const tryAdminCheck = (n) => {
           __apiFetch(`${WORKER_BASE}/api/admin-exists`)
@@ -3036,7 +3042,6 @@ const { useState, useEffect } = React;
             });
         };
 
-        tryLoad();
         tryAdminCheck(1);
 
         return () => {

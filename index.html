@@ -891,16 +891,63 @@ const { useState, useEffect } = React;
     // Upload satu blob/foto ke R2 lewat Worker. `folder` dipakai sebagai prefix key (mis.
     // "wasteFotos/{storeId}") supaya rapi dan gampang ditelusuri. Balikannya { url, key } —
     // `url` langsung dipakai sebagai <img src>, `key` disimpan di database untuk keperluan hapus nanti.
-    const uploadMediaToR2 = async (dataUrlOrBlob, folder, ext = 'jpg') => {
+    // BUGFIX (perbaikan koneksi lambat): sebelumnya upload TIDAK punya timeout sama sekali --
+    // di koneksi sangat lambat/putus-nyambung, request bisa "menggantung" tanpa batas waktu
+    // (browser baru menyerah setelah puluhan detik/menit, kalau menyerah sama sekali), dan
+    // TIDAK ADA percobaan ulang otomatis -- sekali gagal, pengguna harus ulang manual dari awal
+    // (ambil ulang foto, dsb). Sekarang: setiap upload dibatasi waktu (AbortController) dan
+    // dicoba ulang otomatis (dengan jeda) KHUSUS untuk kegagalan JARINGAN (fetch gagal total /
+    // timeout) -- BUKAN untuk error dari server yang sudah jelas (mis. 415 tipe file salah,
+    // 413 file kebesaran, 401 sesi habis), karena error jenis itu tidak akan berubah walau
+    // diulang dan harus langsung ditampilkan apa adanya ke pengguna.
+    const uploadMediaToR2 = async (dataUrlOrBlob, folder, ext = 'jpg', opts = {}) => {
       const blob = dataUrlOrBlob instanceof Blob ? dataUrlOrBlob : dataUrlToBlob(dataUrlOrBlob);
-      const res = await __apiFetch(`${WORKER_BASE}/api/media/upload?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(ext)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': blob.type || 'application/octet-stream', ...__authHeaders() },
-        body: blob,
-      });
-      if (!res.ok) throw new Error('Gagal upload foto ke storage (HTTP ' + res.status + ')');
-      const data = await res.json();
-      return { key: data.key, url: `${WORKER_BASE}/api/media/file/${data.key}` };
+      const maxRetries = opts.maxRetries != null ? opts.maxRetries : 2;   // total percobaan: 1 + 2 = 3x
+      const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 30000; // 30 detik per percobaan
+      let lastErr = null;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/media/upload?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(ext)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': blob.type || 'application/octet-stream', ...__authHeaders() },
+            body: blob,
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          if (!res.ok) {
+            // Error DARI SERVER (bukan gagal jaringan) -- ambil pesan asli kalau ada, dan
+            // JANGAN diulang otomatis, langsung lempar supaya pemanggil tahu penyebab pastinya.
+            let msg = 'Gagal upload foto ke storage (HTTP ' + res.status + ')';
+            try { const errBody = await res.json(); if (errBody && errBody.error) msg = errBody.error; } catch (e) {}
+            const e = new Error(msg);
+            e.status = res.status;
+            throw e;
+          }
+          const data = await res.json();
+          return { key: data.key, url: `${WORKER_BASE}/api/media/file/${data.key}` };
+        } catch (err) {
+          clearTimeout(timer);
+          lastErr = err;
+          // Kalau sudah dapat status dari server (error aplikasi, bukan jaringan) -> jangan retry
+          if (err && typeof err.status === 'number') throw err;
+          const isAbort = err && err.name === 'AbortError';
+          if (attempt < maxRetries) {
+            // Jeda sebelum coba lagi (backoff sederhana): 1 detik, lalu 2 detik
+            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            continue;
+          }
+          const e = new Error(
+            isAbort
+              ? 'Upload foto gagal: koneksi terlalu lambat (timeout). Coba lagi di jaringan yang lebih stabil.'
+              : 'Upload foto gagal: koneksi terputus. Periksa internet Anda lalu coba lagi.'
+          );
+          e.isNetworkError = true;
+          throw e;
+        }
+      }
+      throw lastErr;
     };
 
     // Hapus satu atau beberapa key sekaligus dari R2. Sengaja "best-effort" (tidak melempar error
@@ -944,11 +991,30 @@ const { useState, useEffect } = React;
       signInWithEmailAndPassword: async (email, password) => {
         let res, data;
         if (email === 'admin@tarobun-app.internal') {
-          res = await __apiFetch(`${WORKER_BASE}/api/login/admin`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
-          });
-          data = await res.json();
+          // BUGFIX (perbaikan pesan error login): sebelumnya kalau fetch() gagal total (mis.
+          // koneksi terputus/timeout/server tidak terjangkau), exception yang dilempar TIDAK
+          // punya `.status` sama sekali -- di UI, error tanpa status ini SALAH ditampilkan
+          // sebagai "password salah", padahal request-nya belum tentu pernah sampai ke server.
+          // Sekarang gagal-jaringan ditandai eksplisit lewat `e.isNetworkError = true` supaya
+          // UI bisa membedakan & menampilkan pesan yang sesuai penyebab aslinya.
+          try {
+            res = await __apiFetch(`${WORKER_BASE}/api/login/admin`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email, password }),
+            });
+          } catch (netErr) {
+            const e = new Error('Gagal terhubung ke server. Periksa koneksi internet Anda lalu coba lagi.');
+            e.isNetworkError = true;
+            throw e;
+          }
+          try {
+            data = await res.json();
+          } catch (parseErr) {
+            const e = new Error('Server memberi respons tidak valid (kemungkinan sedang gangguan). Coba lagi sesaat lagi.');
+            e.isNetworkError = true;
+            e.status = res.status;
+            throw e;
+          }
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
           // Simpan token di sessionStorage sebagai fallback untuk cross-origin request
           // (Chrome 150+ memblokir cookie cross-origin antara Vercel dan workers.dev)
@@ -957,11 +1023,24 @@ const { useState, useEffect } = React;
           return { user: auth.currentUser };
         } else {
           const storeId = email.replace(/^store-/, '').replace(/@toko\.tarobun-app\.internal$/, '');
-          res = await __apiFetch(`${WORKER_BASE}/api/login/store`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ storeId, token: password, deviceLabel: getDeviceLabel() }),
-          });
-          data = await res.json();
+          try {
+            res = await __apiFetch(`${WORKER_BASE}/api/login/store`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ storeId, token: password, deviceLabel: getDeviceLabel() }),
+            });
+          } catch (netErr) {
+            const e = new Error('Gagal terhubung ke server. Periksa koneksi internet Anda lalu coba lagi.');
+            e.isNetworkError = true;
+            throw e;
+          }
+          try {
+            data = await res.json();
+          } catch (parseErr) {
+            const e = new Error('Server memberi respons tidak valid (kemungkinan sedang gangguan). Coba lagi sesaat lagi.');
+            e.isNetworkError = true;
+            e.status = res.status;
+            throw e;
+          }
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
           if (data._token) setSessionToken(data._token);
           auth.currentUser = __makeUser({ storeId: data.storeId, role: 'store' });
@@ -3101,15 +3180,30 @@ const { useState, useEffect } = React;
           saveSession('store', { storeId, storeName: info.name });
           onLoggedIn({ role: 'store', storeId, storeName: info.name });
         } catch (err) {
-          // Anti brute-force sepenuhnya ditangani server (lihat catatan KEAMANAN di atas):
-          // kalau terlalu banyak percobaan gagal, server membalas status 429 dengan pesan
-          // sisa waktu kunci -- tampilkan APA ADANYA, jangan diseragamkan.
-          if (err && err.status === 429) {
+          // BUGFIX (perbaikan pesan error login): SEBELUMNYA semua error selain 429/409
+          // (termasuk gagal koneksi/timeout ke server) ditampilkan sebagai "Nama toko atau
+          // token salah" -- ini MENYESATKAN, karena kalau penyebabnya koneksi lambat/putus,
+          // pengguna akan berulang kali cek & ganti token padahal tokennya benar dan
+          // masalahnya ada di jaringan. Sekarang setiap penyebab ditampilkan sesuai aslinya.
+          if (err && err.isNetworkError) {
+            setError((err.message || 'Gagal terhubung ke server.') + ' Kalau sinyal/data Anda sedang lambat, tunggu koneksi stabil lalu coba lagi.');
+          } else if (err && err.status === 429) {
+            // Anti brute-force sepenuhnya ditangani server (lihat catatan KEAMANAN di atas):
+            // kalau terlalu banyak percobaan gagal, server membalas status 429 dengan pesan
+            // sisa waktu kunci -- tampilkan APA ADANYA, jangan diseragamkan.
             setError(err.message || 'Terlalu banyak percobaan login gagal. Coba lagi beberapa saat lagi.');
           } else if (err && err.status === 409) {
             setError(err.message || 'Sudah ada perangkat lain yang sedang aktif memakai akun toko ini.');
+          } else if (err && err.status === 404) {
+            setError('Nama toko tidak ditemukan. Pastikan nama toko yang dipilih benar.');
+          } else if (err && err.status === 403) {
+            setError(err.message || 'Akun toko ini sudah tidak aktif. Hubungi admin.');
+          } else if (err && err.status === 401) {
+            setError('Token toko salah. Periksa kembali token yang dimasukkan.');
+          } else if (err && err.status === 400) {
+            setError(err.message || 'Kode toko dan token wajib diisi.');
           } else {
-            setError('Nama toko atau token salah.');
+            setError(err && err.message ? err.message : 'Nama toko atau token salah.');
           }
         } finally {
           setLoading(false);
@@ -3136,8 +3230,13 @@ const { useState, useEffect } = React;
           saveSession('admin', {});
           onLoggedIn({ role: 'admin' });
         } catch (err) {
-          // Anti brute-force sepenuhnya ditangani server -- lihat catatan KEAMANAN di atas.
-          if (err && err.status === 429) {
+          // BUGFIX (perbaikan pesan error login admin): sama seperti login toko, gagal
+          // koneksi/timeout sebelumnya ikut ditampilkan sebagai "Password admin salah" --
+          // sekarang dibedakan supaya tidak menyesatkan.
+          if (err && err.isNetworkError) {
+            setError((err.message || 'Gagal terhubung ke server.') + ' Kalau sinyal/data Anda sedang lambat, tunggu koneksi stabil lalu coba lagi.');
+          } else if (err && err.status === 429) {
+            // Anti brute-force sepenuhnya ditangani server -- lihat catatan KEAMANAN di atas.
             setError(err.message || 'Terlalu banyak percobaan login gagal. Coba lagi beberapa saat lagi.');
           } else if (adminExists === false && /sudah/i.test(err.message || '')) {
             // Server bilang admin sebenarnya sudah ada (flag di sisi ini sempat tidak sinkron,

@@ -536,12 +536,33 @@ const { useState, useEffect } = React;
     };
     // Bungkus fetch supaya error jaringan (server tidak terjangkau sama sekali) dan error HTTP
     // (status bukan 2xx) sama-sama menghasilkan pesan yang jelas, bukan "HTTP 500" polos.
-    const __fetchOrThrow = async (url, opts) => {
+    //
+    // BUGFIX PENTING (akar masalah "daftar toko/data tidak terbaru terus-menerus"): dulu fungsi
+    // ini TIDAK PUNYA BATAS WAKTU SAMA SEKALI. Di koneksi lambat (bukan mati total, cuma lemot),
+    // fetch() tidak pernah menghasilkan error/reject -- dia cuma diam menggantung tanpa henti.
+    // Akibatnya, retry logic yang sudah dibuat di tempat lain (mis. pemuatan daftar toko, MAX
+    // 3x percobaan) TIDAK PERNAH KEPICU, karena syaratnya adalah promise ini harus GAGAL dulu
+    // (.catch) sebelum retry berikutnya jalan -- kalau dia cuma menggantung selamanya, aplikasi
+    // seolah "macet" menampilkan data cache lama terus tanpa pernah benar-benar mencoba lagi
+    // atau memberi tahu penggunanya. Sekarang setiap panggilan DIPAKSA berhenti sendiri setelah
+    // 12 detik (timeoutMs bisa dioverride lewat opts kalau perlu), supaya promise-nya PASTI
+    // selesai (baik sukses atau gagal) dalam waktu wajar dan retry/fallback bisa benar-benar jalan.
+    const __fetchOrThrow = async (url, opts = {}) => {
+      const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 12000;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       let res;
       try {
-        res = await __apiFetch(url, opts);
+        res = await __apiFetch(url, { ...opts, signal: controller.signal });
       } catch (netErr) {
-        throw new Error('Tidak bisa menghubungi server (' + (netErr && netErr.message ? netErr.message : 'jaringan gagal') + ')');
+        const isTimeout = netErr && netErr.name === 'AbortError';
+        throw new Error(
+          isTimeout
+            ? `Koneksi terlalu lambat (timeout setelah ${Math.round(timeoutMs / 1000)} detik)`
+            : 'Tidak bisa menghubungi server (' + (netErr && netErr.message ? netErr.message : 'jaringan gagal') + ')'
+        );
+      } finally {
+        clearTimeout(timer);
       }
       if (!res.ok) throw new Error(await __readErrorBody(res));
       return res;

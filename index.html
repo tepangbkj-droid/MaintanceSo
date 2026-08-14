@@ -2987,12 +2987,11 @@ const { useState, useEffect } = React;
 
         const tryLoad = () => {
           attempt += 1;
-          __apiFetch(`${WORKER_BASE}/api/rtdb/get?path=storeDirectory`)
-            .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
-            .then(data => {
+          // Pakai db.ref() yang sudah punya cache: 'no-store' + auth headers yang benar
+          db.ref('storeDirectory').once('value')
+            .then(snap => {
               if (cancelled) return;
-              const raw = data.value || {};
-              // storeDirectory di D1: { storeId: namaTokoString }
+              const raw = snap.val() || {};
               const list = Object.entries(raw)
                 .map(([id, val]) => ({ id, name: typeof val === 'string' ? val : (val && val.name) || id }))
                 .filter(s => s.name)

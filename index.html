@@ -391,10 +391,9 @@ const { useState, useEffect } = React;
     // ==========================================
     // KONEKSI KE CLOUDFLARE WORKER (pengganti Firebase)
     // ==========================================
-    // WORKER_BASE dikosongkan (relative URL) supaya semua request API lewat Vercel rewrite
-    // di vercel.json (/api/* → workers.dev). Ini menghindari blokir third-party cookie
-    // di Chrome 150+ yang menyebabkan session tidak terkirim ke workers.dev langsung.
-    const WORKER_BASE = '';
+    // WORKER_BASE: URL Cloudflare Worker. Dipertahankan absolute supaya URL media/foto
+    // yang disimpan di database (foto waste, bukti PO, dsb) tetap valid sebagai <img src>.
+    const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
 
     // ==========================================
     // FIX (2026-08): base URL TETAP untuk link publik (psikotes/OJT) yang dibagikan admin
@@ -420,25 +419,29 @@ const { useState, useEffect } = React;
     // adalah origin BERBEDA dari halaman ini (subdomain workers.dev terpisah), dan browser
     // TIDAK PERNAH mengirim/menyimpan cookie lintas-origin tanpa opsi ini secara eksplisit.
     // ==========================================
-    const __apiFetch = (url, opts = {}) => fetch(url, { ...opts, credentials: 'include' });
-
     // ==========================================
-    // KEAMANAN (2026-08): sesi login TIDAK LAGI disimpan sebagai token di localStorage.
-    // Sebelumnya token autentikasi disimpan mentah-mentah di localStorage (CF_SESSION_KEY),
-    // yang artinya SEMUA script di halaman ini -- termasuk script asing yang berhasil
-    // disuntikkan lewat celah XSS mana pun -- bisa membaca token itu dan membajak sesi
-    // login. Sekarang Cloudflare Worker mengirim sesi lewat Set-Cookie HttpOnly (lihat
-    // buildSessionCookie di worker.js): cookie itu TIDAK PERNAH bisa dibaca oleh
-    // document.cookie atau JavaScript apa pun, hanya otomatis dikirim browser ke Worker.
-    // Konsekuensinya: frontend ini juga TIDAK LAGI tahu isi/nilai token-nya sendiri -- utk
-    // mengetahui "apakah user ini sedang login", frontend bertanya ke server lewat endpoint
-    // GET /api/session/me (lihat __loadCfSession di bawah), bukan membaca localStorage.
+    // SESSION TOKEN — disimpan di sessionStorage, dikirim via header X-Session-Token
+    // Ini solusi untuk Chrome 150+ yang memblokir cookie cross-origin (third-party cookie)
+    // antara so-mandiri-tarobun.vercel.app dan tarobun-api.tepangbkj8.workers.dev.
+    // Cookie HttpOnly tetap diset server (untuk keamanan), tapi sebagai backup kita juga
+    // simpan token di sessionStorage dan kirim via header custom yang tidak diblokir browser.
+    // ==========================================
+    const SESSION_TOKEN_KEY = 'tarobun_session_token';
+    const getSessionToken = () => { try { return sessionStorage.getItem(SESSION_TOKEN_KEY); } catch(e) { return null; } };
+    const setSessionToken = (t) => { try { if (t) sessionStorage.setItem(SESSION_TOKEN_KEY, t); else sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch(e) {} };
+
+    // __apiFetch: selalu kirim credentials (cookie) DAN header X-Session-Token kalau ada
+    const __apiFetch = (url, opts = {}) => {
+      const token = getSessionToken();
+      const headers = { ...(opts.headers || {}), ...(token ? { 'X-Session-Token': token } : {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
     let __authListeners = [];
-    // __authHeaders() sengaja jadi no-op (dipertahankan sebagai fungsi kosong, bukan
-    // dihapus) supaya SEMUA titik fetch() lama di file ini yang masih menulis
-    // `...__authHeaders()` tetap berjalan tanpa perlu diubah satu-persatu -- otentikasi
-    // sekarang murni lewat Cookie (otomatis via __apiFetch), bukan header lagi.
-    const __authHeaders = () => ({});
+    const __authHeaders = () => {
+      const token = getSessionToken();
+      return token ? { 'X-Session-Token': token } : {};
+    };
 
     // ==========================================
     // IDENTITAS DEVICE -- HANYA LABEL KOSMETIK, BUKAN LAGI KONTROL KEAMANAN
@@ -499,9 +502,11 @@ const { useState, useEffect } = React;
     const __fetchServerSession = async () => {
       try {
         const res = await __apiFetch(`${WORKER_BASE}/api/session/me`, { cache: 'no-store' });
-        if (!res.ok) return null;
+        if (!res.ok) { setSessionToken(null); return null; }
         const data = await res.json();
-        if (!data || !data.ok) return null;
+        if (!data || !data.ok) { setSessionToken(null); return null; }
+        // Kalau server kirim token baru (refresh), simpan lagi
+        if (data._token) setSessionToken(data._token);
         if (data.role === 'admin') return { uid: data.uid, role: 'admin' };
         return { storeId: data.storeId, role: 'store', storeInfo: data.storeInfo };
       } catch (e) {
@@ -945,21 +950,20 @@ const { useState, useEffect } = React;
           });
           data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
-          // Tidak ada lagi token untuk disimpan di sini -- Worker sudah mengirimkannya lewat
-          // Set-Cookie HttpOnly pada response ini (browser menyimpannya otomatis).
+          // Simpan token di sessionStorage sebagai fallback untuk cross-origin request
+          // (Chrome 150+ memblokir cookie cross-origin antara Vercel dan workers.dev)
+          if (data._token) setSessionToken(data._token);
           auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
           return { user: auth.currentUser };
         } else {
           const storeId = email.replace(/^store-/, '').replace(/@toko\.tarobun-app\.internal$/, '');
-          // deviceId TIDAK dikirim lagi -- server yang membuat & menandatangani identitas
-          // device (sid) sendiri saat login (lihat catatan di /api/login/store, worker.js).
-          // deviceLabel tetap dikirim, tapi murni label tampilan kosmetik untuk menu Admin.
           res = await __apiFetch(`${WORKER_BASE}/api/login/store`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ storeId, token: password, deviceLabel: getDeviceLabel() }),
           });
           data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
+          if (data._token) setSessionToken(data._token);
           auth.currentUser = __makeUser({ storeId: data.storeId, role: 'store' });
           return { user: auth.currentUser, storeInfo: data.storeInfo };
         }
@@ -971,13 +975,13 @@ const { useState, useEffect } = React;
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Gagal membuat admin');
+        if (data._token) setSessionToken(data._token);
         auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
         return { user: auth.currentUser };
       },
       signOut: async () => {
-        // Cookie HttpOnly tidak bisa dihapus dari JavaScript -- WAJIB minta server yang
-        // menghapusnya lewat Set-Cookie (lihat /api/logout di worker.js).
         try { await __apiFetch(`${WORKER_BASE}/api/logout`, { method: 'POST' }); } catch (e) {}
+        setSessionToken(null); // hapus token dari sessionStorage saat logout
         auth.currentUser = null;
       },
     };
@@ -7659,13 +7663,16 @@ Daily inventory done✅
       const handleDeleteWasteFoto = async (firebaseKey) => {
         try {
           showToast('Menghapus foto... 🗑️');
+          // Cari item dulu untuk ambil fotoKey sebelum dihapus dari DB
+          const item = wasteFotoList.find(it => it.firebaseKey === firebaseKey);
           await restRemove(db.ref(`${storeBase}/wasteFotos/` + firebaseKey));
-          showToast('Foto berhasil dihapus dari Riwayat.');
-          setWasteFotoList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
+          // Hapus juga file fisik dari R2 kalau ada
+          if (item && item.fotoKey) await deleteMediaFromR2(item.fotoKey).catch(() => {});
+          showToast('Foto berhasil dihapus. 🗑️');
+          setWasteFotoList(prev => prev.filter(it => it.firebaseKey !== firebaseKey));
         } catch (error) {
           console.error('Gagal menghapus foto waste:', error);
-          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
-          showToast(`⚠️ Gagal menghapus foto: ${detail}`);
+          showToast(`⚠️ Gagal menghapus foto: ${error && error.message ? error.message : 'Kesalahan tidak diketahui'}`);
         }
       };
 

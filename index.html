@@ -974,6 +974,58 @@ const { useState, useEffect } = React;
     // dari JavaScript sama sekali (itulah intinya, lihat catatan KEAMANAN di atas).
     const __makeUser = (u) => u ? { uid: u.uid || u.storeId, ...u, getIdToken: async () => null } : null;
 
+    // BUGFIX (perbaikan koneksi lambat, tahap 2): sebelumnya login (admin & toko) TIDAK punya
+    // timeout/retry sama sekali -- di koneksi sangat lambat/putus-nyambung (mis. HP di jaringan
+    // seluler lemah), satu kali gagal langsung berhenti dan pengguna harus tekan tombol Masuk
+    // lagi secara manual. Sekarang dipakai helper yang sama semangatnya dengan uploadMediaToR2:
+    // dibatasi waktu per percobaan (AbortController) & dicoba ulang otomatis (dengan jeda)
+    // KHUSUS untuk kegagalan JARINGAN murni (fetch gagal total / timeout / respons tidak valid)
+    // -- BUKAN untuk error resmi dari server yang sudah py status HTTP jelas (401 token salah,
+    // 403 nonaktif, 404 toko tidak ada, 429 dikunci, dst), karena error jenis itu tidak akan
+    // berubah walau diulang dan harus langsung ditampilkan apa adanya ke pengguna.
+    const __fetchJsonWithRetry = async (url, fetchOpts, opts = {}) => {
+      const maxRetries = opts.maxRetries != null ? opts.maxRetries : 2;   // total percobaan: 1 + 2 = 3x
+      const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 15000; // 15 detik per percobaan
+      let lastErr = null;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const res = await __apiFetch(url, { ...fetchOpts, signal: controller.signal });
+          clearTimeout(timer);
+          let data;
+          try {
+            data = await res.json();
+          } catch (parseErr) {
+            const e = new Error('Server memberi respons tidak valid (kemungkinan sedang gangguan). Coba lagi sesaat lagi.');
+            e.isNetworkError = true;
+            e.status = res.status;
+            throw e;
+          }
+          return { res, data };
+        } catch (err) {
+          clearTimeout(timer);
+          lastErr = err;
+          // Sudah dapat status dari server (error aplikasi resmi, bukan gagal jaringan) -> jangan retry
+          if (err && typeof err.status === 'number') throw err;
+          const isAbort = err && err.name === 'AbortError';
+          if (attempt < maxRetries) {
+            // Jeda sebelum coba lagi (backoff sederhana): 1 detik, lalu 2 detik
+            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            continue;
+          }
+          const e = new Error(
+            isAbort
+              ? 'Gagal terhubung ke server: koneksi terlalu lambat (timeout). Coba lagi di jaringan yang lebih stabil.'
+              : 'Gagal terhubung ke server. Periksa koneksi internet Anda lalu coba lagi.'
+          );
+          e.isNetworkError = true;
+          throw e;
+        }
+      }
+      throw lastErr;
+    };
+
     const auth = {
       currentUser: null,
       setPersistence: async () => {},
@@ -989,32 +1041,11 @@ const { useState, useEffect } = React;
         return () => { __authListeners = __authListeners.filter(l => l !== cb); };
       },
       signInWithEmailAndPassword: async (email, password) => {
-        let res, data;
         if (email === 'admin@tarobun-app.internal') {
-          // BUGFIX (perbaikan pesan error login): sebelumnya kalau fetch() gagal total (mis.
-          // koneksi terputus/timeout/server tidak terjangkau), exception yang dilempar TIDAK
-          // punya `.status` sama sekali -- di UI, error tanpa status ini SALAH ditampilkan
-          // sebagai "password salah", padahal request-nya belum tentu pernah sampai ke server.
-          // Sekarang gagal-jaringan ditandai eksplisit lewat `e.isNetworkError = true` supaya
-          // UI bisa membedakan & menampilkan pesan yang sesuai penyebab aslinya.
-          try {
-            res = await __apiFetch(`${WORKER_BASE}/api/login/admin`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, password }),
-            });
-          } catch (netErr) {
-            const e = new Error('Gagal terhubung ke server. Periksa koneksi internet Anda lalu coba lagi.');
-            e.isNetworkError = true;
-            throw e;
-          }
-          try {
-            data = await res.json();
-          } catch (parseErr) {
-            const e = new Error('Server memberi respons tidak valid (kemungkinan sedang gangguan). Coba lagi sesaat lagi.');
-            e.isNetworkError = true;
-            e.status = res.status;
-            throw e;
-          }
+          const { res, data } = await __fetchJsonWithRetry(`${WORKER_BASE}/api/login/admin`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+          });
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
           // Simpan token di sessionStorage sebagai fallback untuk cross-origin request
           // (Chrome 150+ memblokir cookie cross-origin antara Vercel dan workers.dev)
@@ -1023,24 +1054,10 @@ const { useState, useEffect } = React;
           return { user: auth.currentUser };
         } else {
           const storeId = email.replace(/^store-/, '').replace(/@toko\.tarobun-app\.internal$/, '');
-          try {
-            res = await __apiFetch(`${WORKER_BASE}/api/login/store`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ storeId, token: password, deviceLabel: getDeviceLabel() }),
-            });
-          } catch (netErr) {
-            const e = new Error('Gagal terhubung ke server. Periksa koneksi internet Anda lalu coba lagi.');
-            e.isNetworkError = true;
-            throw e;
-          }
-          try {
-            data = await res.json();
-          } catch (parseErr) {
-            const e = new Error('Server memberi respons tidak valid (kemungkinan sedang gangguan). Coba lagi sesaat lagi.');
-            e.isNetworkError = true;
-            e.status = res.status;
-            throw e;
-          }
+          const { res, data } = await __fetchJsonWithRetry(`${WORKER_BASE}/api/login/store`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ storeId, token: password, deviceLabel: getDeviceLabel() }),
+          });
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
           if (data._token) setSessionToken(data._token);
           auth.currentUser = __makeUser({ storeId: data.storeId, role: 'store' });

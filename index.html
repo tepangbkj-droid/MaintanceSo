@@ -8,7 +8,7 @@
   <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://*.vercel.app https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <!-- KEAMANAN (hardening, 2026-08): cegah web ini muncul di hasil pencarian Google/Bing dkk.
@@ -391,7 +391,10 @@ const { useState, useEffect } = React;
     // ==========================================
     // KONEKSI KE CLOUDFLARE WORKER (pengganti Firebase)
     // ==========================================
-    const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
+    // WORKER_BASE dikosongkan (relative URL) supaya semua request API lewat Vercel rewrite
+    // di vercel.json (/api/* → workers.dev). Ini menghindari blokir third-party cookie
+    // di Chrome 150+ yang menyebabkan session tidak terkirim ke workers.dev langsung.
+    const WORKER_BASE = '';
 
     // ==========================================
     // FIX (2026-08): base URL TETAP untuk link publik (psikotes/OJT) yang dibagikan admin

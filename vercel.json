@@ -3,6 +3,10 @@
     {
       "source": "/s/:slug",
       "destination": "https://tarobun-api.tepangbkj8.workers.dev/s/:slug"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://tarobun-api.tepangbkj8.workers.dev/api/:path*"
     }
   ]
 }

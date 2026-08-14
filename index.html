@@ -8,7 +8,7 @@
   <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://*.vercel.app https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <!-- KEAMANAN (hardening, 2026-08): cegah web ini muncul di hasil pencarian Google/Bing dkk.
@@ -112,15 +112,33 @@
   <style>
     /* ========================================== */
     /* PENGAMAN RESPONSIF GLOBAL (2026-07-22) */
-    /* Mencegah layar "kepotong"/geser horizontal di HP dengan lebar layar kecil
-       (mis. 320-360px) — biasanya disebabkan 1 elemen saja yang lebih lebar dari
-       layar (teks panjang tanpa wrap, gambar tanpa max-width, dsb) yang memaksa
-       SELURUH halaman jadi bisa di-scroll ke samping. */
-    html, body { max-width: 100%; overflow-x: hidden; }
-    /* Teks panjang tanpa spasi (mis. link, isi pesanan PO, catatan BAP) dipaksa
-       pindah baris alih-alih mendorong lebar layout melebar ke samping. */
+    /* Mencegah layar "kepotong"/geser horizontal di HP */
+    html, body { max-width: 100%; overflow-x: hidden; scroll-behavior: smooth; }
     * { overflow-wrap: break-word; word-break: break-word; }
     img, video { max-width: 100%; height: auto; }
+
+    /* ========================================== */
+    /* PERFORMANCE — GPU compositing & rendering hints */
+    /* ========================================== */
+    /* Transisi/animasi dijalankan di GPU thread agar tidak memblokir JS main thread */
+    .animate-fadeIn, .animate-scaleIn, .animate-spin,
+    [class*="transition"], [class*="animate-"] {
+      will-change: transform, opacity;
+    }
+    /* Setelah animasi selesai, lepas will-change supaya tidak waste GPU memory */
+    .animate-fadeIn { animation-fill-mode: both; }
+
+    /* Input & button: hapus default tap-highlight di mobile (bikin terasa lebih responsif) */
+    input, button, select, textarea { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+    /* Daftar panjang (riwayat, produk, dsb): biarkan browser skip render item di luar layar */
+    .content-vis-auto { content-visibility: auto; contain-intrinsic-size: 0 60px; }
+
+    /* Scroll container: gunakan momentum scroll native di iOS */
+    .overflow-y-auto, .overflow-auto { -webkit-overflow-scrolling: touch; }
+
+    /* Kurangi reflow saat render form panjang */
+    .grid, .flex { contain: layout; }
 
     @keyframes tarobunFadeIn { from { opacity: 0 } to { opacity: 1 } }
     @keyframes tarobunScaleIn { from { opacity: 0; transform: scale(0.9) } to { opacity: 1; transform: scale(1) } }
@@ -373,6 +391,8 @@ const { useState, useEffect } = React;
     // ==========================================
     // KONEKSI KE CLOUDFLARE WORKER (pengganti Firebase)
     // ==========================================
+    // WORKER_BASE: URL Cloudflare Worker. Dipertahankan absolute supaya URL media/foto
+    // yang disimpan di database (foto waste, bukti PO, dsb) tetap valid sebagai <img src>.
     const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
 
     // ==========================================
@@ -399,25 +419,29 @@ const { useState, useEffect } = React;
     // adalah origin BERBEDA dari halaman ini (subdomain workers.dev terpisah), dan browser
     // TIDAK PERNAH mengirim/menyimpan cookie lintas-origin tanpa opsi ini secara eksplisit.
     // ==========================================
-    const __apiFetch = (url, opts = {}) => fetch(url, { ...opts, credentials: 'include' });
-
     // ==========================================
-    // KEAMANAN (2026-08): sesi login TIDAK LAGI disimpan sebagai token di localStorage.
-    // Sebelumnya token autentikasi disimpan mentah-mentah di localStorage (CF_SESSION_KEY),
-    // yang artinya SEMUA script di halaman ini -- termasuk script asing yang berhasil
-    // disuntikkan lewat celah XSS mana pun -- bisa membaca token itu dan membajak sesi
-    // login. Sekarang Cloudflare Worker mengirim sesi lewat Set-Cookie HttpOnly (lihat
-    // buildSessionCookie di worker.js): cookie itu TIDAK PERNAH bisa dibaca oleh
-    // document.cookie atau JavaScript apa pun, hanya otomatis dikirim browser ke Worker.
-    // Konsekuensinya: frontend ini juga TIDAK LAGI tahu isi/nilai token-nya sendiri -- utk
-    // mengetahui "apakah user ini sedang login", frontend bertanya ke server lewat endpoint
-    // GET /api/session/me (lihat __loadCfSession di bawah), bukan membaca localStorage.
+    // SESSION TOKEN — disimpan di sessionStorage, dikirim via header X-Session-Token
+    // Ini solusi untuk Chrome 150+ yang memblokir cookie cross-origin (third-party cookie)
+    // antara so-mandiri-tarobun.vercel.app dan tarobun-api.tepangbkj8.workers.dev.
+    // Cookie HttpOnly tetap diset server (untuk keamanan), tapi sebagai backup kita juga
+    // simpan token di sessionStorage dan kirim via header custom yang tidak diblokir browser.
+    // ==========================================
+    const SESSION_TOKEN_KEY = 'tarobun_session_token';
+    const getSessionToken = () => { try { return sessionStorage.getItem(SESSION_TOKEN_KEY); } catch(e) { return null; } };
+    const setSessionToken = (t) => { try { if (t) sessionStorage.setItem(SESSION_TOKEN_KEY, t); else sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch(e) {} };
+
+    // __apiFetch: selalu kirim credentials (cookie) DAN header X-Session-Token kalau ada
+    const __apiFetch = (url, opts = {}) => {
+      const token = getSessionToken();
+      const headers = { ...(opts.headers || {}), ...(token ? { 'X-Session-Token': token } : {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
     let __authListeners = [];
-    // __authHeaders() sengaja jadi no-op (dipertahankan sebagai fungsi kosong, bukan
-    // dihapus) supaya SEMUA titik fetch() lama di file ini yang masih menulis
-    // `...__authHeaders()` tetap berjalan tanpa perlu diubah satu-persatu -- otentikasi
-    // sekarang murni lewat Cookie (otomatis via __apiFetch), bukan header lagi.
-    const __authHeaders = () => ({});
+    const __authHeaders = () => {
+      const token = getSessionToken();
+      return token ? { 'X-Session-Token': token } : {};
+    };
 
     // ==========================================
     // IDENTITAS DEVICE -- HANYA LABEL KOSMETIK, BUKAN LAGI KONTROL KEAMANAN
@@ -478,9 +502,11 @@ const { useState, useEffect } = React;
     const __fetchServerSession = async () => {
       try {
         const res = await __apiFetch(`${WORKER_BASE}/api/session/me`, { cache: 'no-store' });
-        if (!res.ok) return null;
+        if (!res.ok) { setSessionToken(null); return null; }
         const data = await res.json();
-        if (!data || !data.ok) return null;
+        if (!data || !data.ok) { setSessionToken(null); return null; }
+        // Kalau server kirim token baru (refresh), simpan lagi
+        if (data._token) setSessionToken(data._token);
         if (data.role === 'admin') return { uid: data.uid, role: 'admin' };
         return { storeId: data.storeId, role: 'store', storeInfo: data.storeInfo };
       } catch (e) {
@@ -566,9 +592,9 @@ const { useState, useEffect } = React;
         try {
           const qs = storeId ? `storeId=${encodeURIComponent(storeId)}&v=${version}` : `v=${version}`;
           const controller = new AbortController();
-          // Sedikit lebih lama dari WAIT_TIMEOUT_MS di server (30 detik), supaya browser
-          // yang membatalkan request bukan karena server-nya lambat balas.
-          timeoutId = setTimeout(() => controller.abort(), 40000);
+          // Abort timeout sisi client: sedikit lebih lama dari WAIT_TIMEOUT_MS server (25 detik),
+          // supaya browser tidak membatalkan request sebelum server sempat membalasnya.
+          timeoutId = setTimeout(() => controller.abort(), 32000);
           const res = await __apiFetch(`${WORKER_BASE}/api/chat/wait?${qs}`, { headers: __authHeaders(), signal: controller.signal });
           clearTimeout(timeoutId);
           const data = await res.json();
@@ -924,21 +950,20 @@ const { useState, useEffect } = React;
           });
           data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
-          // Tidak ada lagi token untuk disimpan di sini -- Worker sudah mengirimkannya lewat
-          // Set-Cookie HttpOnly pada response ini (browser menyimpannya otomatis).
+          // Simpan token di sessionStorage sebagai fallback untuk cross-origin request
+          // (Chrome 150+ memblokir cookie cross-origin antara Vercel dan workers.dev)
+          if (data._token) setSessionToken(data._token);
           auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
           return { user: auth.currentUser };
         } else {
           const storeId = email.replace(/^store-/, '').replace(/@toko\.tarobun-app\.internal$/, '');
-          // deviceId TIDAK dikirim lagi -- server yang membuat & menandatangani identitas
-          // device (sid) sendiri saat login (lihat catatan di /api/login/store, worker.js).
-          // deviceLabel tetap dikirim, tapi murni label tampilan kosmetik untuk menu Admin.
           res = await __apiFetch(`${WORKER_BASE}/api/login/store`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ storeId, token: password, deviceLabel: getDeviceLabel() }),
           });
           data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
+          if (data._token) setSessionToken(data._token);
           auth.currentUser = __makeUser({ storeId: data.storeId, role: 'store' });
           return { user: auth.currentUser, storeInfo: data.storeInfo };
         }
@@ -950,13 +975,13 @@ const { useState, useEffect } = React;
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Gagal membuat admin');
+        if (data._token) setSessionToken(data._token);
         auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
         return { user: auth.currentUser };
       },
       signOut: async () => {
-        // Cookie HttpOnly tidak bisa dihapus dari JavaScript -- WAJIB minta server yang
-        // menghapusnya lewat Set-Cookie (lihat /api/logout di worker.js).
         try { await __apiFetch(`${WORKER_BASE}/api/logout`, { method: 'POST' }); } catch (e) {}
+        setSessionToken(null); // hapus token dari sessionStorage saat logout
         auth.currentUser = null;
       },
     };
@@ -2930,54 +2955,31 @@ const { useState, useEffect } = React;
         let attempt = 0;
         const MAX_ATTEMPTS = 3;
 
+        // Reset semua state dulu sebelum mulai
+        setDirError(false);
+        setDirFromCache(false);
+        setAdminCheckError(false);
+
+        // Cek cache dulu — tampilkan instan kalau ada, sambil fetch terbaru di belakang
         let hasCache = false;
         try {
           const cached = JSON.parse(localStorage.getItem('tarobun_dir_cache') || 'null');
           if (cached && cached.length > 0) {
             hasCache = true;
             setStoreDirectory(cached);
-            setDirLoading(false);       // sudah ada data untuk dipakai, tidak perlu blocking
-            setDirBackgroundSync(true); // tandai sedang disegarkan diam-diam
+            setDirLoading(false);
+            setDirBackgroundSync(true); // sedang ambil data terbaru di belakang layar
           }
         } catch (e) {}
 
-        setDirLoading(hasCache ? false : true);
-        setDirError(false);
-        setDirFromCache(false);
-        setAdminCheckError(false);
+        if (!hasCache) {
+          setDirLoading(true);
+          setDirBackgroundSync(false);
+        }
 
-        const tryLoad = () => {
-          attempt += 1;
-          db.ref('storeDirectory').once('value')
-            .then(snap => {
-              if (cancelled) return;
-              const data = snap.val() || {};
-              const list = Object.keys(data).map(id => ({ id, name: data[id] })).sort((a, b) => a.name.localeCompare(b.name));
-              setStoreDirectory(list);
-              setDirLoading(false);
-              setDirError(false);
-              setDirFromCache(false);
-              setDirBackgroundSync(false); // data terbaru sudah datang, berhenti menandai "menyegarkan"
-              try { localStorage.setItem('tarobun_dir_cache', JSON.stringify(list)); } catch (e) {}
-            })
-            .catch((err) => {
-              if (cancelled) return;
-              setDirErrorDetail(String(err && err.message ? err.message : err));
-              if (attempt < MAX_ATTEMPTS) {
-                setTimeout(tryLoad, 1000 * attempt); // jeda makin lama tiap percobaan ulang
-              } else {
-                setDirBackgroundSync(false);
-                useDirCacheFallback();
-              }
-            });
-        };
-
-        // Kalau semua percobaan koneksi ke database gagal (jaringan benar-benar bermasalah),
-        // jangan langsung "buntu" — pakai daftar toko terakhir yang berhasil dimuat & tersimpan
-        // di HP ini (localStorage), supaya toko/admin tetap bisa mencoba login sambil menunggu
-        // koneksi pulih. Tombol "Muat Ulang" tetap tersedia untuk coba ambil data terbaru lagi.
         const useDirCacheFallback = () => {
           setDirLoading(false);
+          setDirBackgroundSync(false);
           try {
             const cached = JSON.parse(localStorage.getItem('tarobun_dir_cache') || 'null');
             if (cached && cached.length > 0) {
@@ -2989,6 +2991,38 @@ const { useState, useEffect } = React;
           } catch (e) {}
           setDirError(true);
         };
+
+        const tryLoad = () => {
+          attempt += 1;
+          // Pakai db.ref() yang sudah punya cache: 'no-store' + auth headers yang benar
+          db.ref('storeDirectory').once('value')
+            .then(snap => {
+              if (cancelled) return;
+              const raw = snap.val() || {};
+              const list = Object.entries(raw)
+                .map(([id, val]) => ({ id, name: typeof val === 'string' ? val : (val && val.name) || id }))
+                .filter(s => s.name)
+                .sort((a, b) => a.name.localeCompare(b.name));
+              setStoreDirectory(list);
+              setDirLoading(false);
+              setDirFromCache(false);
+              setDirBackgroundSync(false);
+              setDirError(false);
+              try { localStorage.setItem('tarobun_dir_cache', JSON.stringify(list)); } catch (e) {}
+            })
+            .catch(err => {
+              if (cancelled) return;
+              setDirErrorDetail(String(err && err.message ? err.message : err));
+              if (attempt < MAX_ATTEMPTS) {
+                setTimeout(tryLoad, 1000 * attempt);
+              } else {
+                useDirCacheFallback();
+              }
+            });
+        };
+
+        // Panggil tryLoad SETELAH state di-set supaya tidak race condition
+        tryLoad();
 
         const tryAdminCheck = (n) => {
           __apiFetch(`${WORKER_BASE}/api/admin-exists`)
@@ -3014,7 +3048,6 @@ const { useState, useEffect } = React;
             });
         };
 
-        tryLoad();
         tryAdminCheck(1);
 
         return () => {
@@ -3151,7 +3184,7 @@ const { useState, useEffect } = React;
               </div>
             )}
 
-            {dirFromCache && !dirError && (
+            {dirFromCache && !dirError && !dirBackgroundSync && (
               <div className="bg-sky-50 border border-sky-200 text-sky-700 text-xs font-semibold rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2">
                 <span>Koneksi lambat — menampilkan data toko tersimpan (mungkin tidak terbaru).</span>
                 <button type="button" onClick={() => setReloadTick(t => t + 1)} className="shrink-0 bg-sky-600 text-white text-[10px] font-bold px-2 py-1 rounded-lg">Sinkron Ulang</button>
@@ -3454,7 +3487,17 @@ const { useState, useEffect } = React;
       const [deletingWasteFotoKey, setDeletingWasteFotoKey] = useState(null);
       // Label ringkas kategori waste, dipakai HANYA untuk teks modal konfirmasi hapus di Panel
       // Admin (bukan WASTE_CATEGORIES yang ada di komponen Toko — beda komponen, beda scope).
-      const ADMIN_WASTE_LABELS = { bunRijek: 'Bun Rijek', rijekBarang: 'Rijek Barang', bunWaste: 'Bun Waste' };
+      const ADMIN_WASTE_LABELS = {
+        fdNempel: 'FD Nempel / Reject',
+        bunRejectThawing: 'Bun Reject Thawing',
+        doughPecahProofing: 'Dough Pecah Proofing',
+        gagalBakingOvernight: 'Gagal Baking Overnight',
+        gagalBakingReguler: 'Gagal Baking Reguler',
+        bunWaste: 'Bun Waste',
+        rijekBarang: 'Rijek Barang',
+        // backward compat label lama
+        bunRijek: 'Bun Rijek',
+      };
 
       // ==========================================
       // PANDUAN SOP - STATE & LOGIKA (Sisi Admin)
@@ -5896,13 +5939,8 @@ const { useState, useEffect } = React;
         setShowUpdatePopup(false);
       };
 
-      // Re-initialize icons on every render
-useEffect(() => {
-  // Pastikan objek lucide ada di window sebelum digunakan
-  if (window.lucide) {
-    window.lucide.createIcons();
-  }
-}, [activeTab]);
+      // Re-initialize icons saat tab berubah (debounced agar tidak flood DOM scan)
+      useEffect(() => { scheduleLucideIcons(); }, [activeTab]);
       // Configuration states (Saved in LocalStorage / Firebase fallback)
       const [config, setConfig] = useState({
         telegramBotToken: '',
@@ -5999,8 +6037,54 @@ useEffect(() => {
         custom: {} // field tambahan yang didefinisikan Admin (Form Builder)
       });
 
-      const [salesData, setSalesData] = useState(() => getEmptySalesState());
+      // ==========================================
+      // DRAFT LAPORAN — persist lewat logout/refresh
+      // Reset otomatis saat tanggal Jakarta berubah
+      // ==========================================
+      const getJakartaDateStr = () => {
+        return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }); // format YYYY-MM-DD
+      };
+
+      const SALES_DRAFT_KEY = `tarobun_sales_draft_${storeId}`;
+
+      const loadSalesDraft = () => {
+        try {
+          const raw = localStorage.getItem(SALES_DRAFT_KEY);
+          if (!raw) return getEmptySalesState(getJakartaDateStr());
+          const draft = JSON.parse(raw);
+          const todayJkt = getJakartaDateStr();
+          // Kalau tanggal draft beda dengan hari ini Jakarta → reset ke kosong
+          if (!draft.tanggal || draft.tanggal !== todayJkt) {
+            localStorage.removeItem(SALES_DRAFT_KEY);
+            return getEmptySalesState(todayJkt);
+          }
+          // Merge dengan state kosong supaya field baru tidak undefined
+          return { ...getEmptySalesState(todayJkt), ...draft };
+        } catch (e) {
+          return getEmptySalesState(getJakartaDateStr());
+        }
+      };
+
+      const [salesData, setSalesData] = useState(() => loadSalesDraft());
       const [inventoryData, setInventoryData] = useState(() => getEmptyInventoryState());
+
+      // Auto-save draft salesData ke localStorage setiap kali ada perubahan
+      useEffect(() => {
+        try { localStorage.setItem(SALES_DRAFT_KEY, JSON.stringify(salesData)); } catch (e) {}
+      }, [salesData]);
+
+      // Cek pergantian hari Jakarta setiap menit — reset draft saat hari berganti
+      useEffect(() => {
+        const checkDayChange = () => {
+          const todayJkt = getJakartaDateStr();
+          if (salesData.tanggal && salesData.tanggal !== todayJkt) {
+            localStorage.removeItem(SALES_DRAFT_KEY);
+            setSalesData(getEmptySalesState(todayJkt));
+          }
+        };
+        const interval = setInterval(checkDayChange, 60 * 1000); // cek tiap 1 menit
+        return () => clearInterval(interval);
+      }, [salesData.tanggal]);
       const [historyList, setHistoryList] = useState([]);
       const [customSalesFields, setCustomSalesFields] = useState([]);
       const [customInventoryFields, setCustomInventoryFields] = useState([]);
@@ -6220,43 +6304,53 @@ useEffect(() => {
       // ==========================================
       // FOTO WASTE / RIJEK - STATE
       // ==========================================
+      // Ada 2 tipe foto:
+      // 1. BUN RIJEK → user pilih sub-kategori → jumlah otomatis masuk ke field rijek sesuai kategori
+      // 2. BUN WASTE → langsung → jumlah otomatis masuk ke field wasteBun di Laporan
+      //
+      // "tipe" = 'bunRijek' | 'bunWaste'
+      // "kategori" hanya relevan saat tipe = 'bunRijek'
+
+      const RIJEK_SUB_CATEGORIES = {
+        fdNempel:             { label: 'FD Nempel / Reject',              short: 'FD Nempel',        color: 'rose',   icon: 'image-off',   wasteKey: 'fdNempel' },
+        bunRejectThawing:     { label: 'Bun Reject Thawing',              short: 'Reject Thawing',   color: 'pink',   icon: 'thermometer', wasteKey: 'bunRejectThawing' },
+        doughPecahProofing:   { label: 'Dough Pecah Proofing',            short: 'Dough Pecah',      color: 'amber',  icon: 'package-x',   wasteKey: 'doughPecahProofing' },
+        gagalBakingOvernight: { label: 'Gagal Baking Overnight Proofing', short: 'ON Proofing',      color: 'orange', icon: 'flame',       wasteKey: 'doughGagalBakingOvernightProofing' },
+        gagalBakingReguler:   { label: 'Gagal Baking Reguler Proofing',   short: 'Reg Proofing',     color: 'yellow', icon: 'flame',       wasteKey: 'doughGagalBakingRegulerProofing' },
+      };
+
+      // WASTE_CATEGORIES — dipakai untuk lookup label/icon saat render foto lama
+      // (data baru menggunakan tipe + kategori dari RIJEK_SUB_CATEGORIES / RIWAYAT_GROUPS)
       const WASTE_CATEGORIES = {
-        bunRijek: { label: 'Foto Bun Rijek', short: 'Bun Rijek', color: 'rose', icon: 'image-off' },
-        rijekBarang: { label: 'Foto Rijek Barang', short: 'Rijek Barang', color: 'amber', icon: 'package-x' },
-        bunWaste: { label: 'Foto Bun Waste', short: 'Bun Waste', color: 'orange', icon: 'trash' }
+        fdNempel:             { ...RIJEK_SUB_CATEGORIES.fdNempel,             tipe: 'bunRijek',    isWaste: false },
+        bunRejectThawing:     { ...RIJEK_SUB_CATEGORIES.bunRejectThawing,     tipe: 'bunRijek',    isWaste: false },
+        doughPecahProofing:   { ...RIJEK_SUB_CATEGORIES.doughPecahProofing,   tipe: 'bunRijek',    isWaste: false },
+        gagalBakingOvernight: { ...RIJEK_SUB_CATEGORIES.gagalBakingOvernight, tipe: 'bunRijek',    isWaste: false },
+        gagalBakingReguler:   { ...RIJEK_SUB_CATEGORIES.gagalBakingReguler,   tipe: 'bunRijek',    isWaste: false },
+        bunWaste:             { label: 'Bun Waste',    short: 'Bun Waste',    tipe: 'bunWaste',    isWaste: true,  color: 'slate',  icon: 'trash-2',   wasteKey: 'wasteBun' },
+        rijekBarang:          { label: 'Rijek Barang', short: 'Rijek Barang', tipe: 'rijekBarang', isWaste: false, color: 'indigo', icon: 'package-x', wasteKey: null },
+        // backward compat — foto lama dari versi sebelumnya tetap terbaca
+        bunRijek:             { label: 'Bun Rijek',    short: 'Bun Rijek',    tipe: 'bunRijek',    isWaste: false, color: 'rose',   icon: 'image-off', wasteKey: null },
       };
 
       // Tailwind CDN (JIT) hanya mendeteksi nama class literal di source, bukan hasil interpolasi string.
       // Karena itu seluruh kombinasi warna per kategori didaftarkan statis di sini agar style tetap muncul.
       const WASTE_COLOR_STYLES = {
-        rose: {
-          activeBtn: 'bg-rose-600 text-white border-rose-600 shadow-sm',
-          cardBorder: 'border-rose-100',
-          cardBg: 'bg-rose-50/40',
-          icon: 'text-rose-600',
-          badge: 'bg-rose-100 text-rose-800'
-        },
-        amber: {
-          activeBtn: 'bg-amber-600 text-white border-amber-600 shadow-sm',
-          cardBorder: 'border-amber-100',
-          cardBg: 'bg-amber-50/40',
-          icon: 'text-amber-600',
-          badge: 'bg-amber-100 text-amber-800'
-        },
-        orange: {
-          activeBtn: 'bg-orange-600 text-white border-orange-600 shadow-sm',
-          cardBorder: 'border-orange-100',
-          cardBg: 'bg-orange-50/40',
-          icon: 'text-orange-600',
-          badge: 'bg-orange-100 text-orange-800'
-        }
+        rose:   { activeBtn: 'bg-rose-600 text-white border-rose-600 shadow-sm',   cardBorder: 'border-rose-100',   cardBg: 'bg-rose-50/40',   icon: 'text-rose-600',   badge: 'bg-rose-100 text-rose-800' },
+        pink:   { activeBtn: 'bg-pink-600 text-white border-pink-600 shadow-sm',   cardBorder: 'border-pink-100',   cardBg: 'bg-pink-50/40',   icon: 'text-pink-600',   badge: 'bg-pink-100 text-pink-800' },
+        amber:  { activeBtn: 'bg-amber-600 text-white border-amber-600 shadow-sm', cardBorder: 'border-amber-100',  cardBg: 'bg-amber-50/40',  icon: 'text-amber-600',  badge: 'bg-amber-100 text-amber-800' },
+        orange: { activeBtn: 'bg-orange-600 text-white border-orange-600 shadow-sm',cardBorder: 'border-orange-100',cardBg: 'bg-orange-50/40', icon: 'text-orange-600', badge: 'bg-orange-100 text-orange-800' },
+        yellow: { activeBtn: 'bg-yellow-500 text-white border-yellow-500 shadow-sm',cardBorder: 'border-yellow-100',cardBg: 'bg-yellow-50/40', icon: 'text-yellow-600', badge: 'bg-yellow-100 text-yellow-800' },
+        indigo: { activeBtn: 'bg-indigo-600 text-white border-indigo-600 shadow-sm',cardBorder: 'border-indigo-100',cardBg: 'bg-indigo-50/40', icon: 'text-indigo-600', badge: 'bg-indigo-100 text-indigo-800' },
+        slate:  { activeBtn: 'bg-slate-600 text-white border-slate-600 shadow-sm', cardBorder: 'border-slate-200',  cardBg: 'bg-slate-50/40',  icon: 'text-slate-600',  badge: 'bg-slate-100 text-slate-800' },
       };
 
       const getEmptyWasteFotoForm = () => ({
-        kategori: 'bunRijek',
+        tipe: 'bunRijek',       // 'bunRijek' | 'bunWaste' | 'rijekBarang'
+        kategori: 'fdNempel',   // hanya relevan saat tipe = 'bunRijek'
         jumlah: '',
         keterangan: '',
-        fotoPreview: null, // compressed base64 untuk preview & kirim
+        fotoPreview: null,
       });
 
       const [wasteFotoForm, setWasteFotoForm] = useState(() => getEmptyWasteFotoForm());
@@ -6533,9 +6627,10 @@ useEffect(() => {
       };
 
       const handleClearForm = () => {
-        const today = new Date().toISOString().split('T')[0];
-        setSalesData(getEmptySalesState(today));
-        setInventoryData(getEmptyInventoryState(today));
+        const todayJkt = getJakartaDateStr();
+        try { localStorage.removeItem(SALES_DRAFT_KEY); } catch (e) {}
+        setSalesData(getEmptySalesState(todayJkt));
+        setInventoryData(getEmptyInventoryState(todayJkt));
         showToast('Form telah dikosongkan! Siap untuk input hari baru. 🧼');
       };
 
@@ -7491,7 +7586,8 @@ Daily inventory done✅
 
       const handleResetWasteFotoForm = (keepCategory = true) => {
         setWasteFotoForm(prev => ({
-          kategori: keepCategory ? prev.kategori : 'bunRijek',
+          tipe: keepCategory ? prev.tipe : 'bunRijek',
+          kategori: keepCategory ? prev.kategori : 'fdNempel',
           jumlah: '',
           keterangan: '',
           fotoPreview: null
@@ -7510,19 +7606,21 @@ Daily inventory done✅
         setIsSavingFoto(true);
         try {
           const now = Date.now();
-          // Stempel keterangan, jumlah, kategori & jam LANGSUNG di dalam foto sebelum diupload,
-          // supaya info itu tetap ikut terlihat di foto itu sendiri (bukan cuma teks caption
-          // terpisah saat dikirim ke Telegram) — lihat stampWasteFotoImage di atas.
+          // Tentukan kategori final berdasarkan tipe
+          const finalKategori = wasteFotoForm.tipe === 'bunWaste'
+            ? 'bunWaste'
+            : wasteFotoForm.tipe === 'rijekBarang'
+              ? 'rijekBarang'
+              : wasteFotoForm.kategori;
           const stampedFoto = await stampWasteFotoImage(
             wasteFotoForm.fotoPreview,
-            buildWasteFotoStampLines(wasteFotoForm.kategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan)
+            buildWasteFotoStampLines(finalKategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan)
           );
-          // Upload dulu ke R2 — database cuma menyimpan URL & key-nya, bukan base64 mentah,
-          // supaya storage tetap ringan (lihat juga fitur hapus laporan di Panel Admin).
           const { url: fotoUrl, key: fotoKey } = await uploadMediaToR2(stampedFoto, `wasteFotos/${storeBase}`, 'jpg');
           const payload = {
             id: now.toString(),
-            kategori: wasteFotoForm.kategori,
+            kategori: finalKategori,
+            tipe: wasteFotoForm.tipe,
             jumlah: numVal(wasteFotoForm.jumlah),
             keterangan: wasteFotoForm.keterangan || '',
             foto: fotoUrl,
@@ -7531,7 +7629,26 @@ Daily inventory done✅
             createdAt: now
           };
           await restSet(db.ref(`${storeBase}/wasteFotos/` + now), payload);
-          showToast('Foto tersimpan ke Riwayat! Silakan input foto baru lagi 📷✨');
+
+          // Auto-update field waste di Laporan Penjualan:
+          // - Bun Rijek → field sesuai sub-kategori (fdNempel, bunRejectThawing, dst)
+          // - Bun Waste → field wasteBun
+          // - Rijek Barang → hanya dokumentasi foto, tidak masuk Laporan
+          const cat = WASTE_CATEGORIES[finalKategori];
+          const addedQty = numVal(wasteFotoForm.jumlah);
+          if (cat && cat.wasteKey && addedQty > 0) {
+            setSalesData(prev => {
+              const prevVal = numVal(prev.waste[cat.wasteKey]);
+              return { ...prev, waste: { ...prev.waste, [cat.wasteKey]: String(prevVal + addedQty) } };
+            });
+            const label = wasteFotoForm.tipe === 'bunWaste' ? 'Waste Bun' : cat.short;
+            showToast(`✅ Foto tersimpan! +${addedQty} pcs otomatis masuk ke Laporan → ${label} 📊`);
+          } else if (wasteFotoForm.tipe === 'rijekBarang') {
+            showToast('📦 Foto Rijek Barang tersimpan! 📷✨');
+          } else {
+            showToast('Foto tersimpan ke Riwayat! 📷✨');
+          }
+
           setWasteFotoList(prev => [...prev, { ...payload, firebaseKey: now.toString() }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
           setWasteFotoViewDate(payload.tanggal);
           handleResetWasteFotoForm(true);
@@ -7546,13 +7663,16 @@ Daily inventory done✅
       const handleDeleteWasteFoto = async (firebaseKey) => {
         try {
           showToast('Menghapus foto... 🗑️');
+          // Cari item dulu untuk ambil fotoKey sebelum dihapus dari DB
+          const item = wasteFotoList.find(it => it.firebaseKey === firebaseKey);
           await restRemove(db.ref(`${storeBase}/wasteFotos/` + firebaseKey));
-          showToast('Foto berhasil dihapus dari Riwayat.');
-          setWasteFotoList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
+          // Hapus juga file fisik dari R2 kalau ada
+          if (item && item.fotoKey) await deleteMediaFromR2(item.fotoKey).catch(() => {});
+          showToast('Foto berhasil dihapus. 🗑️');
+          setWasteFotoList(prev => prev.filter(it => it.firebaseKey !== firebaseKey));
         } catch (error) {
           console.error('Gagal menghapus foto waste:', error);
-          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
-          showToast(`⚠️ Gagal menghapus foto: ${detail}`);
+          showToast(`⚠️ Gagal menghapus foto: ${error && error.message ? error.message : 'Kesalahan tidak diketahui'}`);
         }
       };
 
@@ -7686,17 +7806,27 @@ Daily inventory done✅
         }
       };
 
-      // Kelompokkan foto berdasarkan kategori, lengkap dengan total jumlah
+      // Kelompokkan foto menjadi 3 grup tampilan:
+      // - bunRijek  → semua sub-kategori rijek (fdNempel, bunRejectThawing, dll) + foto lama bertipe bunRijek
+      // - rijekBarang → dokumentasi barang rijek
+      // - bunWaste  → waste bun
+      const RIWAYAT_GROUPS = {
+        bunRijek:    { label: 'Bun Rijek',    icon: 'image-off',  color: 'rose',   desc: 'Kumpulan semua sub-kategori rijek bun' },
+        rijekBarang: { label: 'Rijek Barang', icon: 'package-x',  color: 'indigo', desc: 'Dokumentasi rijek barang' },
+        bunWaste:    { label: 'Bun Waste',    icon: 'trash-2',    color: 'slate',  desc: 'Bun tidak terpakai / waste' },
+      };
+
+      // Sub-kategori yang termasuk dalam grup bunRijek
+      const BUN_RIJEK_SUB_KEYS = new Set(['fdNempel','bunRejectThawing','doughPecahProofing','gagalBakingOvernight','gagalBakingReguler','bunRijek']);
+
       const groupWasteFotosByCategory = (list) => {
-        const groups = {};
-        Object.keys(WASTE_CATEGORIES).forEach(key => {
-          groups[key] = { items: [], total: 0 };
-        });
+        const groups = { bunRijek: { items: [], total: 0 }, rijekBarang: { items: [], total: 0 }, bunWaste: { items: [], total: 0 } };
         list.forEach(item => {
-          const cat = groups[item.kategori] ? item.kategori : 'bunRijek';
-          if (!groups[cat]) groups[cat] = { items: [], total: 0 };
-          groups[cat].items.push(item);
-          groups[cat].total += numVal(item.jumlah);
+          const tipe = item.tipe || (BUN_RIJEK_SUB_KEYS.has(item.kategori) ? 'bunRijek' : item.kategori === 'rijekBarang' ? 'rijekBarang' : item.kategori === 'bunWaste' ? 'bunWaste' : 'bunRijek');
+          const grp = tipe === 'bunWaste' ? 'bunWaste' : tipe === 'rijekBarang' ? 'rijekBarang' : 'bunRijek';
+          if (!groups[grp]) groups[grp] = { items: [], total: 0 };
+          groups[grp].items.push(item);
+          groups[grp].total += numVal(item.jumlah);
         });
         return groups;
       };
@@ -9619,27 +9749,74 @@ Daily inventory done✅
                     <p className="text-xs text-slate-500">Ambil foto langsung dari kamera atau pilih dari galeri. Foto otomatis dikompresi agar ringan & aman tersimpan.</p>
                   </div>
 
-                  {/* Pilih Kategori */}
+                  {/* ── Pilih Tipe ── */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-2">Pilih Kategori</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {Object.keys(WASTE_CATEGORIES).map(key => {
-                        const cat = WASTE_CATEGORIES[key];
-                        const styles = WASTE_COLOR_STYLES[cat.color];
-                        const active = wasteFotoForm.kategori === key;
-                        return (
-                          <button
-                            key={key}
-                            onClick={() => setWasteFotoForm({ ...wasteFotoForm, kategori: key })}
-                            className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${active ? styles.activeBtn : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
-                          >
-                            <i data-lucide={cat.icon} className="w-4 h-4"></i>
-                            <span>{cat.short}</span>
-                          </button>
-                        );
-                      })}
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5">Tipe Foto</label>
+                    <div className="grid grid-cols-3 gap-2">
+
+                      {/* Bun Rijek */}
+                      <button
+                        onClick={() => setWasteFotoForm({ ...wasteFotoForm, tipe: 'bunRijek', kategori: 'fdNempel' })}
+                        className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl text-xs font-bold border-2 transition-all ${wasteFotoForm.tipe === 'bunRijek' ? 'bg-rose-600 text-white border-rose-600 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-rose-300 hover:bg-rose-50'}`}
+                      >
+                        <i data-lucide="image-off" className="w-5 h-5"></i>
+                        <span>Bun Rijek</span>
+                        <span className={`text-[9px] font-normal leading-tight text-center ${wasteFotoForm.tipe === 'bunRijek' ? 'text-rose-200' : 'text-slate-400'}`}>Masuk ke Laporan</span>
+                      </button>
+
+                      {/* Rijek Barang */}
+                      <button
+                        onClick={() => setWasteFotoForm({ ...wasteFotoForm, tipe: 'rijekBarang', kategori: 'rijekBarang' })}
+                        className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl text-xs font-bold border-2 transition-all ${wasteFotoForm.tipe === 'rijekBarang' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50'}`}
+                      >
+                        <i data-lucide="package-x" className="w-5 h-5"></i>
+                        <span>Rijek Barang</span>
+                        <span className={`text-[9px] font-normal leading-tight text-center ${wasteFotoForm.tipe === 'rijekBarang' ? 'text-indigo-200' : 'text-slate-400'}`}>Dokumentasi</span>
+                      </button>
+
+                      {/* Bun Waste */}
+                      <button
+                        onClick={() => setWasteFotoForm({ ...wasteFotoForm, tipe: 'bunWaste', kategori: 'bunWaste' })}
+                        className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl text-xs font-bold border-2 transition-all ${wasteFotoForm.tipe === 'bunWaste' ? 'bg-slate-700 text-white border-slate-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-slate-50'}`}
+                      >
+                        <i data-lucide="trash-2" className="w-5 h-5"></i>
+                        <span>Bun Waste</span>
+                        <span className={`text-[9px] font-normal leading-tight text-center ${wasteFotoForm.tipe === 'bunWaste' ? 'text-slate-300' : 'text-slate-400'}`}>Masuk ke Laporan</span>
+                      </button>
+
                     </div>
                   </div>
+
+                  {/* ── Sub-kategori Rijek — hanya untuk Bun Rijek ── */}
+                  {wasteFotoForm.tipe === 'bunRijek' && (
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5">Kategori Rijek</label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {Object.entries(RIJEK_SUB_CATEGORIES).map(([key, cat]) => {
+                          const styles = WASTE_COLOR_STYLES[cat.color] || WASTE_COLOR_STYLES['slate'];
+                          const active = wasteFotoForm.kategori === key;
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => setWasteFotoForm({ ...wasteFotoForm, kategori: key })}
+                              className={`flex flex-col items-center justify-center gap-1.5 py-3 px-2 rounded-xl text-[11px] font-bold border-2 transition-all ${active ? styles.activeBtn : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                            >
+                              <i data-lucide={cat.icon} className="w-4 h-4"></i>
+                              <span className="text-center leading-tight">{cat.short}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Info Rijek Barang — tidak masuk Laporan, hanya dokumentasi */}
+                  {wasteFotoForm.tipe === 'rijekBarang' && (
+                    <div className="flex items-start gap-2.5 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3">
+                      <i data-lucide="info" className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0"></i>
+                      <p className="text-xs text-indigo-700 leading-relaxed">Foto Rijek Barang disimpan sebagai <strong>dokumentasi</strong> dan dikirim ke Telegram. Tidak otomatis masuk ke Laporan Penjualan.</p>
+                    </div>
+                  )}
 
                   {/* Jumlah & Keterangan */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -9653,6 +9830,23 @@ Daily inventory done✅
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                         placeholder="0"
                       />
+                      {(() => {
+                        if (wasteFotoForm.tipe === 'rijekBarang') return (
+                          <p className="text-[10px] text-indigo-500 mt-1 flex items-center gap-1">
+                            <i data-lucide="package-x" className="w-3 h-3"></i>
+                            Dokumentasi saja, tidak masuk Laporan
+                          </p>
+                        );
+                        const finalKey = wasteFotoForm.tipe === 'bunWaste' ? 'bunWaste' : wasteFotoForm.kategori;
+                        const cat = WASTE_CATEGORIES[finalKey];
+                        const label = wasteFotoForm.tipe === 'bunWaste' ? 'Waste Bun' : (cat ? cat.short : '-');
+                        return cat ? (
+                          <p className="text-[10px] text-emerald-600 mt-1 flex items-center gap-1">
+                            <i data-lucide="arrow-right" className="w-3 h-3"></i>
+                            Otomatis masuk ke Laporan → <strong>{label}</strong>
+                          </p>
+                        ) : null;
+                      })()}
                     </div>
                     <div>
                       <label htmlFor="keterangan" className="block text-xs font-semibold text-slate-600 mb-1.5">Keterangan</label>
@@ -9779,52 +9973,92 @@ Daily inventory done✅
                     </span>
                   </div>
 
-                  {Object.keys(WASTE_CATEGORIES).map(key => {
-                    const cat = WASTE_CATEGORIES[key];
-                    const styles = WASTE_COLOR_STYLES[cat.color];
-                    const group = wasteFotoGroups[key] || { items: [], total: 0 };
+                  {Object.entries(RIWAYAT_GROUPS).map(([grpKey, grp]) => {
+                    const styles = WASTE_COLOR_STYLES[grp.color] || WASTE_COLOR_STYLES['slate'];
+                    const group = wasteFotoGroups[grpKey] || { items: [], total: 0 };
+                    const isBunRijek = grpKey === 'bunRijek';
                     return (
-                      <div key={key} className={`rounded-xl border p-4 ${styles.cardBorder} ${styles.cardBg}`}>
+                      <div key={grpKey} className={`rounded-2xl border p-4 ${styles.cardBorder} ${styles.cardBg}`}>
+
+                        {/* Header grup */}
                         <div className="flex justify-between items-center mb-3">
-                          <div className="flex items-center gap-2">
-                            <i data-lucide={cat.icon} className={`w-4 h-4 ${styles.icon}`}></i>
-                            <span className="font-bold text-sm text-slate-700">{cat.label}</span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <i data-lucide={grp.icon} className={`w-4 h-4 ${styles.icon}`}></i>
+                            <span className="font-bold text-sm text-slate-800">{grp.label}</span>
                             <span className={`text-xs font-black px-2 py-0.5 rounded-md ${styles.badge}`}>
                               Total: {group.total} pcs
                             </span>
+                            {isBunRijek && group.items.length > 0 && (
+                              <span className="text-[10px] text-slate-500">{group.items.length} foto</span>
+                            )}
                           </div>
                           <button
-                            onClick={() => handleSendCategoryRecapToTelegram(key)}
-                            disabled={sendingCategory === key || group.items.length === 0}
-                            className="bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm"
+                            onClick={() => handleSendCategoryRecapToTelegram(grpKey)}
+                            disabled={sendingCategory === grpKey || group.items.length === 0}
+                            className="bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm shrink-0"
                           >
-                            <i data-lucide={sendingCategory === key ? 'loader' : 'send'} className={`w-3 h-3 ${sendingCategory === key ? 'animate-spin' : ''}`}></i>
+                            <i data-lucide={sendingCategory === grpKey ? 'loader' : 'send'} className={`w-3 h-3 ${sendingCategory === grpKey ? 'animate-spin' : ''}`}></i>
                             <span>Kirim</span>
                           </button>
                         </div>
 
+                        {/* Sub-kategori ringkasan — hanya untuk Bun Rijek */}
+                        {isBunRijek && group.items.length > 0 && (() => {
+                          const subTotals = {};
+                          group.items.forEach(it => {
+                            const subCat = RIJEK_SUB_CATEGORIES[it.kategori];
+                            const label = subCat ? subCat.short : (it.kategori || 'Lainnya');
+                            subTotals[label] = (subTotals[label] || 0) + numVal(it.jumlah);
+                          });
+                          return (
+                            <div className="flex flex-wrap gap-1.5 mb-3">
+                              {Object.entries(subTotals).map(([label, qty]) => (
+                                <span key={label} className="text-[10px] bg-white border border-rose-200 text-rose-700 font-semibold px-2 py-0.5 rounded-full">
+                                  {label}: {qty} pcs
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Foto grid atau empty state */}
                         {group.items.length === 0 ? (
-                          <p className="text-xs text-slate-600 text-center py-4">Belum ada foto pada kategori ini untuk tanggal {formatIndonesianDate(wasteFotoViewDate)}.</p>
+                          <p className="text-xs text-slate-500 text-center py-5">
+                            Belum ada foto {grp.label} untuk tanggal {formatIndonesianDate(wasteFotoViewDate)}.
+                          </p>
                         ) : (
                           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                            {group.items.map(item => (
-                              <div key={item.firebaseKey} className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
-                                <img src={item.foto} alt={cat.short} className="w-full h-24 object-cover" />
-                                <div className="p-2 space-y-0.5">
-                                  <p className="text-xs font-bold text-slate-700">{item.jumlah} pcs</p>
-                                  <p className="text-[10px] text-slate-500 line-clamp-2">{item.keterangan || '-'}</p>
-                                  <p className="text-[9px] text-slate-600">{formatIndonesianDate(item.tanggal)}</p>
-                                  <div className="flex items-center justify-between pt-1">
-                                    <button onClick={() => handleSendSingleWasteFotoToTelegram(item)} className="text-sky-600 hover:bg-sky-50 p-1 rounded-md" title="Kirim ke Telegram">
-                                      <i data-lucide="send" className="w-3.5 h-3.5"></i>
-                                    </button>
-                                    <button onClick={() => handleDeleteWasteFoto(item.firebaseKey)} className="text-rose-600 hover:bg-rose-50 p-1 rounded-md" title="Hapus">
-                                      <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
-                                    </button>
+                            {group.items.map(item => {
+                              const subCat = RIJEK_SUB_CATEGORIES[item.kategori];
+                              const subLabel = subCat ? subCat.short : null;
+                              const subColor = subCat ? (WASTE_COLOR_STYLES[subCat.color] || WASTE_COLOR_STYLES['slate']) : null;
+                              return (
+                                <div key={item.firebaseKey} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                                  <div className="relative">
+                                    <img src={item.foto} alt={grp.label} className="w-full h-28 object-cover" />
+                                    {/* Badge sub-kategori di pojok foto */}
+                                    {isBunRijek && subLabel && (
+                                      <span className={`absolute top-1.5 left-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow ${subColor ? subColor.badge : 'bg-slate-100 text-slate-700'}`}>
+                                        {subLabel}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="p-2 space-y-0.5">
+                                    <p className="text-xs font-bold text-slate-700">{item.jumlah} pcs</p>
+                                    {item.keterangan ? <p className="text-[10px] text-slate-500 line-clamp-2">{item.keterangan}</p> : null}
+                                    <p className="text-[9px] text-slate-400">{formatIndonesianDate(item.tanggal)}</p>
+                                    <div className="flex items-center justify-between pt-1">
+                                      <button onClick={() => handleSendSingleWasteFotoToTelegram(item)} className="text-sky-600 hover:bg-sky-50 p-1 rounded-md" title="Kirim ke Telegram">
+                                        <i data-lucide="send" className="w-3.5 h-3.5"></i>
+                                      </button>
+                                      <button onClick={() => handleDeleteWasteFoto(item.firebaseKey)} className="text-rose-600 hover:bg-rose-50 p-1 rounded-md" title="Hapus">
+                                        <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>

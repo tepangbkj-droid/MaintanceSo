@@ -2961,7 +2961,8 @@ const { useState, useEffect } = React;
 
         setDirLoading(hasCache ? false : true);
         setDirError(false);
-        setDirFromCache(false);
+        setDirFromCache(false);   // selalu reset — jangan biarkan notif lama tersisa
+        setDirBackgroundSync(false);
         setAdminCheckError(false);
 
         const tryLoad = () => {
@@ -3172,7 +3173,7 @@ const { useState, useEffect } = React;
               </div>
             )}
 
-            {dirFromCache && !dirError && (
+            {dirFromCache && !dirError && !dirBackgroundSync && (
               <div className="bg-sky-50 border border-sky-200 text-sky-700 text-xs font-semibold rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2">
                 <span>Koneksi lambat — menampilkan data toko tersimpan (mungkin tidak terbaru).</span>
                 <button type="button" onClick={() => setReloadTick(t => t + 1)} className="shrink-0 bg-sky-600 text-white text-[10px] font-bold px-2 py-1 rounded-lg">Sinkron Ulang</button>

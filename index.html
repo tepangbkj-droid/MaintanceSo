@@ -584,9 +584,9 @@ const { useState, useEffect } = React;
         try {
           const qs = storeId ? `storeId=${encodeURIComponent(storeId)}&v=${version}` : `v=${version}`;
           const controller = new AbortController();
-          // Sedikit lebih lama dari WAIT_TIMEOUT_MS di server (30 detik), supaya browser
-          // yang membatalkan request bukan karena server-nya lambat balas.
-          timeoutId = setTimeout(() => controller.abort(), 40000);
+          // Abort timeout sisi client: sedikit lebih lama dari WAIT_TIMEOUT_MS server (25 detik),
+          // supaya browser tidak membatalkan request sebelum server sempat membalasnya.
+          timeoutId = setTimeout(() => controller.abort(), 32000);
           const res = await __apiFetch(`${WORKER_BASE}/api/chat/wait?${qs}`, { headers: __authHeaders(), signal: controller.signal });
           clearTimeout(timeoutId);
           const data = await res.json();
@@ -6025,8 +6025,54 @@ const { useState, useEffect } = React;
         custom: {} // field tambahan yang didefinisikan Admin (Form Builder)
       });
 
-      const [salesData, setSalesData] = useState(() => getEmptySalesState());
+      // ==========================================
+      // DRAFT LAPORAN — persist lewat logout/refresh
+      // Reset otomatis saat tanggal Jakarta berubah
+      // ==========================================
+      const getJakartaDateStr = () => {
+        return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }); // format YYYY-MM-DD
+      };
+
+      const SALES_DRAFT_KEY = `tarobun_sales_draft_${storeId}`;
+
+      const loadSalesDraft = () => {
+        try {
+          const raw = localStorage.getItem(SALES_DRAFT_KEY);
+          if (!raw) return getEmptySalesState(getJakartaDateStr());
+          const draft = JSON.parse(raw);
+          const todayJkt = getJakartaDateStr();
+          // Kalau tanggal draft beda dengan hari ini Jakarta → reset ke kosong
+          if (!draft.tanggal || draft.tanggal !== todayJkt) {
+            localStorage.removeItem(SALES_DRAFT_KEY);
+            return getEmptySalesState(todayJkt);
+          }
+          // Merge dengan state kosong supaya field baru tidak undefined
+          return { ...getEmptySalesState(todayJkt), ...draft };
+        } catch (e) {
+          return getEmptySalesState(getJakartaDateStr());
+        }
+      };
+
+      const [salesData, setSalesData] = useState(() => loadSalesDraft());
       const [inventoryData, setInventoryData] = useState(() => getEmptyInventoryState());
+
+      // Auto-save draft salesData ke localStorage setiap kali ada perubahan
+      useEffect(() => {
+        try { localStorage.setItem(SALES_DRAFT_KEY, JSON.stringify(salesData)); } catch (e) {}
+      }, [salesData]);
+
+      // Cek pergantian hari Jakarta setiap menit — reset draft saat hari berganti
+      useEffect(() => {
+        const checkDayChange = () => {
+          const todayJkt = getJakartaDateStr();
+          if (salesData.tanggal && salesData.tanggal !== todayJkt) {
+            localStorage.removeItem(SALES_DRAFT_KEY);
+            setSalesData(getEmptySalesState(todayJkt));
+          }
+        };
+        const interval = setInterval(checkDayChange, 60 * 1000); // cek tiap 1 menit
+        return () => clearInterval(interval);
+      }, [salesData.tanggal]);
       const [historyList, setHistoryList] = useState([]);
       const [customSalesFields, setCustomSalesFields] = useState([]);
       const [customInventoryFields, setCustomInventoryFields] = useState([]);
@@ -6569,9 +6615,10 @@ const { useState, useEffect } = React;
       };
 
       const handleClearForm = () => {
-        const today = new Date().toISOString().split('T')[0];
-        setSalesData(getEmptySalesState(today));
-        setInventoryData(getEmptyInventoryState(today));
+        const todayJkt = getJakartaDateStr();
+        try { localStorage.removeItem(SALES_DRAFT_KEY); } catch (e) {}
+        setSalesData(getEmptySalesState(todayJkt));
+        setInventoryData(getEmptyInventoryState(todayJkt));
         showToast('Form telah dikosongkan! Siap untuk input hari baru. 🧼');
       };
 

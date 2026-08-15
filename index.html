@@ -3071,6 +3071,38 @@ const { useState, useEffect } = React;
         };
       }, []);
 
+      // BUGFIX (2026-08): polling /api/data-version untuk key 'storeDirectory' supaya
+      // halaman login OTOMATIS mendeteksi toko baru yang dibuat admin (dari HP/tab lain)
+      // dan langsung refetch tanpa perlu user melakukan apa-apa (refresh manual / pindah tab).
+      // Sebelumnya LoginScreen tidak punya mekanisme ini — hanya mengandalkan visibilitychange
+      // (pindah tab) atau focus — sehingga kalau admin dan toko memakai HP masing-masing,
+      // toko baru tidak pernah muncul di dropdown login sampai toko me-refresh halaman.
+      useEffect(() => {
+        let stopped = false;
+        let lastKnownVersion = -1;
+        const poll = async () => {
+          if (stopped) return;
+          try {
+            const res = await fetch(`${WORKER_BASE}/api/data-version?keys=storeDirectory`);
+            if (res.ok) {
+              const data = await res.json();
+              const v = (data && data.versions && data.versions['storeDirectory']) || 0;
+              if (lastKnownVersion === -1) {
+                // Inisialisasi: simpan versi saat ini tanpa trigger reload
+                lastKnownVersion = v;
+              } else if (v !== lastKnownVersion) {
+                // Versi berubah: ada toko baru atau toko dihapus -> refetch daftar toko
+                lastKnownVersion = v;
+                setReloadTick(t => t + 1);
+              }
+            }
+          } catch (e) { /* gagal 1 siklus tidak fatal */ }
+          if (!stopped) setTimeout(poll, 15000); // cek setiap 15 detik
+        };
+        poll();
+        return () => { stopped = true; };
+      }, []);
+
       const handleStoreLogin = async (e) => {
         e.preventDefault();
         setError('');

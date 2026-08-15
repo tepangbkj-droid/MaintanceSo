@@ -418,6 +418,31 @@ const { useState, useEffect } = React;
     // TIDAK PERNAH mengirim/menyimpan cookie lintas-origin tanpa opsi ini secara eksplisit.
     // ==========================================
     // ==========================================
+    // PERBAIKAN (2026-08-15): worker.js SUDAH mendukung fallback "X-Session-Token" untuk
+    // kasus Cookie lintas-origin (Vercel <-> workers.dev) diblokir browser (lihat komentar
+    // "Chrome 150+" di worker.js, sekitar getCookie(request,'session')/headerToken) -- TAPI
+    // frontend ini TIDAK PERNAH benar-benar mengirim header itu (__authHeaders() sebelumnya
+    // selalu kosong, dan `_token` dari respons login dibuang begitu saja). Akibatnya: begitu
+    // Cookie sesi diblokir browser (umum terjadi untuk cookie cross-site sejak beberapa versi
+    // Chrome terakhir), SEMUA request setelah login sukses ikut ditolak 401 Unauthorized --
+    // persis gejala "sudah login tapi semua data kosong" yang dilaporkan.
+    // Perbaikannya: simpan `_token` dari respons login (lihat auth.signInWithEmailAndPassword
+    // di bawah) ke variabel di memori + sessionStorage (supaya bertahan kalau halaman
+    // di-refresh dalam tab yang sama), lalu SELALU sertakan sebagai header X-Session-Token
+    // di setiap request lewat __apiFetch -- baik Cookie-nya jalan ATAUPUN diblokir, endpoint
+    // yang butuh sesi tetap bisa mengenali penggunanya.
+    // ==========================================
+    let __sessionTokenFallback = null;
+    try { __sessionTokenFallback = sessionStorage.getItem('tarobun_session_fallback') || null; } catch (e) {}
+    function __setSessionTokenFallback(token) {
+      __sessionTokenFallback = token || null;
+      try {
+        if (token) sessionStorage.setItem('tarobun_session_fallback', token);
+        else sessionStorage.removeItem('tarobun_session_fallback');
+      } catch (e) {}
+    }
+
+    // ==========================================
     // ALAT DIAGNOSTIK BAWAAN (ditambahkan supaya masalah "data tidak muncul" bisa dicek
     // langsung dari HP tanpa perlu buka Console/DevTools). Semua panggilan __apiFetch
     // dicatat di sini (URL, status, sukses/gagal, pesan error) supaya tombol "Diagnostik"
@@ -434,7 +459,11 @@ const { useState, useEffect } = React;
     }
     const __apiFetch = (url, opts = {}) => {
       const startedAt = Date.now();
-      return fetch(url, { ...opts, credentials: 'include' }).then(res => {
+      // PERBAIKAN: selalu gabungkan X-Session-Token (kalau ada) ke SEMUA request lewat
+      // __apiFetch secara otomatis -- tidak lagi bergantung pada tiap titik panggilan
+      // mengingat untuk menulis `headers: __authHeaders()` sendiri-sendiri (rawan lolos).
+      const mergedHeaders = { ...(opts.headers || {}), ...__authHeaders() };
+      return fetch(url, { ...opts, headers: mergedHeaders, credentials: 'include' }).then(res => {
         __diagPush({
           url: String(url).replace(WORKER_BASE, ''),
           method: (opts && opts.method) || 'GET',
@@ -458,22 +487,18 @@ const { useState, useEffect } = React;
     };
 
     // ==========================================
-    // KEAMANAN (2026-08): sesi login TIDAK LAGI disimpan sebagai token di localStorage.
-    // Sebelumnya token autentikasi disimpan mentah-mentah di localStorage (CF_SESSION_KEY),
-    // yang artinya SEMUA script di halaman ini -- termasuk script asing yang berhasil
-    // disuntikkan lewat celah XSS mana pun -- bisa membaca token itu dan membajak sesi
-    // login. Sekarang Cloudflare Worker mengirim sesi lewat Set-Cookie HttpOnly (lihat
-    // buildSessionCookie di worker.js): cookie itu TIDAK PERNAH bisa dibaca oleh
-    // document.cookie atau JavaScript apa pun, hanya otomatis dikirim browser ke Worker.
-    // Konsekuensinya: frontend ini juga TIDAK LAGI tahu isi/nilai token-nya sendiri -- utk
-    // mengetahui "apakah user ini sedang login", frontend bertanya ke server lewat endpoint
-    // GET /api/session/me (lihat __loadCfSession di bawah), bukan membaca localStorage.
+    // KEAMANAN (2026-08): sesi login awalnya didesain HANYA lewat Set-Cookie HttpOnly
+    // (bukan token di localStorage), supaya JS/XSS tidak bisa membaca token sesi.
+    // PERBAIKAN (2026-08-15): ternyata Cookie lintas-origin ini bisa diblokir browser
+    // (lihat catatan panjang di atas __sessionTokenFallback), jadi sekarang ADA fallback:
+    // __authHeaders() mengirim token lewat header X-Session-Token kalau tersedia di memori
+    // (diisi setelah login, lihat auth.signInWithEmailAndPassword). Ini sedikit menurunkan
+    // proteksi XSS dibanding cookie HttpOnly murni (token sempat ada di sessionStorage),
+    // tapi jauh lebih baik daripada aplikasi sama sekali tidak berfungsi karena Cookie-nya
+    // diblokir browser.
     let __authListeners = [];
-    // __authHeaders() sengaja jadi no-op (dipertahankan sebagai fungsi kosong, bukan
-    // dihapus) supaya SEMUA titik fetch() lama di file ini yang masih menulis
-    // `...__authHeaders()` tetap berjalan tanpa perlu diubah satu-persatu -- otentikasi
-    // sekarang murni lewat Cookie (otomatis via __apiFetch), bukan header lagi.
-    const __authHeaders = () => ({});
+    const __authHeaders = () => __sessionTokenFallback ? { 'X-Session-Token': __sessionTokenFallback } : {};
+
 
     // ==========================================
     // IDENTITAS DEVICE -- HANYA LABEL KOSMETIK, BUKAN LAGI KONTROL KEAMANAN
@@ -980,8 +1005,11 @@ const { useState, useEffect } = React;
           });
           data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
-          // Tidak ada lagi token untuk disimpan di sini -- Worker sudah mengirimkannya lewat
-          // Set-Cookie HttpOnly pada response ini (browser menyimpannya otomatis).
+          // PERBAIKAN (2026-08-15): Worker sudah mengirim sesi lewat Set-Cookie HttpOnly PADA
+          // response ini, tapi kalau Cookie itu diblokir browser (lintas-origin), sesi harus
+          // tetap bisa jalan lewat header X-Session-Token -- jadi simpan `_token` dari body
+          // respons ini juga (lihat __setSessionTokenFallback di atas).
+          __setSessionTokenFallback(data._token);
           auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
           return { user: auth.currentUser };
         } else {
@@ -995,6 +1023,8 @@ const { useState, useEffect } = React;
           });
           data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
+          // PERBAIKAN (2026-08-15): lihat catatan sama di atas (login admin).
+          __setSessionTokenFallback(data._token);
           auth.currentUser = __makeUser({ storeId: data.storeId, role: 'store' });
           return { user: auth.currentUser, storeInfo: data.storeInfo };
         }
@@ -1006,6 +1036,10 @@ const { useState, useEffect } = React;
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Gagal membuat admin');
+        // PERBAIKAN (2026-08-15): sama seperti login -- token bootstrap-admin juga perlu
+        // disimpan sebagai fallback, kalau tidak admin yang baru dibuat langsung kena 401
+        // di request berikutnya persis seperti bug utama yang diperbaiki di sini.
+        __setSessionTokenFallback(data._token);
         auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
         return { user: auth.currentUser };
       },
@@ -1013,6 +1047,7 @@ const { useState, useEffect } = React;
         // Cookie HttpOnly tidak bisa dihapus dari JavaScript -- WAJIB minta server yang
         // menghapusnya lewat Set-Cookie (lihat /api/logout di worker.js).
         try { await __apiFetch(`${WORKER_BASE}/api/logout`, { method: 'POST' }); } catch (e) {}
+        __setSessionTokenFallback(null);
         auth.currentUser = null;
       },
     };

@@ -10956,116 +10956,15 @@ Daily inventory done✅
     });
 
     // ==========================================
-    // PANEL DIAGNOSTIK (tombol 🛠 pojok kanan bawah, selalu ada di semua halaman).
-    // Dibuat supaya masalah "data tidak muncul"/"daftar toko kosong" bisa dicek sendiri
-    // dari HP tanpa perlu DevTools -- menampilkan origin situs saat ini (harus SAMA PERSIS
-    // dengan ALLOWED_ORIGIN di Cloudflare Worker), dan hasil tes langsung ke tiap endpoint
-    // penting (status HTTP / pesan error apa adanya).
+    // Panel diagnostik koneksi (tombol 🛠) sudah dihapus (2026-08) -- masalah "toko tidak
+    // ketemu"/"skor tidak nyambung" yang dulu perlu panel ini untuk didiagnosis SUDAH
+    // diperbaiki di sisi kode (lihat perbaikan rtdbReadPath & storeDirectory di worker.js).
+    // Kalau butuh alat diagnosis serupa lagi di kemudian hari, cari histori kode ini.
     // ==========================================
-    function DiagPanel() {
-      const [open, setOpen] = useState(false);
-      const [log, setLog] = useState([]);
-      const [testing, setTesting] = useState(false);
-      const [testResults, setTestResults] = useState([]);
-
-      useEffect(() => {
-        const handler = () => setLog([...(window.__tarobunDiagLog || [])]);
-        window.addEventListener('tarobun-diag-update', handler);
-        handler();
-        return () => window.removeEventListener('tarobun-diag-update', handler);
-      }, []);
-
-      const runTests = async () => {
-        setTesting(true);
-        const endpoints = [
-          { label: 'Cek admin ada (admin-exists)', path: '/api/admin-exists' },
-          { label: 'Daftar toko (storeDirectory)', path: '/api/rtdb?path=storeDirectory' },
-          { label: 'Ringkasan toko admin (stores-summary)', path: '/api/stores-summary' },
-          { label: 'Sesi login saat ini (session/me)', path: '/api/session/me' },
-        ];
-        const results = [];
-        for (const ep of endpoints) {
-          const startedAt = Date.now();
-          try {
-            const res = await fetch(`${WORKER_BASE}${ep.path}`, { credentials: 'include' });
-            let bodyPreview = '';
-            try { bodyPreview = JSON.stringify(await res.json()).slice(0, 200); } catch (e) { bodyPreview = '(bukan JSON)'; }
-            results.push({ ...ep, ok: res.ok, status: res.status, ms: Date.now() - startedAt, detail: bodyPreview });
-          } catch (err) {
-            results.push({ ...ep, ok: false, status: null, ms: Date.now() - startedAt, detail: String(err && err.message ? err.message : err) });
-          }
-        }
-        setTestResults(results);
-        setTesting(false);
-      };
-
-      const currentOrigin = window.location.origin;
-      const originMismatch = currentOrigin !== PUBLIC_APP_BASE && currentOrigin.indexOf('localhost') === -1 && currentOrigin.indexOf('capacitor:') === -1;
-
-      return (
-        <React.Fragment>
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            title="Diagnostik koneksi"
-            style={{ position: 'fixed', bottom: '14px', right: '14px', zIndex: 99998, width: '42px', height: '42px', borderRadius: '9999px', background: '#1f2937', color: '#fff', border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', fontSize: '18px', cursor: 'pointer', opacity: 0.55 }}
-          >🛠</button>
-          {open && (
-            <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(15,23,42,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
-              <div style={{ background: '#fff', borderRadius: '16px', maxWidth: '480px', width: '100%', maxHeight: '85vh', overflow: 'auto', padding: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <h3 style={{ fontWeight: 700, fontSize: '15px', margin: 0 }}>Diagnostik Koneksi</h3>
-                  <button onClick={() => setOpen(false)} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer' }}>✕</button>
-                </div>
-
-                <div style={{ fontSize: '11px', background: '#f8fafc', borderRadius: '10px', padding: '10px', marginBottom: '10px', lineHeight: 1.5 }}>
-                  <div><b>Alamat situs saat ini:</b><br />{currentOrigin}</div>
-                  <div style={{ marginTop: '4px' }}><b>Alamat yang didaftarkan di kode (PUBLIC_APP_BASE):</b><br />{PUBLIC_APP_BASE}</div>
-                  {originMismatch && (
-                    <div style={{ marginTop: '8px', color: '#b91c1c', fontWeight: 600 }}>
-                      ⚠️ Alamat situs saat ini BEDA dengan PUBLIC_APP_BASE di atas. Kalau situs ini adalah alamat resmi kamu sekarang, Cloudflare Worker (ALLOWED_ORIGIN) & kode ini (PUBLIC_APP_BASE) harus di-update supaya keduanya PERSIS SAMA (huruf besar/kecil, https, tanpa garis miring di akhir) — kalau tidak, semua data akan gagal dimuat persis seperti sekarang.
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  onClick={runTests}
-                  disabled={testing}
-                  style={{ width: '100%', background: '#4c1d95', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px', fontWeight: 700, fontSize: '13px', marginBottom: '10px', cursor: 'pointer' }}
-                >{testing ? 'Menguji...' : 'Tes Koneksi Sekarang'}</button>
-
-                {testResults.length > 0 && (
-                  <div style={{ marginBottom: '12px' }}>
-                    {testResults.map((r, i) => (
-                      <div key={i} style={{ fontSize: '11px', padding: '8px', borderRadius: '8px', marginBottom: '6px', background: r.ok ? '#f0fdf4' : '#fef2f2', border: `1px solid ${r.ok ? '#bbf7d0' : '#fecaca'}` }}>
-                        <div style={{ fontWeight: 700 }}>{r.ok ? '✅' : '❌'} {r.label}</div>
-                        <div style={{ color: '#64748b' }}>{r.path} · {r.status !== null ? `HTTP ${r.status}` : 'gagal terhubung'} · {r.ms}ms</div>
-                        {!r.ok && <div style={{ color: '#b91c1c', wordBreak: 'break-word', marginTop: '2px' }}>{r.detail}</div>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '4px' }}>Riwayat panggilan API terbaru:</div>
-                <div style={{ maxHeight: '160px', overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-                  {log.length === 0 && <div style={{ fontSize: '11px', color: '#94a3b8', padding: '8px' }}>Belum ada aktivitas tercatat.</div>}
-                  {log.map((l, i) => (
-                    <div key={i} style={{ fontSize: '10px', padding: '6px 8px', borderBottom: '1px solid #f1f5f9', color: l.ok ? '#166534' : '#b91c1c' }}>
-                      [{l.time}] {l.method} {l.url} — {l.ok ? `OK ${l.status}` : (l.error || 'gagal')} ({l.ms}ms)
-                    </div>
-                  ))}
-                </div>
-                <p style={{ fontSize: '10px', color: '#94a3b8', marginTop: '10px' }}>Kalau butuh bantuan lebih lanjut, screenshot halaman ini (terutama bagian "Tes Koneksi" & "Riwayat") lalu kirimkan.</p>
-              </div>
-            </div>
-          )}
-        </React.Fragment>
-      );
-    }
 
     // Render AppRoot (menangani login admin/toko, sesi, dan routing)
     const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<AppErrorBoundary><AppRoot /><DiagPanel /></AppErrorBoundary>);
+root.render(<AppErrorBoundary><AppRoot /></AppErrorBoundary>);
 
   </script>
   <script>

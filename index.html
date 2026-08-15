@@ -8,7 +8,7 @@
   <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://*.vercel.app https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <!-- KEAMANAN (hardening, 2026-08): cegah web ini muncul di hasil pencarian Google/Bing dkk.
@@ -391,8 +391,6 @@ const { useState, useEffect } = React;
     // ==========================================
     // KONEKSI KE CLOUDFLARE WORKER (pengganti Firebase)
     // ==========================================
-    // WORKER_BASE: URL Cloudflare Worker. Dipertahankan absolute supaya URL media/foto
-    // yang disimpan di database (foto waste, bukti PO, dsb) tetap valid sebagai <img src>.
     const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
 
     // ==========================================
@@ -419,29 +417,25 @@ const { useState, useEffect } = React;
     // adalah origin BERBEDA dari halaman ini (subdomain workers.dev terpisah), dan browser
     // TIDAK PERNAH mengirim/menyimpan cookie lintas-origin tanpa opsi ini secara eksplisit.
     // ==========================================
-    // ==========================================
-    // SESSION TOKEN — disimpan di sessionStorage, dikirim via header X-Session-Token
-    // Ini solusi untuk Chrome 150+ yang memblokir cookie cross-origin (third-party cookie)
-    // antara so-mandiri-tarobun.vercel.app dan tarobun-api.tepangbkj8.workers.dev.
-    // Cookie HttpOnly tetap diset server (untuk keamanan), tapi sebagai backup kita juga
-    // simpan token di sessionStorage dan kirim via header custom yang tidak diblokir browser.
-    // ==========================================
-    const SESSION_TOKEN_KEY = 'tarobun_session_token';
-    const getSessionToken = () => { try { return sessionStorage.getItem(SESSION_TOKEN_KEY); } catch(e) { return null; } };
-    const setSessionToken = (t) => { try { if (t) sessionStorage.setItem(SESSION_TOKEN_KEY, t); else sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch(e) {} };
+    const __apiFetch = (url, opts = {}) => fetch(url, { ...opts, credentials: 'include' });
 
-    // __apiFetch: selalu kirim credentials (cookie) DAN header X-Session-Token kalau ada
-    const __apiFetch = (url, opts = {}) => {
-      const token = getSessionToken();
-      const headers = { ...(opts.headers || {}), ...(token ? { 'X-Session-Token': token } : {}) };
-      return fetch(url, { ...opts, headers, credentials: 'include' });
-    };
-
+    // ==========================================
+    // KEAMANAN (2026-08): sesi login TIDAK LAGI disimpan sebagai token di localStorage.
+    // Sebelumnya token autentikasi disimpan mentah-mentah di localStorage (CF_SESSION_KEY),
+    // yang artinya SEMUA script di halaman ini -- termasuk script asing yang berhasil
+    // disuntikkan lewat celah XSS mana pun -- bisa membaca token itu dan membajak sesi
+    // login. Sekarang Cloudflare Worker mengirim sesi lewat Set-Cookie HttpOnly (lihat
+    // buildSessionCookie di worker.js): cookie itu TIDAK PERNAH bisa dibaca oleh
+    // document.cookie atau JavaScript apa pun, hanya otomatis dikirim browser ke Worker.
+    // Konsekuensinya: frontend ini juga TIDAK LAGI tahu isi/nilai token-nya sendiri -- utk
+    // mengetahui "apakah user ini sedang login", frontend bertanya ke server lewat endpoint
+    // GET /api/session/me (lihat __loadCfSession di bawah), bukan membaca localStorage.
     let __authListeners = [];
-    const __authHeaders = () => {
-      const token = getSessionToken();
-      return token ? { 'X-Session-Token': token } : {};
-    };
+    // __authHeaders() sengaja jadi no-op (dipertahankan sebagai fungsi kosong, bukan
+    // dihapus) supaya SEMUA titik fetch() lama di file ini yang masih menulis
+    // `...__authHeaders()` tetap berjalan tanpa perlu diubah satu-persatu -- otentikasi
+    // sekarang murni lewat Cookie (otomatis via __apiFetch), bukan header lagi.
+    const __authHeaders = () => ({});
 
     // ==========================================
     // IDENTITAS DEVICE -- HANYA LABEL KOSMETIK, BUKAN LAGI KONTROL KEAMANAN
@@ -502,11 +496,9 @@ const { useState, useEffect } = React;
     const __fetchServerSession = async () => {
       try {
         const res = await __apiFetch(`${WORKER_BASE}/api/session/me`, { cache: 'no-store' });
-        if (!res.ok) { setSessionToken(null); return null; }
+        if (!res.ok) return null;
         const data = await res.json();
-        if (!data || !data.ok) { setSessionToken(null); return null; }
-        // Kalau server kirim token baru (refresh), simpan lagi
-        if (data._token) setSessionToken(data._token);
+        if (!data || !data.ok) return null;
         if (data.role === 'admin') return { uid: data.uid, role: 'admin' };
         return { storeId: data.storeId, role: 'store', storeInfo: data.storeInfo };
       } catch (e) {
@@ -536,33 +528,12 @@ const { useState, useEffect } = React;
     };
     // Bungkus fetch supaya error jaringan (server tidak terjangkau sama sekali) dan error HTTP
     // (status bukan 2xx) sama-sama menghasilkan pesan yang jelas, bukan "HTTP 500" polos.
-    //
-    // BUGFIX PENTING (akar masalah "daftar toko/data tidak terbaru terus-menerus"): dulu fungsi
-    // ini TIDAK PUNYA BATAS WAKTU SAMA SEKALI. Di koneksi lambat (bukan mati total, cuma lemot),
-    // fetch() tidak pernah menghasilkan error/reject -- dia cuma diam menggantung tanpa henti.
-    // Akibatnya, retry logic yang sudah dibuat di tempat lain (mis. pemuatan daftar toko, MAX
-    // 3x percobaan) TIDAK PERNAH KEPICU, karena syaratnya adalah promise ini harus GAGAL dulu
-    // (.catch) sebelum retry berikutnya jalan -- kalau dia cuma menggantung selamanya, aplikasi
-    // seolah "macet" menampilkan data cache lama terus tanpa pernah benar-benar mencoba lagi
-    // atau memberi tahu penggunanya. Sekarang setiap panggilan DIPAKSA berhenti sendiri setelah
-    // 12 detik (timeoutMs bisa dioverride lewat opts kalau perlu), supaya promise-nya PASTI
-    // selesai (baik sukses atau gagal) dalam waktu wajar dan retry/fallback bisa benar-benar jalan.
-    const __fetchOrThrow = async (url, opts = {}) => {
-      const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 12000;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const __fetchOrThrow = async (url, opts) => {
       let res;
       try {
-        res = await __apiFetch(url, { ...opts, signal: controller.signal });
+        res = await __apiFetch(url, opts);
       } catch (netErr) {
-        const isTimeout = netErr && netErr.name === 'AbortError';
-        throw new Error(
-          isTimeout
-            ? `Koneksi terlalu lambat (timeout setelah ${Math.round(timeoutMs / 1000)} detik)`
-            : 'Tidak bisa menghubungi server (' + (netErr && netErr.message ? netErr.message : 'jaringan gagal') + ')'
-        );
-      } finally {
-        clearTimeout(timer);
+        throw new Error('Tidak bisa menghubungi server (' + (netErr && netErr.message ? netErr.message : 'jaringan gagal') + ')');
       }
       if (!res.ok) throw new Error(await __readErrorBody(res));
       return res;
@@ -613,9 +584,9 @@ const { useState, useEffect } = React;
         try {
           const qs = storeId ? `storeId=${encodeURIComponent(storeId)}&v=${version}` : `v=${version}`;
           const controller = new AbortController();
-          // Abort timeout sisi client: sedikit lebih lama dari WAIT_TIMEOUT_MS server (25 detik),
-          // supaya browser tidak membatalkan request sebelum server sempat membalasnya.
-          timeoutId = setTimeout(() => controller.abort(), 32000);
+          // Sedikit lebih lama dari WAIT_TIMEOUT_MS di server (30 detik), supaya browser
+          // yang membatalkan request bukan karena server-nya lambat balas.
+          timeoutId = setTimeout(() => controller.abort(), 40000);
           const res = await __apiFetch(`${WORKER_BASE}/api/chat/wait?${qs}`, { headers: __authHeaders(), signal: controller.signal });
           clearTimeout(timeoutId);
           const data = await res.json();
@@ -912,63 +883,16 @@ const { useState, useEffect } = React;
     // Upload satu blob/foto ke R2 lewat Worker. `folder` dipakai sebagai prefix key (mis.
     // "wasteFotos/{storeId}") supaya rapi dan gampang ditelusuri. Balikannya { url, key } —
     // `url` langsung dipakai sebagai <img src>, `key` disimpan di database untuk keperluan hapus nanti.
-    // BUGFIX (perbaikan koneksi lambat): sebelumnya upload TIDAK punya timeout sama sekali --
-    // di koneksi sangat lambat/putus-nyambung, request bisa "menggantung" tanpa batas waktu
-    // (browser baru menyerah setelah puluhan detik/menit, kalau menyerah sama sekali), dan
-    // TIDAK ADA percobaan ulang otomatis -- sekali gagal, pengguna harus ulang manual dari awal
-    // (ambil ulang foto, dsb). Sekarang: setiap upload dibatasi waktu (AbortController) dan
-    // dicoba ulang otomatis (dengan jeda) KHUSUS untuk kegagalan JARINGAN (fetch gagal total /
-    // timeout) -- BUKAN untuk error dari server yang sudah jelas (mis. 415 tipe file salah,
-    // 413 file kebesaran, 401 sesi habis), karena error jenis itu tidak akan berubah walau
-    // diulang dan harus langsung ditampilkan apa adanya ke pengguna.
-    const uploadMediaToR2 = async (dataUrlOrBlob, folder, ext = 'jpg', opts = {}) => {
+    const uploadMediaToR2 = async (dataUrlOrBlob, folder, ext = 'jpg') => {
       const blob = dataUrlOrBlob instanceof Blob ? dataUrlOrBlob : dataUrlToBlob(dataUrlOrBlob);
-      const maxRetries = opts.maxRetries != null ? opts.maxRetries : 2;   // total percobaan: 1 + 2 = 3x
-      const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 30000; // 30 detik per percobaan
-      let lastErr = null;
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          const res = await __apiFetch(`${WORKER_BASE}/api/media/upload?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(ext)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': blob.type || 'application/octet-stream', ...__authHeaders() },
-            body: blob,
-            signal: controller.signal,
-          });
-          clearTimeout(timer);
-          if (!res.ok) {
-            // Error DARI SERVER (bukan gagal jaringan) -- ambil pesan asli kalau ada, dan
-            // JANGAN diulang otomatis, langsung lempar supaya pemanggil tahu penyebab pastinya.
-            let msg = 'Gagal upload foto ke storage (HTTP ' + res.status + ')';
-            try { const errBody = await res.json(); if (errBody && errBody.error) msg = errBody.error; } catch (e) {}
-            const e = new Error(msg);
-            e.status = res.status;
-            throw e;
-          }
-          const data = await res.json();
-          return { key: data.key, url: `${WORKER_BASE}/api/media/file/${data.key}` };
-        } catch (err) {
-          clearTimeout(timer);
-          lastErr = err;
-          // Kalau sudah dapat status dari server (error aplikasi, bukan jaringan) -> jangan retry
-          if (err && typeof err.status === 'number') throw err;
-          const isAbort = err && err.name === 'AbortError';
-          if (attempt < maxRetries) {
-            // Jeda sebelum coba lagi (backoff sederhana): 1 detik, lalu 2 detik
-            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-            continue;
-          }
-          const e = new Error(
-            isAbort
-              ? 'Upload foto gagal: koneksi terlalu lambat (timeout). Coba lagi di jaringan yang lebih stabil.'
-              : 'Upload foto gagal: koneksi terputus. Periksa internet Anda lalu coba lagi.'
-          );
-          e.isNetworkError = true;
-          throw e;
-        }
-      }
-      throw lastErr;
+      const res = await __apiFetch(`${WORKER_BASE}/api/media/upload?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(ext)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': blob.type || 'application/octet-stream', ...__authHeaders() },
+        body: blob,
+      });
+      if (!res.ok) throw new Error('Gagal upload foto ke storage (HTTP ' + res.status + ')');
+      const data = await res.json();
+      return { key: data.key, url: `${WORKER_BASE}/api/media/file/${data.key}` };
     };
 
     // Hapus satu atau beberapa key sekaligus dari R2. Sengaja "best-effort" (tidak melempar error
@@ -995,58 +919,6 @@ const { useState, useEffect } = React;
     // dari JavaScript sama sekali (itulah intinya, lihat catatan KEAMANAN di atas).
     const __makeUser = (u) => u ? { uid: u.uid || u.storeId, ...u, getIdToken: async () => null } : null;
 
-    // BUGFIX (perbaikan koneksi lambat, tahap 2): sebelumnya login (admin & toko) TIDAK punya
-    // timeout/retry sama sekali -- di koneksi sangat lambat/putus-nyambung (mis. HP di jaringan
-    // seluler lemah), satu kali gagal langsung berhenti dan pengguna harus tekan tombol Masuk
-    // lagi secara manual. Sekarang dipakai helper yang sama semangatnya dengan uploadMediaToR2:
-    // dibatasi waktu per percobaan (AbortController) & dicoba ulang otomatis (dengan jeda)
-    // KHUSUS untuk kegagalan JARINGAN murni (fetch gagal total / timeout / respons tidak valid)
-    // -- BUKAN untuk error resmi dari server yang sudah py status HTTP jelas (401 token salah,
-    // 403 nonaktif, 404 toko tidak ada, 429 dikunci, dst), karena error jenis itu tidak akan
-    // berubah walau diulang dan harus langsung ditampilkan apa adanya ke pengguna.
-    const __fetchJsonWithRetry = async (url, fetchOpts, opts = {}) => {
-      const maxRetries = opts.maxRetries != null ? opts.maxRetries : 2;   // total percobaan: 1 + 2 = 3x
-      const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 15000; // 15 detik per percobaan
-      let lastErr = null;
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          const res = await __apiFetch(url, { ...fetchOpts, signal: controller.signal });
-          clearTimeout(timer);
-          let data;
-          try {
-            data = await res.json();
-          } catch (parseErr) {
-            const e = new Error('Server memberi respons tidak valid (kemungkinan sedang gangguan). Coba lagi sesaat lagi.');
-            e.isNetworkError = true;
-            e.status = res.status;
-            throw e;
-          }
-          return { res, data };
-        } catch (err) {
-          clearTimeout(timer);
-          lastErr = err;
-          // Sudah dapat status dari server (error aplikasi resmi, bukan gagal jaringan) -> jangan retry
-          if (err && typeof err.status === 'number') throw err;
-          const isAbort = err && err.name === 'AbortError';
-          if (attempt < maxRetries) {
-            // Jeda sebelum coba lagi (backoff sederhana): 1 detik, lalu 2 detik
-            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-            continue;
-          }
-          const e = new Error(
-            isAbort
-              ? 'Gagal terhubung ke server: koneksi terlalu lambat (timeout). Coba lagi di jaringan yang lebih stabil.'
-              : 'Gagal terhubung ke server. Periksa koneksi internet Anda lalu coba lagi.'
-          );
-          e.isNetworkError = true;
-          throw e;
-        }
-      }
-      throw lastErr;
-    };
-
     const auth = {
       currentUser: null,
       setPersistence: async () => {},
@@ -1062,31 +934,29 @@ const { useState, useEffect } = React;
         return () => { __authListeners = __authListeners.filter(l => l !== cb); };
       },
       signInWithEmailAndPassword: async (email, password) => {
-        // Untuk LOGIN dipakai timeout lebih pendek & retry lebih sedikit dibanding upload foto --
-        // login itu proses INTERAKTIF yang ditunggu langsung oleh pengguna di depan layar, jadi
-        // menunggu sampai ~45 detik (seperti upload di latar belakang) terasa seperti "macet"/
-        // "aplikasi rusak". Total waktu tunggu terburuk sekarang dipangkas jadi sekitar ~21 detik
-        // (10 detik/percobaan x 2 percobaan) sebelum pesan error ditampilkan.
-        const LOGIN_RETRY_OPTS = { maxRetries: 1, timeoutMs: 10000 };
+        let res, data;
         if (email === 'admin@tarobun-app.internal') {
-          const { res, data } = await __fetchJsonWithRetry(`${WORKER_BASE}/api/login/admin`, {
+          res = await __apiFetch(`${WORKER_BASE}/api/login/admin`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password }),
-          }, LOGIN_RETRY_OPTS);
+          });
+          data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
-          // Simpan token di sessionStorage sebagai fallback untuk cross-origin request
-          // (Chrome 150+ memblokir cookie cross-origin antara Vercel dan workers.dev)
-          if (data._token) setSessionToken(data._token);
+          // Tidak ada lagi token untuk disimpan di sini -- Worker sudah mengirimkannya lewat
+          // Set-Cookie HttpOnly pada response ini (browser menyimpannya otomatis).
           auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
           return { user: auth.currentUser };
         } else {
           const storeId = email.replace(/^store-/, '').replace(/@toko\.tarobun-app\.internal$/, '');
-          const { res, data } = await __fetchJsonWithRetry(`${WORKER_BASE}/api/login/store`, {
+          // deviceId TIDAK dikirim lagi -- server yang membuat & menandatangani identitas
+          // device (sid) sendiri saat login (lihat catatan di /api/login/store, worker.js).
+          // deviceLabel tetap dikirim, tapi murni label tampilan kosmetik untuk menu Admin.
+          res = await __apiFetch(`${WORKER_BASE}/api/login/store`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ storeId, token: password, deviceLabel: getDeviceLabel() }),
-          }, LOGIN_RETRY_OPTS);
+          });
+          data = await res.json();
           if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
-          if (data._token) setSessionToken(data._token);
           auth.currentUser = __makeUser({ storeId: data.storeId, role: 'store' });
           return { user: auth.currentUser, storeInfo: data.storeInfo };
         }
@@ -1098,13 +968,13 @@ const { useState, useEffect } = React;
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Gagal membuat admin');
-        if (data._token) setSessionToken(data._token);
         auth.currentUser = __makeUser({ uid: data.uid, role: 'admin' });
         return { user: auth.currentUser };
       },
       signOut: async () => {
+        // Cookie HttpOnly tidak bisa dihapus dari JavaScript -- WAJIB minta server yang
+        // menghapusnya lewat Set-Cookie (lihat /api/logout di worker.js).
         try { await __apiFetch(`${WORKER_BASE}/api/logout`, { method: 'POST' }); } catch (e) {}
-        setSessionToken(null); // hapus token dari sessionStorage saat logout
         auth.currentUser = null;
       },
     };
@@ -3055,25 +2925,10 @@ const { useState, useEffect } = React;
         return () => document.removeEventListener('mousedown', handleOutsideClick);
       }, []);
 
-      // BUGFIX (nama toko kembar): kalau ada 2+ toko dengan NAMA PERSIS SAMA (mis. dua-duanya
-      // "Test", masing-masing ID/token beda), dropdown sebelumnya menampilkan keduanya sebagai
-      // teks identik -- pengguna tidak mungkin tahu mana yang benar dari tampilannya saja, jadi
-      // gampang salah pilih dan berujung "token salah" padahal tokennya benar untuk toko yang
-      // SATUNYA. Sekarang, KHUSUS untuk nama yang duplikat, otomatis ditambah penanda pembeda
-      // singkat dari ID toko (mis. "Test (…lbznk)"), supaya tidak ada lagi 2 pilihan yang
-      // terlihat sama persis di layar.
-      const storeDirectoryLabeled = React.useMemo(() => {
-        const nameCounts = {};
-        storeDirectory.forEach(s => { nameCounts[s.name] = (nameCounts[s.name] || 0) + 1; });
-        return storeDirectory.map(s => ({
-          ...s,
-          label: nameCounts[s.name] > 1 ? `${s.name} (…${String(s.id).slice(-6)})` : s.name,
-        }));
-      }, [storeDirectory]);
-      const filteredStoreDirectory = storeDirectoryLabeled.filter(s =>
+      const filteredStoreDirectory = storeDirectory.filter(s =>
         !storeSearchQuery.trim() || s.name.toLowerCase().includes(storeSearchQuery.trim().toLowerCase())
       );
-      const selectedStoreName = (storeDirectoryLabeled.find(s => s.id === storeId) || {}).label || '';
+      const selectedStoreName = (storeDirectory.find(s => s.id === storeId) || {}).name || '';
 
       // Ambil status admin & daftar toko. Diberi timeout + AUTO-RETRY (dengan jeda makin lama) +
       // tombol "Muat Ulang" manual, supaya kalau koneksi Firebase lambat/putus-nyambung (jaringan
@@ -3093,31 +2948,57 @@ const { useState, useEffect } = React;
         let attempt = 0;
         const MAX_ATTEMPTS = 3;
 
-        // Reset semua state dulu sebelum mulai
-        setDirError(false);
-        setDirFromCache(false);
-        setAdminCheckError(false);
-
-        // Cek cache dulu — tampilkan instan kalau ada, sambil fetch terbaru di belakang
         let hasCache = false;
         try {
           const cached = JSON.parse(localStorage.getItem('tarobun_dir_cache') || 'null');
           if (cached && cached.length > 0) {
             hasCache = true;
             setStoreDirectory(cached);
-            setDirLoading(false);
-            setDirBackgroundSync(true); // sedang ambil data terbaru di belakang layar
+            setDirLoading(false);       // sudah ada data untuk dipakai, tidak perlu blocking
+            setDirBackgroundSync(true); // tandai sedang disegarkan diam-diam
           }
         } catch (e) {}
 
-        if (!hasCache) {
-          setDirLoading(true);
-          setDirBackgroundSync(false);
-        }
+        setDirLoading(hasCache ? false : true);
+        setDirError(false);
+        setDirFromCache(false);
+        setAdminCheckError(false);
 
+        const tryLoad = () => {
+          attempt += 1;
+          // Pakai Cloudflare Worker (HTTPS biasa) bukan Firebase WebSocket supaya
+          // tidak kena blokir jaringan seluler yang sering memblokir koneksi WebSocket.
+          __apiFetch(`${WORKER_BASE}/api/rtdb?path=storeDirectory`)
+            .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+            .then(data => {
+              if (cancelled) return;
+              const raw = data.value || {};
+              const list = Object.keys(raw).map(id => ({ id, name: raw[id] })).sort((a, b) => a.name.localeCompare(b.name));
+              setStoreDirectory(list);
+              setDirLoading(false);
+              setDirError(false);
+              setDirFromCache(false);
+              setDirBackgroundSync(false);
+              try { localStorage.setItem('tarobun_dir_cache', JSON.stringify(list)); } catch (e) {}
+            })
+            .catch((err) => {
+              if (cancelled) return;
+              setDirErrorDetail(String(err && err.message ? err.message : err));
+              if (attempt < MAX_ATTEMPTS) {
+                setTimeout(tryLoad, 1000 * attempt);
+              } else {
+                setDirBackgroundSync(false);
+                useDirCacheFallback();
+              }
+            });
+        };
+
+        // Kalau semua percobaan koneksi ke database gagal (jaringan benar-benar bermasalah),
+        // jangan langsung "buntu" — pakai daftar toko terakhir yang berhasil dimuat & tersimpan
+        // di HP ini (localStorage), supaya toko/admin tetap bisa mencoba login sambil menunggu
+        // koneksi pulih. Tombol "Muat Ulang" tetap tersedia untuk coba ambil data terbaru lagi.
         const useDirCacheFallback = () => {
           setDirLoading(false);
-          setDirBackgroundSync(false);
           try {
             const cached = JSON.parse(localStorage.getItem('tarobun_dir_cache') || 'null');
             if (cached && cached.length > 0) {
@@ -3129,38 +3010,6 @@ const { useState, useEffect } = React;
           } catch (e) {}
           setDirError(true);
         };
-
-        const tryLoad = () => {
-          attempt += 1;
-          // Pakai db.ref() yang sudah punya cache: 'no-store' + auth headers yang benar
-          db.ref('storeDirectory').once('value')
-            .then(snap => {
-              if (cancelled) return;
-              const raw = snap.val() || {};
-              const list = Object.entries(raw)
-                .map(([id, val]) => ({ id, name: typeof val === 'string' ? val : (val && val.name) || id }))
-                .filter(s => s.name)
-                .sort((a, b) => a.name.localeCompare(b.name));
-              setStoreDirectory(list);
-              setDirLoading(false);
-              setDirFromCache(false);
-              setDirBackgroundSync(false);
-              setDirError(false);
-              try { localStorage.setItem('tarobun_dir_cache', JSON.stringify(list)); } catch (e) {}
-            })
-            .catch(err => {
-              if (cancelled) return;
-              setDirErrorDetail(String(err && err.message ? err.message : err));
-              if (attempt < MAX_ATTEMPTS) {
-                setTimeout(tryLoad, 1000 * attempt);
-              } else {
-                useDirCacheFallback();
-              }
-            });
-        };
-
-        // Panggil tryLoad SETELAH state di-set supaya tidak race condition
-        tryLoad();
 
         const tryAdminCheck = (n) => {
           __apiFetch(`${WORKER_BASE}/api/admin-exists`)
@@ -3186,6 +3035,7 @@ const { useState, useEffect } = React;
             });
         };
 
+        tryLoad();
         tryAdminCheck(1);
 
         return () => {
@@ -3239,30 +3089,15 @@ const { useState, useEffect } = React;
           saveSession('store', { storeId, storeName: info.name });
           onLoggedIn({ role: 'store', storeId, storeName: info.name });
         } catch (err) {
-          // BUGFIX (perbaikan pesan error login): SEBELUMNYA semua error selain 429/409
-          // (termasuk gagal koneksi/timeout ke server) ditampilkan sebagai "Nama toko atau
-          // token salah" -- ini MENYESATKAN, karena kalau penyebabnya koneksi lambat/putus,
-          // pengguna akan berulang kali cek & ganti token padahal tokennya benar dan
-          // masalahnya ada di jaringan. Sekarang setiap penyebab ditampilkan sesuai aslinya.
-          if (err && err.isNetworkError) {
-            setError((err.message || 'Gagal terhubung ke server.') + ' Kalau sinyal/data Anda sedang lambat, tunggu koneksi stabil lalu coba lagi.');
-          } else if (err && err.status === 429) {
-            // Anti brute-force sepenuhnya ditangani server (lihat catatan KEAMANAN di atas):
-            // kalau terlalu banyak percobaan gagal, server membalas status 429 dengan pesan
-            // sisa waktu kunci -- tampilkan APA ADANYA, jangan diseragamkan.
+          // Anti brute-force sepenuhnya ditangani server (lihat catatan KEAMANAN di atas):
+          // kalau terlalu banyak percobaan gagal, server membalas status 429 dengan pesan
+          // sisa waktu kunci -- tampilkan APA ADANYA, jangan diseragamkan.
+          if (err && err.status === 429) {
             setError(err.message || 'Terlalu banyak percobaan login gagal. Coba lagi beberapa saat lagi.');
           } else if (err && err.status === 409) {
             setError(err.message || 'Sudah ada perangkat lain yang sedang aktif memakai akun toko ini.');
-          } else if (err && err.status === 404) {
-            setError('Nama toko tidak ditemukan. Pastikan nama toko yang dipilih benar.');
-          } else if (err && err.status === 403) {
-            setError(err.message || 'Akun toko ini sudah tidak aktif. Hubungi admin.');
-          } else if (err && err.status === 401) {
-            setError('Token toko salah. Periksa kembali token yang dimasukkan.');
-          } else if (err && err.status === 400) {
-            setError(err.message || 'Kode toko dan token wajib diisi.');
           } else {
-            setError(err && err.message ? err.message : 'Nama toko atau token salah.');
+            setError('Nama toko atau token salah.');
           }
         } finally {
           setLoading(false);
@@ -3289,13 +3124,8 @@ const { useState, useEffect } = React;
           saveSession('admin', {});
           onLoggedIn({ role: 'admin' });
         } catch (err) {
-          // BUGFIX (perbaikan pesan error login admin): sama seperti login toko, gagal
-          // koneksi/timeout sebelumnya ikut ditampilkan sebagai "Password admin salah" --
-          // sekarang dibedakan supaya tidak menyesatkan.
-          if (err && err.isNetworkError) {
-            setError((err.message || 'Gagal terhubung ke server.') + ' Kalau sinyal/data Anda sedang lambat, tunggu koneksi stabil lalu coba lagi.');
-          } else if (err && err.status === 429) {
-            // Anti brute-force sepenuhnya ditangani server -- lihat catatan KEAMANAN di atas.
+          // Anti brute-force sepenuhnya ditangani server -- lihat catatan KEAMANAN di atas.
+          if (err && err.status === 429) {
             setError(err.message || 'Terlalu banyak percobaan login gagal. Coba lagi beberapa saat lagi.');
           } else if (adminExists === false && /sudah/i.test(err.message || '')) {
             // Server bilang admin sebenarnya sudah ada (flag di sisi ini sempat tidak sinkron,
@@ -3342,7 +3172,7 @@ const { useState, useEffect } = React;
               </div>
             )}
 
-            {dirFromCache && !dirError && !dirBackgroundSync && (
+            {dirFromCache && !dirError && (
               <div className="bg-sky-50 border border-sky-200 text-sky-700 text-xs font-semibold rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2">
                 <span>Koneksi lambat — menampilkan data toko tersimpan (mungkin tidak terbaru).</span>
                 <button type="button" onClick={() => setReloadTick(t => t + 1)} className="shrink-0 bg-sky-600 text-white text-[10px] font-bold px-2 py-1 rounded-lg">Sinkron Ulang</button>
@@ -3411,7 +3241,7 @@ const { useState, useEffect } = React;
                               onClick={() => { setStoreId(s.id); setStoreDropdownOpen(false); setStoreSearchQuery(''); }}
                               className={`w-full text-left px-3 py-2 text-sm truncate ${storeId === s.id ? 'bg-purple-50 text-purple-800 font-semibold' : 'text-slate-700 hover:bg-slate-50'}`}
                             >
-                              {s.label}
+                              {s.name}
                             </button>
                           </li>
                         ))}
@@ -6195,54 +6025,8 @@ const { useState, useEffect } = React;
         custom: {} // field tambahan yang didefinisikan Admin (Form Builder)
       });
 
-      // ==========================================
-      // DRAFT LAPORAN — persist lewat logout/refresh
-      // Reset otomatis saat tanggal Jakarta berubah
-      // ==========================================
-      const getJakartaDateStr = () => {
-        return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }); // format YYYY-MM-DD
-      };
-
-      const SALES_DRAFT_KEY = `tarobun_sales_draft_${storeId}`;
-
-      const loadSalesDraft = () => {
-        try {
-          const raw = localStorage.getItem(SALES_DRAFT_KEY);
-          if (!raw) return getEmptySalesState(getJakartaDateStr());
-          const draft = JSON.parse(raw);
-          const todayJkt = getJakartaDateStr();
-          // Kalau tanggal draft beda dengan hari ini Jakarta → reset ke kosong
-          if (!draft.tanggal || draft.tanggal !== todayJkt) {
-            localStorage.removeItem(SALES_DRAFT_KEY);
-            return getEmptySalesState(todayJkt);
-          }
-          // Merge dengan state kosong supaya field baru tidak undefined
-          return { ...getEmptySalesState(todayJkt), ...draft };
-        } catch (e) {
-          return getEmptySalesState(getJakartaDateStr());
-        }
-      };
-
-      const [salesData, setSalesData] = useState(() => loadSalesDraft());
+      const [salesData, setSalesData] = useState(() => getEmptySalesState());
       const [inventoryData, setInventoryData] = useState(() => getEmptyInventoryState());
-
-      // Auto-save draft salesData ke localStorage setiap kali ada perubahan
-      useEffect(() => {
-        try { localStorage.setItem(SALES_DRAFT_KEY, JSON.stringify(salesData)); } catch (e) {}
-      }, [salesData]);
-
-      // Cek pergantian hari Jakarta setiap menit — reset draft saat hari berganti
-      useEffect(() => {
-        const checkDayChange = () => {
-          const todayJkt = getJakartaDateStr();
-          if (salesData.tanggal && salesData.tanggal !== todayJkt) {
-            localStorage.removeItem(SALES_DRAFT_KEY);
-            setSalesData(getEmptySalesState(todayJkt));
-          }
-        };
-        const interval = setInterval(checkDayChange, 60 * 1000); // cek tiap 1 menit
-        return () => clearInterval(interval);
-      }, [salesData.tanggal]);
       const [historyList, setHistoryList] = useState([]);
       const [customSalesFields, setCustomSalesFields] = useState([]);
       const [customInventoryFields, setCustomInventoryFields] = useState([]);
@@ -6785,10 +6569,9 @@ const { useState, useEffect } = React;
       };
 
       const handleClearForm = () => {
-        const todayJkt = getJakartaDateStr();
-        try { localStorage.removeItem(SALES_DRAFT_KEY); } catch (e) {}
-        setSalesData(getEmptySalesState(todayJkt));
-        setInventoryData(getEmptyInventoryState(todayJkt));
+        const today = new Date().toISOString().split('T')[0];
+        setSalesData(getEmptySalesState(today));
+        setInventoryData(getEmptyInventoryState(today));
         showToast('Form telah dikosongkan! Siap untuk input hari baru. 🧼');
       };
 
@@ -7821,16 +7604,13 @@ Daily inventory done✅
       const handleDeleteWasteFoto = async (firebaseKey) => {
         try {
           showToast('Menghapus foto... 🗑️');
-          // Cari item dulu untuk ambil fotoKey sebelum dihapus dari DB
-          const item = wasteFotoList.find(it => it.firebaseKey === firebaseKey);
           await restRemove(db.ref(`${storeBase}/wasteFotos/` + firebaseKey));
-          // Hapus juga file fisik dari R2 kalau ada
-          if (item && item.fotoKey) await deleteMediaFromR2(item.fotoKey).catch(() => {});
-          showToast('Foto berhasil dihapus. 🗑️');
-          setWasteFotoList(prev => prev.filter(it => it.firebaseKey !== firebaseKey));
+          showToast('Foto berhasil dihapus dari Riwayat.');
+          setWasteFotoList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
         } catch (error) {
           console.error('Gagal menghapus foto waste:', error);
-          showToast(`⚠️ Gagal menghapus foto: ${error && error.message ? error.message : 'Kesalahan tidak diketahui'}`);
+          const detail = (error && error.message) ? error.message : 'Kesalahan tidak diketahui';
+          showToast(`⚠️ Gagal menghapus foto: ${detail}`);
         }
       };
 

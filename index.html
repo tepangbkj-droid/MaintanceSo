@@ -5804,7 +5804,7 @@ const { useState, useEffect } = React;
       // Dua sub-fitur cetak (thermal-friendly, lihat CSS #thermalPrintArea di <style> global):
       // 1) Premix: label per-item (Nama Toko, Nama Barang, Tanggal Buat, Tanggal Exp, Asal Bahan Produksi).
       // 2) Catatan Stok: daftar item (FD/Toping) + jumlah + satuan (Bag/Pcs), bisa tambah berkali-kali lalu dicetak sekaligus.
-      const PRINTING_ITEM_OPTIONS = ['FD', 'Toping Taro', 'Coklat', 'Vanila', 'Peach', 'Rasberi', 'Lemon', 'Nanas'];
+      const PRINTING_ITEM_OPTIONS = ['FD', 'Toping Taro', 'Coklat', 'Vanila', 'Peach', 'Rasberi', 'Nanas'];
       const [printingSubTab, setPrintingSubTab] = useState('premix');
 
       const [premixForm, setPremixForm] = useState({ namaToko: storeName || '', namaBarang: '', tanggalBuat: '', tanggalExp: '', asalBahan: '' });
@@ -5874,8 +5874,94 @@ const { useState, useEffect } = React;
 
       const handlePremixFormChange = (field, value) => setPremixForm(prev => ({ ...prev, [field]: value }));
 
+      // ==========================================
+      // CETAK LANGSUNG VIA RawBT (2026-08) — printer thermal Bluetooth Classic/SPP
+      // (mayoritas printer thermal 58mm murah) TIDAK bisa diajak bicara langsung oleh
+      // JavaScript di browser (Web Bluetooth hanya mendukung BLE, bukan SPP klasik), dan
+      // browser SENGAJA selalu menampilkan dialog pilih tujuan cetak (PDF/printer) saat
+      // window.print() dipanggil — ini proteksi keamanan bawaan, tidak bisa dilewati dari kode.
+      //
+      // Solusi: kirim data cetak ke app "RawBT Print Service" (gratis, terpasang di HP kasir,
+      // sudah dikonfigurasi & di-pairing ke printer thermal). RawBT menerima teks lewat skema
+      // URL intent:, lalu langsung mencetak TANPA menampilkan dialog apa pun.
+      // Dokumentasi resmi: https://rawbt.ru/start.html
+      //
+      // Kalau RawBT belum terpasang di HP, Android/Chrome otomatis akan menawarkan buka
+      // Play Store untuk instal (fallback bawaan skema intent:), jadi aman dicoba kapan saja.
+      const printViaRawBT = (text) => {
+        try {
+          // RawBT butuh teks di-encode UTF-8 lalu Base64 (bukan base64 dari string JS biasa,
+          // supaya karakter non-ASCII seperti tanda kutip pintar/emoji tidak rusak).
+          const utf8Bytes = new TextEncoder().encode(text);
+          let binary = '';
+          utf8Bytes.forEach(b => { binary += String.fromCharCode(b); });
+          const base64 = btoa(binary);
+          const intentUrl = `intent:data:text/plain;base64,${base64}#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;`;
+          window.location.href = intentUrl;
+        } catch (err) {
+          console.error('Gagal cetak via RawBT:', err);
+          setNotification({ type: 'error', message: 'Gagal mengirim cetakan ke RawBT. Pastikan aplikasi RawBT sudah terpasang, atau pakai tombol "Cetak via Dialog Browser".' });
+        }
+      };
+
+      // Lebar kertas thermal 58mm ~ 32 karakter huruf standar. Baris pemisah pakai strip.
+      const RECEIPT_WIDTH = 32;
+      const receiptLine = (ch = '-') => ch.repeat(RECEIPT_WIDTH);
+      const receiptRow = (label, value) => `${label}: ${value}`;
+      const receiptItemRow = (left, right) => {
+        const l = String(left);
+        const r = String(right);
+        const gap = Math.max(1, RECEIPT_WIDTH - l.length - r.length);
+        return l.length + r.length + 1 > RECEIPT_WIDTH ? `${l}\n${' '.repeat(Math.max(0, RECEIPT_WIDTH - r.length))}${r}` : `${l}${' '.repeat(gap)}${r}`;
+      };
+
+      const buildPremixReceiptText = (data) => {
+        const lines = [
+          'LABEL PREMIX'.padStart(Math.floor((RECEIPT_WIDTH + 'LABEL PREMIX'.length) / 2)),
+          receiptLine(),
+          receiptRow('Nama Toko', data.namaToko),
+          receiptRow('Nama Barang', data.namaBarang),
+          receiptRow('Tgl Buat', formatIndonesianDate(data.tanggalBuat)),
+          receiptRow('Tgl Exp', formatIndonesianDate(data.tanggalExp)),
+          receiptRow('Asal Bahan', data.asalBahan || '-'),
+          receiptLine(),
+          '', '',
+        ];
+        return lines.join('\n');
+      };
+
+      const buildStockReceiptText = (data) => {
+        const lines = [
+          'CATATAN STOK'.padStart(Math.floor((RECEIPT_WIDTH + 'CATATAN STOK'.length) / 2)),
+          receiptLine(),
+          receiptRow('Nama Toko', data.namaToko),
+          receiptRow('Tanggal', data.tanggalCetak.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })),
+          receiptLine(),
+          ...data.items.map((it, idx) => receiptItemRow(`${idx + 1}. ${it.nama}`, `${it.jumlah} ${it.satuan}`)),
+          receiptLine(),
+          '', '',
+        ];
+        return lines.join('\n');
+      };
+
+      // Tombol utama: cetak LANGSUNG ke printer thermal via RawBT, tanpa dialog apa pun.
       const handlePremixPrint = (e) => {
         e.preventDefault();
+        if (!premixForm.namaToko.trim() || !premixForm.namaBarang.trim() || !premixForm.tanggalBuat || !premixForm.tanggalExp) {
+          setNotification({ type: 'error', message: 'Lengkapi Nama Toko, Nama Barang, Tanggal Buat & Tanggal Exp terlebih dahulu.' });
+          return;
+        }
+        const dataToPrint = { ...premixForm };
+        printViaRawBT(buildPremixReceiptText(dataToPrint));
+        // Simpan ke riwayat lokal (fitur "simpan setelah klik print") & langsung kosongkan
+        // kembali form-nya supaya siap dipakai untuk cetak berikutnya.
+        saveToPrintHistory('premix', dataToPrint);
+        setPremixForm({ namaToko: storeName || '', namaBarang: '', tanggalBuat: '', tanggalExp: '', asalBahan: '' });
+      };
+
+      // Tombol cadangan: cetak lewat dialog browser biasa (berguna kalau RawBT belum
+      // terpasang, atau untuk cetak ke printer A4/biasa/simpan sebagai PDF).
+      const handlePremixPrintDialog = () => {
         if (!premixForm.namaToko.trim() || !premixForm.namaBarang.trim() || !premixForm.tanggalBuat || !premixForm.tanggalExp) {
           setNotification({ type: 'error', message: 'Lengkapi Nama Toko, Nama Barang, Tanggal Buat & Tanggal Exp terlebih dahulu.' });
           return;
@@ -5885,8 +5971,6 @@ const { useState, useEffect } = React;
         // ikut tercetak bersamaan dengan Label Premix di area cetak (lihat #thermalPrintArea).
         setStockPrintData(null);
         setPremixPrintData(dataToPrint);
-        // Simpan ke riwayat lokal (fitur "simpan setelah klik print") & langsung kosongkan
-        // kembali form-nya supaya siap dipakai untuk cetak berikutnya.
         saveToPrintHistory('premix', dataToPrint);
         setPremixForm({ namaToko: storeName || '', namaBarang: '', tanggalBuat: '', tanggalExp: '', asalBahan: '' });
       };
@@ -5913,7 +5997,28 @@ const { useState, useEffect } = React;
 
       const removeStockNoteItem = (id) => setStockNoteItems(prev => prev.filter(it => it.id !== id));
 
+      // Tombol utama: cetak LANGSUNG ke printer thermal via RawBT, tanpa dialog apa pun.
       const handleStockNotePrint = () => {
+        if (!stockNoteStore.trim()) {
+          setNotification({ type: 'error', message: 'Isi Nama Toko terlebih dahulu.' });
+          return;
+        }
+        if (stockNoteItems.length === 0) {
+          setNotification({ type: 'error', message: 'Tambahkan minimal 1 item sebelum mencetak.' });
+          return;
+        }
+        const now = new Date();
+        const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now };
+        printViaRawBT(buildStockReceiptText(dataToPrint));
+        // Simpan ke riwayat lokal & kosongkan kembali daftar item + nama toko.
+        saveToPrintHistory('stock', { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now.toISOString() });
+        setStockNoteItems([]);
+        setStockNoteStore(storeName || '');
+      };
+
+      // Tombol cadangan: cetak lewat dialog browser biasa (berguna kalau RawBT belum
+      // terpasang, atau untuk cetak ke printer A4/biasa/simpan sebagai PDF).
+      const handleStockNotePrintDialog = () => {
         if (!stockNoteStore.trim()) {
           setNotification({ type: 'error', message: 'Isi Nama Toko terlebih dahulu.' });
           return;
@@ -5928,7 +6033,6 @@ const { useState, useEffect } = React;
         // ikut tercetak bersamaan dengan Catatan Stok di area cetak (lihat #thermalPrintArea).
         setPremixPrintData(null);
         setStockPrintData(dataToPrint);
-        // Simpan ke riwayat lokal & kosongkan kembali daftar item + nama toko.
         saveToPrintHistory('stock', { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now.toISOString() });
         setStockNoteItems([]);
         setStockNoteStore(storeName || '');
@@ -6091,7 +6195,6 @@ const { useState, useEffect } = React;
           coklat: '',
           vanilla: '',
           peach: '',
-          lemon: '',
           raspberry: '',
           nanas: '',
           familyBox: ''
@@ -6131,7 +6234,6 @@ const { useState, useEffect } = React;
         toppingTaro: '',
         fillingCoklat: '',
         fillingVanilla: '',
-        fillingLemon: '',
         fillingPeach: '',
         fillingRaspberry: '',
         fillingNanas: '',
@@ -6321,7 +6423,6 @@ const { useState, useEffect } = React;
         { key: 'fillingCoklat', label: 'Filling Coklat', unit: 'kg' },
         { key: 'fillingVanilla', label: 'Filling Vanilla', unit: 'kg' },
         { key: 'fillingRaspberry', label: 'Filling Raspberry', unit: 'kg' },
-        { key: 'fillingLemon', label: 'Filling Lemon', unit: 'kg' },
         { key: 'fillingPeach', label: 'Filling Peach', unit: 'kg' },
         { key: 'fillingNanas', label: 'Filling Nanas', unit: 'kg' },
       ];
@@ -6340,7 +6441,7 @@ const { useState, useEffect } = React;
         { key: 'plastikUK35', label: 'Plastik UK 35', unit: 'pack' },
         { key: 'TrashBag', label: 'Trash Bag', unit: 'pack' },
         { key: 'strawberrySyrup', label: 'Strawberry Syrup', unit: 'kg' },
-        { key: 'konsentratStrawberry', label: 'Konsentrat Strawberry', unit: 'kg' },
+        { key: 'konsentratStrawberry', label: 'Konsentrat Strawberry', unit: 'pcs' },
         { key: 'konsentratBlueberry', label: 'Konsentrat Blueberry', unit: 'kg' },
         { key: 'cheeseFoamPowder', label: 'Cheese Foam Powder', unit: 'pack' },
         { key: 'kuraflexMerah', label: 'Kuraflex Merah', unit: 'pack' },
@@ -6369,12 +6470,25 @@ const { useState, useEffect } = React;
       // GrabFood, ShopeeFood), lalu dikirim ke Telegram sebagai berita acara.
       const BAP_TRANSAKSI_OPTIONS = ['EDC BCA', 'Qris BCA', 'Gofood', 'GrabFood', 'ShopeeFood'];
 
+      // Opsi metode pembayaran khusus untuk jenis "Payment Issue" (salah input metode bayar di
+      // POS) — dipisah dari BAP_TRANSAKSI_OPTIONS di atas karena di sini "Tunai" juga valid
+      // sebagai pilihan (baik sebagai metode yang salah dipakai maupun yang seharusnya dipakai).
+      const BAP_PAYMENT_ISSUE_METHODS = ['Tunai', 'EDC BCA', 'Qris BCA', 'Gofood', 'GrabFood', 'ShopeeFood'];
+
       const getEmptyBapForm = (dateStr = new Date().toISOString().split('T')[0]) => ({
         tanggal: dateStr,
+        // 'selisih' = Selisih Transaksi (form/format lama, tidak berubah), 'paymentIssue' = BAP
+        // Payment Issue (baru, 2026-08) untuk kasus salah input metode pembayaran di POS.
+        jenis: 'selisih',
         transaksi: BAP_TRANSAKSI_OPTIONS[0],
         nominalPos: '',
         nominalChannel: '',
         keterangan: '',
+        // --- Field khusus jenis 'paymentIssue' ---
+        noTransaksi: '',
+        nominalSalahInput: '',
+        penginputanSalah: BAP_PAYMENT_ISSUE_METHODS[0],
+        penginputanSeharusnya: BAP_PAYMENT_ISSUE_METHODS[1],
       });
 
       const [bapForm, setBapForm] = useState(() => getEmptyBapForm());
@@ -6649,7 +6763,6 @@ const { useState, useEffect } = React;
           numVal(buns.coklat) + 
           numVal(buns.vanilla) + 
           numVal(buns.peach) + 
-          numVal(buns.lemon) + 
           numVal(buns.raspberry) +
           numVal(buns.nanas);
         const boxTotal = numVal(buns.familyBox) * 6;
@@ -6703,7 +6816,6 @@ const { useState, useEffect } = React;
       const fillingCoklatUsedKg = (numVal(salesData.soldBuns.coklat) * 25) / 1000;
       const fillingVanillaUsedKg = (numVal(salesData.soldBuns.vanilla) * 25) / 1000;
       const fillingPeachUsedKg = (numVal(salesData.soldBuns.peach) * 25) / 1000;
-      const fillingLemonUsedKg = (numVal(salesData.soldBuns.lemon) * 25) / 1000;
       const fillingRaspberryUsedKg = (numVal(salesData.soldBuns.raspberry) * 25) / 1000;
       const fillingNanasUsedKg = (numVal(salesData.soldBuns.nanas) * 25) / 1000;
 
@@ -6830,7 +6942,6 @@ const { useState, useEffect } = React;
             coklat: 76,
             vanilla: 84,
             peach: 22,
-            lemon: 14,
             raspberry: 21,
             nanas: 18,
             familyBox: 60
@@ -6866,7 +6977,6 @@ const { useState, useEffect } = React;
           toppingTaro: 83,
           fillingCoklat: 31,
           fillingVanilla: 29,
-          fillingLemon: 28,
           fillingPeach: 28,
           fillingRaspberry: 24,
           fillingNanas: 20,
@@ -6931,7 +7041,6 @@ Original : ${sales.soldBuns.original || 0} pcs
 Coklat : ${sales.soldBuns.coklat || 0} pcs
 Vanilla : ${sales.soldBuns.vanilla || 0} pcs
 Peach : ${sales.soldBuns.peach || 0} pcs
-Lemon : ${sales.soldBuns.lemon || 0} pcs
 Raspberry : ${sales.soldBuns.raspberry || 0} pcs
 Nanas : ${sales.soldBuns.nanas || 0} pcs
 Family box : ${sales.soldBuns.familyBox || 0} box (${numVal(sales.soldBuns.familyBox) * 6} pcs)
@@ -6975,7 +7084,6 @@ Frozen Dough : ${inv.frozenDough || 0} pcs
 Topping Taro : ${inv.toppingTaro || 0} pcs (${(numVal(inv.toppingTaro) * 0.5).toFixed(1)} kg)
 Filling Coklat : ${inv.fillingCoklat || 0} pcs (${(numVal(inv.fillingCoklat) * 0.5).toFixed(1)} kg)
 Filling Vanilla : ${inv.fillingVanilla || 0} pcs (${(numVal(inv.fillingVanilla) * 0.5).toFixed(1)} kg)
-Filling Lemon : ${inv.fillingLemon || 0} pcs (${(numVal(inv.fillingLemon) * 0.5).toFixed(1)} kg)
 Filling Peach : ${inv.fillingPeach || 0} pcs (${(numVal(inv.fillingPeach) * 0.5).toFixed(1)} kg)
 Filling Raspberry : ${inv.fillingRaspberry || 0} pcs (${(numVal(inv.fillingRaspberry) * 0.5).toFixed(1)} kg)
 Filling Nanas : ${inv.fillingNanas || 0} pcs (${(numVal(inv.fillingNanas) * 0.5).toFixed(1)} kg)${customDoughLines ? '\n' + customDoughLines : ''}
@@ -6987,7 +7095,7 @@ Coklat Powder : ${inv.coklatPowder || 0} pack
 Whipping Cream : ${inv.whippingCream || 0} pack
 NDC Powder : ${inv.ndcPowder || 0} pack
 Cheese Powder : ${inv.cheesePowder || 0} pack
-Strawberry Konsentrat : ${inv.strawberryKonsentrat || 0} kg
+Strawberry Konsentrat : ${inv.strawberryKonsentrat || 0} pcs
 Strawberry Flavoured Syrup : ${inv.strawberrySyrup || 0} botol
 Blueberry Konsentrat : ${inv.blueberryKonsentrat || 0} pack${customIngredientsLines ? '\n' + customIngredientsLines : ''}
 
@@ -7338,12 +7446,24 @@ Daily inventory done✅
         ? `Selisih Rp. ${selisih.toLocaleString('id-ID')} dikarenakan sistem pada POS.`
         : '';
 
-      // Setiap nominal POS/Channel berubah, keterangan ikut menyesuaikan otomatis — TAPI hanya
-      // selama bapKeteranganAuto masih true (user belum pernah mengetik manual di kolom itu).
+      // Kalimat keterangan otomatis khusus jenis 'paymentIssue' (2026-08), mengikuti contoh:
+      // "Telah terjadi kesalahan input sebesar Rp. 88.000 di POS Tunai dan seharusnya di POS EDC BCA"
+      const buildAutoBapPaymentIssueKeterangan = (form) => {
+        const nominal = numVal(form.nominalSalahInput);
+        if (nominal <= 0) return '';
+        return `Telah terjadi kesalahan input sebesar Rp. ${nominal.toLocaleString('id-ID')} di POS ${form.penginputanSalah} dan seharusnya di POS ${form.penginputanSeharusnya}`;
+      };
+
+      // Setiap nominal POS/Channel (atau field payment issue) berubah, keterangan ikut
+      // menyesuaikan otomatis — TAPI hanya selama bapKeteranganAuto masih true (user belum
+      // pernah mengetik manual di kolom itu).
       useEffect(() => {
         if (!bapKeteranganAuto) return;
-        setBapForm(prev => ({ ...prev, keterangan: buildAutoBapKeterangan(bapSelisih) }));
-      }, [bapForm.nominalPos, bapForm.nominalChannel, bapKeteranganAuto]);
+        const auto = bapForm.jenis === 'paymentIssue'
+          ? buildAutoBapPaymentIssueKeterangan(bapForm)
+          : buildAutoBapKeterangan(bapSelisih);
+        setBapForm(prev => ({ ...prev, keterangan: auto }));
+      }, [bapForm.nominalPos, bapForm.nominalChannel, bapForm.jenis, bapForm.nominalSalahInput, bapForm.penginputanSalah, bapForm.penginputanSeharusnya, bapKeteranganAuto]);
 
       const handleBapKeteranganChange = (value) => {
         setBapKeteranganAuto(false); // user mulai mengetik manual, hentikan auto-update
@@ -7352,11 +7472,25 @@ Daily inventory done✅
 
       const handleResetBapKeteranganOtomatis = () => {
         setBapKeteranganAuto(true);
-        setBapForm(prev => ({ ...prev, keterangan: buildAutoBapKeterangan(bapSelisih) }));
+        const auto = bapForm.jenis === 'paymentIssue'
+          ? buildAutoBapPaymentIssueKeterangan(bapForm)
+          : buildAutoBapKeterangan(bapSelisih);
+        setBapForm(prev => ({ ...prev, keterangan: auto }));
       };
 
       const generateBapReportString = (form) => {
         const formattedDate = formatIndonesianDate(form.tanggal);
+        if (form.jenis === 'paymentIssue') {
+          // Format sesuai contoh yang diminta persis (bullet "-", "Rp" tanpa titik di field
+          // nominal, "Rp." dengan titik di dalam kalimat Keterangan, emoji 🙏🏼).
+          let text = `*${escapeTelegramMarkdown(storeName || '-')}*\nTanggal : ${formattedDate}\n\n`;
+          text += `- Transaksi : ${form.noTransaksi || ''}\n`;
+          text += `- Nominal salah input : Rp ${numVal(form.nominalSalahInput).toLocaleString('id-ID')}\n`;
+          text += `- Penginputan : ${form.penginputanSalah}\n`;
+          text += `- Keterangan : ${(form.keterangan || '').trim()}\n`;
+          text += `\nTerima kasih🙏🏼`;
+          return text;
+        }
         const selisih = Math.abs(numVal(form.nominalPos) - numVal(form.nominalChannel));
         let text = `*${escapeTelegramMarkdown(storeName || '-')}*\nTanggal: ${formattedDate}\n\n`;
         text += `Transaksi: ${form.transaksi}\n`;
@@ -7380,16 +7514,32 @@ Daily inventory done✅
           showToast('⚠️ Tanggal wajib diisi.');
           return;
         }
-        if (numVal(bapForm.nominalPos) <= 0 && numVal(bapForm.nominalChannel) <= 0) {
+        if (bapForm.jenis === 'paymentIssue') {
+          if (numVal(bapForm.nominalSalahInput) <= 0) {
+            showToast('⚠️ Isi Nominal salah input sebelum menyimpan.');
+            return;
+          }
+        } else if (numVal(bapForm.nominalPos) <= 0 && numVal(bapForm.nominalChannel) <= 0) {
           showToast('⚠️ Isi minimal salah satu nominal (POS atau channel) sebelum menyimpan.');
           return;
         }
         setIsSavingBap(true);
         try {
           const now = Date.now();
-          const payload = {
+          const payload = bapForm.jenis === 'paymentIssue' ? {
             id: now.toString(),
             tanggal: bapForm.tanggal,
+            jenis: 'paymentIssue',
+            noTransaksi: (bapForm.noTransaksi || '').trim(),
+            nominalSalahInput: numVal(bapForm.nominalSalahInput),
+            penginputanSalah: bapForm.penginputanSalah,
+            penginputanSeharusnya: bapForm.penginputanSeharusnya,
+            keterangan: (bapForm.keterangan || '').trim(),
+            createdAt: now,
+          } : {
+            id: now.toString(),
+            tanggal: bapForm.tanggal,
+            jenis: 'selisih',
             transaksi: bapForm.transaksi,
             nominalPos: numVal(bapForm.nominalPos),
             nominalChannel: numVal(bapForm.nominalChannel),
@@ -7441,12 +7591,18 @@ Daily inventory done✅
       };
 
       const loadBapToActive = (item) => {
+        const jenis = item.jenis || 'selisih'; // data lama sebelum fitur ini ada = 'selisih'
         setBapForm({
           tanggal: item.tanggal,
-          transaksi: item.transaksi,
-          nominalPos: item.nominalPos,
-          nominalChannel: item.nominalChannel,
+          jenis,
+          transaksi: item.transaksi || BAP_TRANSAKSI_OPTIONS[0],
+          nominalPos: item.nominalPos || '',
+          nominalChannel: item.nominalChannel || '',
           keterangan: item.keterangan || '',
+          noTransaksi: item.noTransaksi || '',
+          nominalSalahInput: item.nominalSalahInput || '',
+          penginputanSalah: item.penginputanSalah || BAP_PAYMENT_ISSUE_METHODS[0],
+          penginputanSeharusnya: item.penginputanSeharusnya || BAP_PAYMENT_ISSUE_METHODS[1],
         });
         setBapKeteranganAuto(false); // data lama dianggap sudah final, jangan ditimpa auto-text
         setActiveTab('bap');
@@ -7659,7 +7815,14 @@ Daily inventory done✅
       const handleWasteFotoFileChange = async (e) => {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
-        if (!file.type.startsWith('image/')) {
+        // FIX (2026-08): jangan cuma andalkan file.type — di beberapa HP (terutama sebagian
+        // Android & foto HEIC dari iPhone) nilainya kosong/tidak dikenali padahal filenya foto
+        // yang valid, sehingga selama ini ditolak keliru dengan pesan "harus berupa foto/gambar".
+        // Pola fallback berdasarkan ekstensi ini sama seperti yang sudah dipakai di upload SOP
+        // (lihat SOP_ALLOWED_IMAGE_EXT / getFileExtension di atas).
+        const isImageByMime = file.type.startsWith('image/');
+        const isImageByExt = SOP_ALLOWED_IMAGE_EXT.includes(getFileExtension(file.name));
+        if (!isImageByMime && !isImageByExt) {
           showToast('⚠️ File harus berupa foto/gambar.');
           e.target.value = '';
           return;
@@ -7796,7 +7959,12 @@ Daily inventory done✅
       const handleBuktiFotoFileChange = async (e) => {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
-        if (!file.type.startsWith('image/')) {
+        // FIX (2026-08): sama seperti handleWasteFotoFileChange — tambahkan fallback deteksi
+        // gambar lewat ekstensi file, supaya foto dari HP yang tidak mengirim file.type dengan
+        // benar tidak ditolak keliru.
+        const isImageByMime = file.type.startsWith('image/');
+        const isImageByExt = SOP_ALLOWED_IMAGE_EXT.includes(getFileExtension(file.name));
+        if (!isImageByMime && !isImageByExt) {
           showToast('⚠️ File harus berupa foto/gambar.');
           e.target.value = '';
           return;
@@ -8675,10 +8843,6 @@ Daily inventory done✅
                         <span className="text-xs font-bold text-slate-700">Filling Peach</span>
                         <span className="text-xs font-bold bg-orange-100 text-orange-900 px-2.5 py-0.5 rounded-md">{fillingPeachUsedKg.toFixed(3)} kg</span>
                       </div>
-                      <div className="flex justify-between items-center bg-lime-50 p-2 rounded-lg">
-                        <span className="text-xs font-bold text-slate-700">Filling Lemon</span>
-                        <span className="text-xs font-bold bg-lime-100 text-lime-900 px-2.5 py-0.5 rounded-md">{fillingLemonUsedKg.toFixed(3)} kg</span>
-                      </div>
                       <div className="flex justify-between items-center bg-pink-50 p-2 rounded-lg">
                         <span className="text-xs font-bold text-slate-700">Filling Raspberry</span>
                         <span className="text-xs font-bold bg-pink-100 text-pink-900 px-2.5 py-0.5 rounded-md">{fillingRaspberryUsedKg.toFixed(3)} kg</span>
@@ -8841,10 +9005,6 @@ Daily inventory done✅
                     <div>
                       <label htmlFor="salesData_soldBuns_peach" className="block text-xs font-semibold text-slate-600 mb-1">Peach</label>
                       <input id="salesData_soldBuns_peach" type="number" value={salesData.soldBuns.peach} onChange={(e) => setSalesData({ ...salesData, soldBuns: { ...salesData.soldBuns, peach: e.target.value } })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg" placeholder="0" />
-                    </div>
-                    <div>
-                      <label htmlFor="salesData_soldBuns_lemon" className="block text-xs font-semibold text-slate-600 mb-1">Lemon</label>
-                      <input id="salesData_soldBuns_lemon" type="number" value={salesData.soldBuns.lemon} onChange={(e) => setSalesData({ ...salesData, soldBuns: { ...salesData.soldBuns, lemon: e.target.value } })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg" placeholder="0" />
                     </div>
                     <div>
                       <label htmlFor="salesData_soldBuns_raspberry" className="block text-xs font-semibold text-slate-600 mb-1">Raspberry</label>
@@ -9062,10 +9222,6 @@ Daily inventory done✅
                       <input id="inventoryData_fillingVanilla" type="number" value={inventoryData.fillingVanilla} onChange={(e) => setInventoryData({ ...inventoryData, fillingVanilla: e.target.value })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm" placeholder="0" />
                     </div>
                     <div>
-                      <label htmlFor="inventoryData_fillingLemon" className="block text-xs font-semibold text-slate-600 mb-1">Filling Lemon (pcs)</label>
-                      <input id="inventoryData_fillingLemon" type="number" value={inventoryData.fillingLemon} onChange={(e) => setInventoryData({ ...inventoryData, fillingLemon: e.target.value })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm" placeholder="0" />
-                    </div>
-                    <div>
                       <label htmlFor="inventoryData_fillingPeach" className="block text-xs font-semibold text-slate-600 mb-1">Filling Peach (pcs)</label>
                       <input id="inventoryData_fillingPeach" type="number" value={inventoryData.fillingPeach} onChange={(e) => setInventoryData({ ...inventoryData, fillingPeach: e.target.value })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm" placeholder="0" />
                     </div>
@@ -9123,7 +9279,7 @@ Daily inventory done✅
                       <input id="inventoryData_cheesePowder" type="number" value={inventoryData.cheesePowder} onChange={(e) => setInventoryData({ ...inventoryData, cheesePowder: e.target.value })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm" placeholder="0" />
                     </div>
                     <div>
-                      <label htmlFor="inventoryData_strawberryKonsentrat" className="block text-xs font-semibold text-slate-600 mb-1">Strawberry Kons (kg)</label>
+                      <label htmlFor="inventoryData_strawberryKonsentrat" className="block text-xs font-semibold text-slate-600 mb-1">Strawberry Kons (pcs)</label>
                       <input id="inventoryData_strawberryKonsentrat" type="number" value={inventoryData.strawberryKonsentrat} onChange={(e) => setInventoryData({ ...inventoryData, strawberryKonsentrat: e.target.value })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm" placeholder="0" />
                     </div>
                     <div>
@@ -9492,52 +9648,136 @@ Daily inventory done✅
                     </div>
                   </div>
 
-                  {/* Transaksi */}
+                  {/* Jenis Laporan BAP — FITUR BARU (2026-08): Selisih Transaksi (lama) atau
+                      Payment Issue (baru, salah input metode pembayaran di POS) */}
                   <div>
-                    <label htmlFor="transaksi-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Transaksi</label>
-                    <select
-                      id="transaksi-bap"
-                      value={bapForm.transaksi}
-                      onChange={(e) => setBapForm({ ...bapForm, transaksi: e.target.value })}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-                    >
-                      {BAP_TRANSAKSI_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Nominal POS & Nominal Channel */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="nominal-pos-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Nominal POS (Rp)</label>
-                      <input
-                        id="nominal-pos-bap"
-                        type="number"
-                        value={bapForm.nominalPos}
-                        onChange={(e) => setBapForm({ ...bapForm, nominalPos: e.target.value })}
-                        placeholder="0"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="nominal-channel-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Nominal {bapForm.transaksi} (Rp)</label>
-                      <input
-                        id="nominal-channel-bap"
-                        type="number"
-                        value={bapForm.nominalChannel}
-                        onChange={(e) => setBapForm({ ...bapForm, nominalChannel: e.target.value })}
-                        placeholder="0"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                      />
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">Jenis Laporan</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBapForm({ ...bapForm, jenis: 'selisih' })}
+                        className={`text-xs font-bold py-2.5 rounded-xl border transition-all ${bapForm.jenis !== 'paymentIssue' ? 'bg-purple-800 text-white border-purple-800' : 'bg-white text-slate-600 border-slate-300'}`}
+                      >
+                        Selisih Transaksi
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBapForm({ ...bapForm, jenis: 'paymentIssue' })}
+                        className={`text-xs font-bold py-2.5 rounded-xl border transition-all ${bapForm.jenis === 'paymentIssue' ? 'bg-purple-800 text-white border-purple-800' : 'bg-white text-slate-600 border-slate-300'}`}
+                      >
+                        Payment Issue
+                      </button>
                     </div>
                   </div>
 
-                  {/* Selisih (otomatis, tidak bisa diedit) */}
-                  <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${bapSelisih > 0 ? 'bg-rose-50 border border-rose-100' : 'bg-emerald-50 border border-emerald-100'}`}>
-                    <span className={`text-xs font-bold ${bapSelisih > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>Selisih</span>
-                    <span className={`text-sm font-extrabold ${bapSelisih > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>Rp. {bapSelisih.toLocaleString('id-ID')}</span>
-                  </div>
+                  {bapForm.jenis === 'paymentIssue' ? (
+                    <React.Fragment>
+                      {/* No. Transaksi (opsional) */}
+                      <div>
+                        <label htmlFor="no-transaksi-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Transaksi (No. Transaksi/Referensi, boleh dikosongkan)</label>
+                        <input
+                          id="no-transaksi-bap"
+                          type="text"
+                          value={bapForm.noTransaksi}
+                          onChange={(e) => setBapForm({ ...bapForm, noTransaksi: e.target.value })}
+                          placeholder="Contoh: TRX-12345 (opsional)"
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                        />
+                      </div>
+
+                      {/* Nominal salah input */}
+                      <div>
+                        <label htmlFor="nominal-salah-input-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Nominal Salah Input (Rp)</label>
+                        <input
+                          id="nominal-salah-input-bap"
+                          type="number"
+                          value={bapForm.nominalSalahInput}
+                          onChange={(e) => setBapForm({ ...bapForm, nominalSalahInput: e.target.value })}
+                          placeholder="0"
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                        />
+                      </div>
+
+                      {/* Penginputan (salah dipakai) & Seharusnya (benar) */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="penginputan-salah-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Penginputan (yang salah dipakai)</label>
+                          <select
+                            id="penginputan-salah-bap"
+                            value={bapForm.penginputanSalah}
+                            onChange={(e) => setBapForm({ ...bapForm, penginputanSalah: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                          >
+                            {BAP_PAYMENT_ISSUE_METHODS.map(opt => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label htmlFor="penginputan-seharusnya-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Seharusnya (metode yang benar)</label>
+                          <select
+                            id="penginputan-seharusnya-bap"
+                            value={bapForm.penginputanSeharusnya}
+                            onChange={(e) => setBapForm({ ...bapForm, penginputanSeharusnya: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                          >
+                            {BAP_PAYMENT_ISSUE_METHODS.map(opt => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </React.Fragment>
+                  ) : (
+                    <React.Fragment>
+                      {/* Transaksi */}
+                      <div>
+                        <label htmlFor="transaksi-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Transaksi</label>
+                        <select
+                          id="transaksi-bap"
+                          value={bapForm.transaksi}
+                          onChange={(e) => setBapForm({ ...bapForm, transaksi: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                        >
+                          {BAP_TRANSAKSI_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Nominal POS & Nominal Channel */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="nominal-pos-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Nominal POS (Rp)</label>
+                          <input
+                            id="nominal-pos-bap"
+                            type="number"
+                            value={bapForm.nominalPos}
+                            onChange={(e) => setBapForm({ ...bapForm, nominalPos: e.target.value })}
+                            placeholder="0"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="nominal-channel-bap" className="block text-xs font-semibold text-slate-600 mb-1.5">Nominal {bapForm.transaksi} (Rp)</label>
+                          <input
+                            id="nominal-channel-bap"
+                            type="number"
+                            value={bapForm.nominalChannel}
+                            onChange={(e) => setBapForm({ ...bapForm, nominalChannel: e.target.value })}
+                            placeholder="0"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Selisih (otomatis, tidak bisa diedit) */}
+                      <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${bapSelisih > 0 ? 'bg-rose-50 border border-rose-100' : 'bg-emerald-50 border border-emerald-100'}`}>
+                        <span className={`text-xs font-bold ${bapSelisih > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>Selisih</span>
+                        <span className={`text-sm font-extrabold ${bapSelisih > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>Rp. {bapSelisih.toLocaleString('id-ID')}</span>
+                      </div>
+                    </React.Fragment>
+                  )}
 
                   {/* Keterangan (otomatis terisi, tetap bisa diedit bebas) */}
                   <div>
@@ -9554,7 +9794,7 @@ Daily inventory done✅
                       value={bapForm.keterangan}
                       onChange={(e) => handleBapKeteranganChange(e.target.value)}
                       rows={2}
-                      placeholder="Contoh: Selisih Rp. 200 dikarenakan sistem pada POS."
+                      placeholder={bapForm.jenis === 'paymentIssue' ? 'Contoh: Telah terjadi kesalahan input sebesar Rp. 88.000 di POS Tunai dan seharusnya di POS EDC BCA' : 'Contoh: Selisih Rp. 200 dikarenakan sistem pada POS.'}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                     />
                   </div>
@@ -9601,11 +9841,22 @@ Daily inventory done✅
                       {bapHistoryList.map(item => (
                         <div key={item.firebaseKey} className="py-3 flex justify-between items-center gap-2">
                           <div className="min-w-0">
-                            <h4 className="font-bold text-slate-700 text-sm">{formatIndonesianDate(item.tanggal)} · {item.transaksi}</h4>
-                            <p className="text-xs text-slate-600 truncate">
-                              POS Rp {numVal(item.nominalPos).toLocaleString('id-ID')} vs {item.transaksi} Rp {numVal(item.nominalChannel).toLocaleString('id-ID')}
-                              {numVal(item.selisih) > 0 && <span className="text-rose-500 font-semibold"> · Selisih Rp {numVal(item.selisih).toLocaleString('id-ID')}</span>}
-                            </p>
+                            {item.jenis === 'paymentIssue' ? (
+                              <React.Fragment>
+                                <h4 className="font-bold text-slate-700 text-sm">{formatIndonesianDate(item.tanggal)} · Payment Issue</h4>
+                                <p className="text-xs text-slate-600 truncate">
+                                  Salah input Rp {numVal(item.nominalSalahInput).toLocaleString('id-ID')} · {item.penginputanSalah} → seharusnya {item.penginputanSeharusnya}
+                                </p>
+                              </React.Fragment>
+                            ) : (
+                              <React.Fragment>
+                                <h4 className="font-bold text-slate-700 text-sm">{formatIndonesianDate(item.tanggal)} · {item.transaksi}</h4>
+                                <p className="text-xs text-slate-600 truncate">
+                                  POS Rp {numVal(item.nominalPos).toLocaleString('id-ID')} vs {item.transaksi} Rp {numVal(item.nominalChannel).toLocaleString('id-ID')}
+                                  {numVal(item.selisih) > 0 && <span className="text-rose-500 font-semibold"> · Selisih Rp {numVal(item.selisih).toLocaleString('id-ID')}</span>}
+                                </p>
+                              </React.Fragment>
+                            )}
                           </div>
                           <div className="flex items-center space-x-2 flex-shrink-0">
                             <button onClick={() => loadBapToActive(item)} className="bg-purple-50 text-purple-700 text-xs font-bold px-2.5 py-1.5 rounded-lg border border-purple-100">Buka</button>
@@ -10229,8 +10480,13 @@ Daily inventory done✅
                     </div>
                     <button type="submit" className="w-full bg-purple-800 hover:bg-purple-900 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
                       <i data-lucide="printer" className="w-4 h-4"></i>
-                      <span>Cetak Label Premix</span>
+                      <span>Cetak Langsung (RawBT)</span>
                     </button>
+                    <button type="button" onClick={handlePremixPrintDialog} className="w-full bg-white hover:bg-slate-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2">
+                      <i data-lucide="monitor" className="w-3.5 h-3.5"></i>
+                      <span>Cetak via Dialog Browser (PDF/printer lain)</span>
+                    </button>
+                    <p className="text-[11px] text-slate-400 text-center -mt-1">"Cetak Langsung" butuh app RawBT terpasang & printer sudah di-pairing.</p>
                   </form>
                 )}
 
@@ -10277,8 +10533,13 @@ Daily inventory done✅
 
                     <button onClick={handleStockNotePrint} disabled={stockNoteItems.length === 0} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
                       <i data-lucide="printer" className="w-4 h-4"></i>
-                      <span>Cetak Catatan Stok</span>
+                      <span>Cetak Langsung (RawBT)</span>
                     </button>
+                    <button type="button" onClick={handleStockNotePrintDialog} disabled={stockNoteItems.length === 0} className="w-full bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2">
+                      <i data-lucide="monitor" className="w-3.5 h-3.5"></i>
+                      <span>Cetak via Dialog Browser (PDF/printer lain)</span>
+                    </button>
+                    <p className="text-[11px] text-slate-400 text-center -mt-1">"Cetak Langsung" butuh app RawBT terpasang & printer sudah di-pairing.</p>
                   </div>
                 )}
 

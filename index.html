@@ -8398,24 +8398,21 @@ Daily inventory done✅
           });
           text += `\nTerima Kasih 🙏🏻`;
 
-          const response = await fetchWithRetry(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: config.telegramChatId,
-              text: text,
-              parse_mode: 'Markdown'
-            })
-          });
-          const result = await response.json();
-          if (result.ok) {
+          // FIX (2026-08-23): sebelumnya pakai fetchWithRetry manual + catch generik, sehingga
+          // apa pun penyebab kegagalan aslinya (Bot Token/Chat ID salah, ditolak Telegram, dll)
+          // SELALU ditampilkan sebagai "Koneksi bermasalah saat mengirim rekap." — pesan yang
+          // menyesatkan kalau penyebabnya sebenarnya bukan soal koneksi internet. Sekarang pakai
+          // helper terpusat sendTelegramMessage (sudah dipakai fitur BAP dkk) yang selalu
+          // mengembalikan pesan error asli dari Telegram/browser, bukan yang digeneralisir.
+          const res = await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, text);
+          if (res.ok) {
             showToast('Rekap total berhasil dikirim ke Telegram! 🚀');
           } else {
-            showToast(`Gagal: ${result.description}`);
+            showToast(`Gagal mengirim rekap: ${res.error}`);
           }
         } catch (error) {
           console.error(error);
-          showToast('Koneksi bermasalah saat mengirim rekap.');
+          showToast(`Gagal mengirim rekap ke Telegram: ${error.message || 'Cek koneksi internet.'}`);
         } finally {
           setSendingCategory(null);
         }

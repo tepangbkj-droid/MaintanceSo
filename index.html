@@ -8373,6 +8373,28 @@ Daily inventory done✅
         }
       };
 
+      // Susun rincian per SUB-KATEGORI (FD Nempel, Reject Thawing, Dough Pecah, dst) beserta
+      // keterangan-nya untuk grup "Bun Rijek" — dipakai di rekap "Kirim Semua Total" (2026-08-23)
+      // supaya rekap tidak cuma menampilkan total gabungan "Bun Rijek", tapi juga pecahan tiap
+      // sub-kategorinya + alasan/keterangan foto pada sub-kategori itu.
+      const buildRijekSubcategoryBreakdownText = (items) => {
+        const bySub = {};
+        items.forEach(it => {
+          // Data lama yang kategorinya belum spesifik (mis. masih 'bunRijek' polos) dikelompokkan
+          // ke 'fdNempel' sebagai sub-kategori default, supaya tetap ikut ter-rekap (bukan hilang).
+          const subKey = RIJEK_SUB_CATEGORIES[it.kategori] ? it.kategori : 'fdNempel';
+          if (!bySub[subKey]) bySub[subKey] = { total: 0, keteranganSet: new Set() };
+          bySub[subKey].total += numVal(it.jumlah);
+          if (it.keterangan && it.keterangan.trim()) bySub[subKey].keteranganSet.add(it.keterangan.trim());
+        });
+        return Object.keys(bySub).map(subKey => {
+          const subInfo = RIJEK_SUB_CATEGORIES[subKey] || RIJEK_SUB_CATEGORIES.fdNempel;
+          const data = bySub[subKey];
+          const ketText = data.keteranganSet.size > 0 ? ` - ${Array.from(data.keteranganSet).join('; ')}` : '';
+          return `  • ${subInfo.short} : ${data.total} pcs${ketText}`;
+        }).join('\n');
+      };
+
       // Kirim rekap keseluruhan (semua kategori) sekaligus ke Telegram, hanya teks total per kategori
       const handleSendAllCategoriesRecapToTelegram = async () => {
         if (!config.telegramBotToken || !config.telegramChatId) {
@@ -8391,10 +8413,20 @@ Daily inventory done✅
           showToast('Mengirim rekap total semua kategori... ✈️');
           const todayStr = formatIndonesianDate(wasteFotoViewDate);
           let text = `*REKAP TOTAL FOTO WASTE / RIJEK*\n${todayStr}\n\n`;
-          Object.keys(WASTE_CATEGORIES).forEach(key => {
-            const catInfo = WASTE_CATEGORIES[key];
-            const group = wasteFotoGroups[key];
-            text += `${catInfo.short} : *${group.total} pcs* (${group.items.length} foto)\n`;
+          // BUGFIX (2026-08-23): sebelumnya loop di sini pakai Object.keys(WASTE_CATEGORIES)
+          // yang punya 8 entri (termasuk 5 sub-kategori rijek seperti 'fdNempel' dst), padahal
+          // wasteFotoGroups HANYA berisi 3 grup gabungan: 'bunRijek', 'bunWaste', 'rijekBarang'
+          // (lihat groupWasteFotosByCategory). Akibatnya wasteFotoGroups['fdNempel'] dkk selalu
+          // undefined dan .total-nya crash — persis error "Cannot read properties of undefined
+          // (reading 'total')" yang muncul. Sekarang loop memakai 3 grup yang benar-benar ada,
+          // dan khusus grup Bun Rijek ditambah rincian per sub-kategori + keterangannya.
+          const RECAP_GROUP_LABELS = { bunRijek: 'Bun Rijek', bunWaste: 'Bun Waste', rijekBarang: 'Rijek Barang' };
+          Object.keys(RECAP_GROUP_LABELS).forEach(groupKey => {
+            const group = wasteFotoGroups[groupKey] || { items: [], total: 0 };
+            text += `${RECAP_GROUP_LABELS[groupKey]} : *${group.total} pcs* (${group.items.length} foto)\n`;
+            if (groupKey === 'bunRijek' && group.items.length > 0) {
+              text += buildRijekSubcategoryBreakdownText(group.items) + '\n';
+            }
           });
           text += `\nTerima Kasih 🙏🏻`;
 

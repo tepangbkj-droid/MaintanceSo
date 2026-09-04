@@ -6152,6 +6152,16 @@ const { useState, useEffect } = React;
 
       // ----- Best Seller -----
       const BUN_FLAVOR_LABELS = { original: 'Original', coklat: 'Coklat', vanilla: 'Vanilla', peach: 'Peach', raspberry: 'Raspberry', nanas: 'Nanas', familyBox: 'Family Box' };
+      // Rincian channel pendapatan (2026-08) -- field ini SUDAH ADA & diisi toko lewat
+      // Laporan Penjualan (salesData.financials), leader di sini cuma menampilkannya ulang.
+      const FINANCIALS_BREAKDOWN_FIELDS = [
+        { key: 'value', label: 'Value' },
+        { key: 'cash', label: 'Tunai' },
+        { key: 'edc', label: 'EDC' },
+        { key: 'grab', label: 'GrabFood' },
+        { key: 'shopeeFood', label: 'ShopeeFood' },
+        { key: 'goFood', label: 'GoFood' },
+      ];
       const [bestSellerRangeDays, setBestSellerRangeDays] = useState(7);
       const bestSellerRanking = React.useMemo(() => {
         const totals = {};
@@ -6227,6 +6237,44 @@ const { useState, useEffect } = React;
         };
       }, [historyRecent, selectedDate]);
 
+      const [sendingSaran, setSendingSaran] = useState(false);
+      const handleSendSaranRotiMatang = async () => {
+        if (saranRotiMatang.saran == null) return;
+        setSendingSaran(true);
+        try {
+          const text = `*SARAN ROTI MATANG HARI INI*\n${storeName || storeId}\n${formatIndonesianDate(selectedDate)}\n\n`
+            + `Saran: *${saranRotiMatang.saran} pcs*\n\n`
+            + `Berdasarkan penjualan ${formatIndonesianDate(saranRotiMatang.tanggalAcuan)} (${saranRotiMatang.baseQty} pcs) + 20%`;
+          const ok = await sendToStoreTelegram(text);
+          if (ok) showToast('Saran Roti Matang terkirim ke Telegram! 🚀');
+        } finally {
+          setSendingSaran(false);
+        }
+      };
+
+      // ----- Tren Penjualan (Bar chart naik/turun) -----
+      // Dipakai untuk menjawab "naik turunnya sales" -- BUKAN candlestick OHLC asli (data
+      // pendapatan harian toko cuma satu angka per hari, tidak ada open/high/low/close),
+      // jadi dipakai bar berwarna: HIJAU kalau pendapatan hari itu lebih tinggi dari hari
+      // sebelumnya, MERAH kalau lebih rendah -- pola naik-turunnya tetap kelihatan jelas.
+      const salesTrendBars = React.useMemo(() => {
+        const days = [];
+        const today = new Date(selectedDate);
+        for (let i = 13; i >= 0; i--) {
+          const d = new Date(today);
+          d.setDate(d.getDate() - i);
+          const key = d.toISOString().split('T')[0];
+          const rec = historyRecent[key];
+          days.push({ date: key, value: rec ? numVal(rec.revenue) : 0 });
+        }
+        const maxVal = Math.max(1, ...days.map(d => d.value));
+        return days.map((d, idx) => ({
+          ...d,
+          heightPct: Math.round((d.value / maxVal) * 100),
+          trend: idx === 0 ? 'flat' : (d.value > days[idx - 1].value ? 'up' : d.value < days[idx - 1].value ? 'down' : 'flat'),
+        }));
+      }, [historyRecent, selectedDate]);
+
       // ==========================================
       // TRANSFER BARANG IN/OUT
       // ==========================================
@@ -6293,6 +6341,11 @@ const { useState, useEffect } = React;
       // JADWAL ABSENSI (+ kirim otomatis harian ke Telegram)
       // ==========================================
       const JADWAL_STATUS_OPTIONS = ['Hadir', 'Libur', 'Izin', 'Sakit', 'Cuti'];
+      const JADWAL_ROLE_OPTIONS = [
+        'Kasir', 'Beverage', 'Checker', 'Filler', 'Produksi',
+        'Kasir + Checker + Beverage', 'Kasir + Checker', 'Kasir + Beverage',
+        'Beverage + Checker', 'Checker + Filler', 'Filler + Produksi',
+      ];
       const JADWAL_STATUS_COLOR = {
         Hadir: 'bg-emerald-50 text-emerald-700 border-emerald-100',
         Libur: 'bg-slate-100 text-slate-600 border-slate-200',
@@ -6302,8 +6355,15 @@ const { useState, useEffect } = React;
       };
       const [jadwalList, setJadwalList] = useState([]);
       const [loadingJadwal, setLoadingJadwal] = useState(true);
-      const [jadwalForm, setJadwalForm] = useState({ nama: '', role: '', status: 'Hadir', jamMasuk: '', jamPulang: '' });
+      const [jadwalForm, setJadwalForm] = useState({ tanggal: selectedDate, nama: '', role: JADWAL_ROLE_OPTIONS[0], status: 'Hadir', jamMasuk: '', jamPulang: '' });
       const [savingJadwal, setSavingJadwal] = useState(false);
+
+      // Samakan tanggal default di form Tambah Jadwal dengan tanggal yang lagi dilihat di
+      // DateNav -- tapi tetap bisa diganti manual di dalam form itu sendiri (mis. mau
+      // langsung mengisi jadwal untuk beberapa hari ke depan tanpa gonta-ganti DateNav).
+      useEffect(() => {
+        setJadwalForm(prev => ({ ...prev, tanggal: selectedDate }));
+      }, [selectedDate]);
 
       useEffect(() => {
         setLoadingJadwal(true);
@@ -6323,19 +6383,28 @@ const { useState, useEffect } = React;
           showToast('⚠️ Isi nama karyawan terlebih dahulu.');
           return;
         }
+        if (!jadwalForm.tanggal) {
+          showToast('⚠️ Pilih tanggal jadwal terlebih dahulu.');
+          return;
+        }
         setSavingJadwal(true);
         try {
           const entryId = Date.now().toString();
           const payload = {
             nama: jadwalForm.nama.trim(),
-            role: jadwalForm.role.trim(),
+            role: jadwalForm.role,
             status: jadwalForm.status,
             jamMasuk: jadwalForm.status === 'Hadir' ? jadwalForm.jamMasuk : '',
             jamPulang: jadwalForm.status === 'Hadir' ? jadwalForm.jamPulang : '',
             createdAt: Date.now(),
           };
-          await restSet(db.ref(`${storeBase}/schedule/${selectedDate}/${entryId}`), payload);
-          setJadwalForm({ nama: '', role: '', status: 'Hadir', jamMasuk: '', jamPulang: '' });
+          await restSet(db.ref(`${storeBase}/schedule/${jadwalForm.tanggal}/${entryId}`), payload);
+          // Kalau leader mengisi untuk tanggal yang SAMA dengan yang sedang dilihat, langsung
+          // kelihatan di daftar bawah tanpa perlu navigasi. Kalau tanggalnya beda (mis. lagi
+          // ngisi jadwal 3 hari ke depan), otomatis pindahkan DateNav ke tanggal itu supaya
+          // leader langsung lihat konfirmasinya tersimpan.
+          setSelectedDate(jadwalForm.tanggal);
+          setJadwalForm(prev => ({ tanggal: prev.tanggal, nama: '', role: JADWAL_ROLE_OPTIONS[0], status: 'Hadir', jamMasuk: '', jamPulang: '' }));
           showToast('Jadwal tersimpan! ✅');
         } catch (err) {
           showToast(`Gagal menyimpan: ${err && err.message ? err.message : 'periksa koneksi internet Anda'}`);
@@ -6379,7 +6448,7 @@ const { useState, useEffect } = React;
 
       // Pengaturan kirim otomatis harian — dieksekusi server-side (Cron Trigger Cloudflare,
       // lihat sendDailyScheduleToTelegram di worker.js), leader cuma atur ON/OFF & jam kirim.
-      const [scheduleSettings, setScheduleSettings] = useState({ autoSendEnabled: false, sendHour: 6 });
+      const [scheduleSettings, setScheduleSettings] = useState({ autoSendEnabled: false });
       useEffect(() => {
         const ref = db.ref(`${storeBase}/scheduleSettings`);
         return bindLiveValue(ref, (snap) => setScheduleSettings(prev => ({ ...prev, ...(snap.val() || {}) })));
@@ -6514,6 +6583,23 @@ const { useState, useEffect } = React;
                       <button onClick={handleSaveRevenue} disabled={savingRevenue} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
                         {savingRevenue ? 'Menyimpan...' : 'Simpan Pendapatan'}
                       </button>
+
+                      {/* Rincian per channel (2026-08) — DIISI TOKO lewat Laporan Penjualan,
+                          leader HANYA memantau di sini, tidak bisa mengedit (tidak ada input,
+                          murni tampilan) — sesuai permintaan eksplisit. */}
+                      {historyForDate && historyForDate.sales && historyForDate.sales.financials && (
+                        <div className="pt-3 border-t border-slate-100 space-y-1.5">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Rincian (diisi toko, lihat saja)</p>
+                          {FINANCIALS_BREAKDOWN_FIELDS.map(({ key, label }) => (
+                            historyForDate.sales.financials[key] !== undefined && historyForDate.sales.financials[key] !== '' && (
+                              <div key={key} className="flex items-center justify-between">
+                                <span className="text-xs text-slate-500">{label}</span>
+                                <span className="text-sm font-semibold text-slate-700">Rp {numVal(historyForDate.sales.financials[key]).toLocaleString('id-ID')}</span>
+                              </div>
+                            )
+                          ))}
+                        </div>
+                      )}
                     </React.Fragment>
                   )}
                 </div>
@@ -6578,7 +6664,7 @@ const { useState, useEffect } = React;
                 </div>
 
                 {/* Saran Roti Matang */}
-                <div className="bg-gradient-to-br from-purple-800 to-indigo-900 text-white rounded-2xl p-4 space-y-2">
+                <div className="bg-gradient-to-br from-purple-800 to-indigo-900 text-white rounded-2xl p-4 space-y-3">
                   <h2 className="font-bold flex items-center gap-2"><i data-lucide="croissant" className="w-4 h-4"></i> Saran Roti Matang Hari Ini</h2>
                   {loadingRecent ? (
                     <p className="text-sm text-purple-200">Memuat data...</p>
@@ -6588,6 +6674,43 @@ const { useState, useEffect } = React;
                     <React.Fragment>
                       <p className="text-4xl font-extrabold">{saranRotiMatang.saran} <span className="text-base font-semibold text-purple-200">pcs</span></p>
                       <p className="text-[11px] text-purple-200">Berdasarkan {formatIndonesianDate(saranRotiMatang.tanggalAcuan)} ({saranRotiMatang.baseQty} pcs terjual) + 20%</p>
+                      <button onClick={handleSendSaranRotiMatang} disabled={sendingSaran} className="w-full bg-white/15 hover:bg-white/25 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg flex items-center justify-center gap-1.5">
+                        <i data-lucide="send" className="w-3.5 h-3.5"></i>
+                        {sendingSaran ? 'Mengirim...' : 'Kirim ke Telegram'}
+                      </button>
+                    </React.Fragment>
+                  )}
+                </div>
+
+                {/* Tren Penjualan (Bar) — naik/turunnya pendapatan harian dibanding hari
+                    sebelumnya. Data dari dataset historyRecent yang SAMA dengan Best Seller &
+                    Target Bulanan di atas (satu query, tidak nambah pembacaan D1). */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="bar-chart-3" className="w-4 h-4 text-purple-700"></i> Tren Penjualan (14 Hari Terakhir)</h2>
+                  {loadingRecent ? (
+                    <p className="text-sm text-slate-400">Memuat data...</p>
+                  ) : salesTrendBars.every(b => b.value === 0) ? (
+                    <p className="text-sm text-slate-400 text-center py-4">Belum ada data pendapatan pada rentang ini.</p>
+                  ) : (
+                    <React.Fragment>
+                      <div className="flex items-end gap-1.5 h-32">
+                        {salesTrendBars.map((bar) => (
+                          <div key={bar.date} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                            <div
+                              className={`w-full rounded-t-md transition-all ${bar.trend === 'up' ? 'bg-emerald-500' : bar.trend === 'down' ? 'bg-rose-400' : 'bg-slate-300'}`}
+                              style={{ height: `${bar.heightPct}%`, minHeight: bar.value > 0 ? '4px' : '0px' }}
+                            ></div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span>{formatIndonesianDate(salesTrendBars[0].date).split(',')[0]}</span>
+                        <span>{formatIndonesianDate(salesTrendBars[salesTrendBars.length - 1].date).split(',')[0]}</span>
+                      </div>
+                      <div className="flex items-center gap-4 text-[10px] text-slate-500 pt-1 border-t border-slate-100">
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block"></span> Naik dari hari sebelumnya</span>
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-400 inline-block"></span> Turun</span>
+                      </div>
                     </React.Fragment>
                   )}
                 </div>
@@ -6668,14 +6791,7 @@ const { useState, useEffect } = React;
                       <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${scheduleSettings.autoSendEnabled ? 'left-6' : 'left-1'}`}></span>
                     </button>
                   </div>
-                  {scheduleSettings.autoSendEnabled && (
-                    <div className="flex items-center gap-2">
-                      <label htmlFor="sendHourSelect" className="text-xs font-semibold text-slate-600 shrink-0">Jam kirim (WIB):</label>
-                      <select id="sendHourSelect" value={scheduleSettings.sendHour} onChange={(e) => handleUpdateScheduleSettings({ sendHour: Number(e.target.value) })} className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
-                        {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
-                      </select>
-                    </div>
-                  )}
+                  <p className="text-[11px] text-slate-400">Kalau aktif: setiap hari jam <span className="font-bold">19:00 WIB</span>, jadwal untuk <span className="font-bold">besok</span> otomatis terkirim ke grup Telegram toko — supaya karyawan tidak lupa jadwalnya. Kalau jadwal besok belum diisi, tidak akan ada pesan yang terkirim.</p>
                   <button onClick={handleSendJadwalNow} disabled={sendingJadwalNow} className="w-full bg-sky-600 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">
                     {sendingJadwalNow ? 'Mengirim...' : 'Kirim Jadwal Tanggal Ini Sekarang'}
                   </button>
@@ -6684,15 +6800,19 @@ const { useState, useEffect } = React;
               <div className="px-4 pb-4 space-y-4">
                 <form onSubmit={handleAddJadwal} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
                   <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="calendar-clock" className="w-4 h-4 text-purple-700"></i> Tambah Jadwal</h2>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label htmlFor="jadwalNama" className="block text-xs font-semibold text-slate-600 mb-1">Nama</label>
-                      <input id="jadwalNama" type="text" value={jadwalForm.nama} onChange={(e) => setJadwalForm({ ...jadwalForm, nama: e.target.value })} placeholder="Nama karyawan" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
-                    </div>
-                    <div>
-                      <label htmlFor="jadwalRole" className="block text-xs font-semibold text-slate-600 mb-1">Role / Jabatan</label>
-                      <input id="jadwalRole" type="text" value={jadwalForm.role} onChange={(e) => setJadwalForm({ ...jadwalForm, role: e.target.value })} placeholder="mis. Kasir, Baker" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
-                    </div>
+                  <div>
+                    <label htmlFor="jadwalTanggal" className="block text-xs font-semibold text-slate-600 mb-1">Tanggal</label>
+                    <input id="jadwalTanggal" type="date" value={jadwalForm.tanggal} onChange={(e) => setJadwalForm({ ...jadwalForm, tanggal: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
+                  </div>
+                  <div>
+                    <label htmlFor="jadwalNama" className="block text-xs font-semibold text-slate-600 mb-1">Nama</label>
+                    <input id="jadwalNama" type="text" value={jadwalForm.nama} onChange={(e) => setJadwalForm({ ...jadwalForm, nama: e.target.value })} placeholder="Nama karyawan" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
+                  </div>
+                  <div>
+                    <label htmlFor="jadwalRole" className="block text-xs font-semibold text-slate-600 mb-1">Role</label>
+                    <select id="jadwalRole" value={jadwalForm.role} onChange={(e) => setJadwalForm({ ...jadwalForm, role: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                      {JADWAL_ROLE_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
                   </div>
                   <div>
                     <label htmlFor="jadwalStatus" className="block text-xs font-semibold text-slate-600 mb-1">Status</label>

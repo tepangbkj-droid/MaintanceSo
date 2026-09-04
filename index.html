@@ -1029,6 +1029,23 @@ const { useState, useEffect } = React;
           return { user: auth.currentUser, storeInfo: data.storeInfo };
         }
       },
+      // ===== TAMBAHAN: Login Store Leader (2026-08) =====
+      // SENGAJA dibuat method TERPISAH (bukan menumpangi signInWithEmailAndPassword lewat pola
+      // email palsu seperti admin/toko di atas) -- leader login pakai kode toko + token leader
+      // yang berbeda field-nya sama sekali di backend (lihat /api/login/leader, worker.js),
+      // jadi lebih jernih & gampang diaudit sebagai alur sendiri daripada dipaksa lewat pola
+      // email yang sebetulnya cuma dibutuhkan admin/toko karena warisan API Firebase Auth lama.
+      signInAsLeader: async (storeId, token) => {
+        const res = await __apiFetch(`${WORKER_BASE}/api/login/leader`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ storeId, token }),
+        });
+        const data = await res.json();
+        if (!res.ok) { const e = new Error(data.error || 'Login gagal'); e.status = res.status; throw e; }
+        __setSessionTokenFallback(data._token);
+        auth.currentUser = __makeUser({ storeId: data.storeId, role: 'leader', storeName: data.storeName });
+        return { user: auth.currentUser, storeName: data.storeName };
+      },
       createUserWithEmailAndPassword: async (email, password) => {
         const res = await __apiFetch(`${WORKER_BASE}/api/bootstrap-admin`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2994,7 +3011,7 @@ const { useState, useEffect } = React;
     }
 
     function LoginScreen({ onLoggedIn }) {
-      const [mode, setMode] = useState('store'); // 'store' | 'admin'
+      const [mode, setMode] = useState('store'); // 'store' | 'leader' | 'admin'
       const [adminExists, setAdminExists] = useState(null); // null = belum dicek
       const [storeDirectory, setStoreDirectory] = useState([]);
       const [dirLoading, setDirLoading] = useState(true);
@@ -3249,6 +3266,31 @@ const { useState, useEffect } = React;
         }
       };
 
+      // ===== TAMBAHAN: Login Store Leader (2026-08) =====
+      // Sengaja pakai storeId & token yang SAMA (state form) dengan Login Toko di atas --
+      // hanya salah satu form yang tampil/di-submit tergantung `mode`, jadi aman berbagi field,
+      // tidak perlu state terpisah. Bedanya cuma endpoint yang dipanggil (signInAsLeader,
+      // bukan signInWithEmailAndPassword) dan role sesi yang dihasilkan ('leader').
+      const handleLeaderLogin = async (e) => {
+        e.preventDefault();
+        setError('');
+        if (!storeId || !token) { setError('Pilih toko & isi token Store Leader.'); return; }
+        setLoading(true);
+        try {
+          const cred = await auth.signInAsLeader(storeId, token);
+          saveSession('leader', { storeId, storeName: cred.storeName });
+          onLoggedIn({ role: 'leader', storeId, storeName: cred.storeName });
+        } catch (err) {
+          if (err && err.status === 429) {
+            setError(err.message || 'Terlalu banyak percobaan login gagal. Coba lagi beberapa saat lagi.');
+          } else {
+            setError(err.message || 'Kode toko atau token Store Leader salah.');
+          }
+        } finally {
+          setLoading(false);
+        }
+      };
+
       const handleAdminLogin = async (e) => {
         e.preventDefault();
         setError('');
@@ -3301,9 +3343,10 @@ const { useState, useEffect } = React;
               <p className="text-xs text-slate-600 text-center mt-1">Masuk sebagai toko atau admin pusat</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 bg-slate-100 rounded-xl p-1 mb-6">
-              <button onClick={() => { setMode('store'); setError(''); }} className={`py-2 rounded-lg text-sm font-bold transition-all ${mode === 'store' ? 'bg-white shadow text-purple-800' : 'text-slate-500'}`}>Login Toko</button>
-              <button onClick={() => { setMode('admin'); setError(''); }} className={`py-2 rounded-lg text-sm font-bold transition-all ${mode === 'admin' ? 'bg-white shadow text-purple-800' : 'text-slate-500'}`}>Login Admin</button>
+            <div className="grid grid-cols-3 gap-1.5 bg-slate-100 rounded-xl p-1 mb-6">
+              <button onClick={() => { setMode('store'); setError(''); setToken(''); }} className={`py-2 rounded-lg text-[11px] sm:text-sm font-bold transition-all ${mode === 'store' ? 'bg-white shadow text-purple-800' : 'text-slate-500'}`}>Login Toko</button>
+              <button onClick={() => { setMode('leader'); setError(''); setToken(''); }} className={`py-2 rounded-lg text-[11px] sm:text-sm font-bold transition-all ${mode === 'leader' ? 'bg-white shadow text-purple-800' : 'text-slate-500'}`}>Store Leader</button>
+              <button onClick={() => { setMode('admin'); setError(''); setToken(''); }} className={`py-2 rounded-lg text-[11px] sm:text-sm font-bold transition-all ${mode === 'admin' ? 'bg-white shadow text-purple-800' : 'text-slate-500'}`}>Login Admin</button>
             </div>
 
             {error && (
@@ -3400,6 +3443,80 @@ const { useState, useEffect } = React;
                 </div>
                 <button type="submit" disabled={loading} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
                   {loading ? 'Memproses...' : 'Masuk sebagai Toko'}
+                </button>
+              </form>
+            ) : mode === 'leader' ? (
+              <form onSubmit={handleLeaderLogin} className="space-y-4">
+                {/* Kombobox pilih outlet — PERSIS sama dengan form Login Toko di atas (dropdown
+                    dicari/discroll, bukan <select> polos), sengaja dibuat identik supaya
+                    perilaku & UX-nya konsisten, cuma tombol submit & handler-nya beda. */}
+                <div ref={storeDropdownRef} className="relative">
+                  <label htmlFor="storeIdLeader" className="block text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+                    <span>Nama Toko / Outlet</span>
+                    {dirBackgroundSync && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-normal text-slate-400">
+                        <i data-lucide="loader-2" className="w-3 h-3 animate-spin"></i>
+                        Menyegarkan...
+                      </span>
+                    )}
+                  </label>
+                  <input type="hidden" id="storeIdLeader" value={storeId} />
+                  <button
+                    type="button"
+                    disabled={dirLoading}
+                    onClick={() => setStoreDropdownOpen(o => !o)}
+                    className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white flex items-center justify-between gap-2 disabled:opacity-60 text-left"
+                  >
+                    <span className={`truncate ${selectedStoreName ? 'text-slate-800' : 'text-slate-400'}`}>
+                      {dirLoading ? 'Memuat daftar toko...' : (selectedStoreName || (storeDirectory.length === 0 ? 'Tidak ada toko terdaftar' : '-- Pilih Toko --'))}
+                    </span>
+                    <i data-lucide="chevron-down" className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${storeDropdownOpen ? 'rotate-180' : ''}`}></i>
+                  </button>
+
+                  {storeDropdownOpen && !dirLoading && (
+                    <div className="absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg animate-fadeIn overflow-hidden">
+                      {storeDirectory.length > 4 && (
+                        <div className="p-2 border-b border-slate-100">
+                          <div className="relative">
+                            <i data-lucide="search" className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                            <input
+                              type="text"
+                              autoFocus
+                              value={storeSearchQuery}
+                              onChange={(e) => setStoreSearchQuery(e.target.value)}
+                              placeholder="Cari nama toko..."
+                              className="w-full pl-8 pr-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <ul className="max-h-[168px] overflow-y-auto py-1 overscroll-contain">
+                        {filteredStoreDirectory.length === 0 && (
+                          <li className="px-3 py-2.5 text-xs text-slate-400 text-center">
+                            {storeDirectory.length === 0 ? 'Tidak ada toko terdaftar' : `Tidak ada toko yang cocok dengan "${storeSearchQuery}".`}
+                          </li>
+                        )}
+                        {filteredStoreDirectory.map(s => (
+                          <li key={s.id}>
+                            <button
+                              type="button"
+                              onClick={() => { setStoreId(s.id); setStoreDropdownOpen(false); setStoreSearchQuery(''); }}
+                              className={`w-full text-left px-3 py-2 text-sm truncate ${storeId === s.id ? 'bg-purple-50 text-purple-800 font-semibold' : 'text-slate-700 hover:bg-slate-50'}`}
+                            >
+                              {s.name}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor="tokenLeader" className="block text-xs font-semibold text-slate-600 mb-1">Token Store Leader</label>
+                  <input id="tokenLeader" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Token khusus dari admin (beda dari token toko)" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" required autoComplete="current-password" />
+                </div>
+                <button type="submit" disabled={loading} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                  {loading ? 'Memproses...' : 'Masuk sebagai Store Leader'}
                 </button>
               </form>
             ) : (
@@ -3572,6 +3689,18 @@ const { useState, useEffect } = React;
       const [customTokenInput, setCustomTokenInput] = useState('');
       const [settingCustomToken, setSettingCustomToken] = useState(false);
       const [customTokenError, setCustomTokenError] = useState(null);
+
+      // ===== TAMBAHAN: Akun Store Leader (2026-08) =====
+      // State kredensial leader terpisah sepenuhnya dari state token toko di atas — leader
+      // adalah akun BERBEDA (role 'leader' di worker.js), token-nya disimpan di field terpisah
+      // `stores/{id}/info/leaderToken` (bukan `info/token` milik toko), jadi reset/ganti salah
+      // satu tidak memengaruhi yang lain sama sekali.
+      const [showLeaderToken, setShowLeaderToken] = useState(false);
+      const [regeneratingLeaderToken, setRegeneratingLeaderToken] = useState(false);
+      const [regeneratedLeaderToken, setRegeneratedLeaderToken] = useState(null);
+      const [customLeaderTokenInput, setCustomLeaderTokenInput] = useState('');
+      const [settingCustomLeaderToken, setSettingCustomLeaderToken] = useState(false);
+      const [customLeaderTokenError, setCustomLeaderTokenError] = useState(null);
       const [formSchemas, setFormSchemas] = useState({ sales: [], inventory: [] });
       const [newFieldTarget, setNewFieldTarget] = useState('sales');
       const [newFieldLabel, setNewFieldLabel] = useState('');
@@ -4227,6 +4356,64 @@ const { useState, useEffect } = React;
         }
       };
 
+      // ===== TAMBAHAN: kelola token akun Store Leader (2026-08) =====
+      // Pola identik dengan handleRegenerateToken/handleSetCustomToken di atas (toko), hanya
+      // beda target field: `info/leaderToken` (bukan `info/token`). Tidak butuh apa pun dari
+      // secondaryAuth/Firebase — field ini murni data biasa yang divalidasi worker.js saat
+      // login lewat endpoint terpisah /api/login/leader.
+      const handleRegenerateLeaderToken = async (store) => {
+        if (!store || !store.id) {
+          console.error('handleRegenerateLeaderToken dipanggil tanpa data toko yang valid:', store);
+          setRegeneratedLeaderToken('ERROR');
+          return;
+        }
+        setRegeneratingLeaderToken(true);
+        setRegeneratedLeaderToken(null);
+        try {
+          const newToken = generateSecureToken(16);
+          await restSet(db.ref(`stores/${store.id}/info/leaderToken`), newToken);
+          setRegeneratedLeaderToken(newToken);
+          setDetailStore(prev => (prev && prev.id === store.id) ? { ...prev, leaderToken: newToken } : prev);
+          setStores(prev => prev.map(s => s.id === store.id ? { ...s, leaderToken: newToken } : s));
+        } catch (err) {
+          console.error('Gagal membuat/mereset token Store Leader "' + store.id + '":', err);
+          setRegeneratedLeaderToken('ERROR');
+        } finally {
+          setRegeneratingLeaderToken(false);
+        }
+      };
+
+      const handleSetCustomLeaderToken = async (store) => {
+        if (!store || !store.id) {
+          console.error('handleSetCustomLeaderToken dipanggil tanpa data toko yang valid:', store);
+          return;
+        }
+        const value = customLeaderTokenInput.trim();
+        if (value.length < 6) {
+          setCustomLeaderTokenError('Token minimal 6 karakter.');
+          return;
+        }
+        if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+          setCustomLeaderTokenError('Hanya boleh huruf, angka, titik, garis bawah, dan strip (tanpa spasi).');
+          return;
+        }
+        setSettingCustomLeaderToken(true);
+        setCustomLeaderTokenError(null);
+        setRegeneratedLeaderToken(null);
+        try {
+          await restSet(db.ref(`stores/${store.id}/info/leaderToken`), value);
+          setRegeneratedLeaderToken(value);
+          setDetailStore(prev => (prev && prev.id === store.id) ? { ...prev, leaderToken: value } : prev);
+          setStores(prev => prev.map(s => s.id === store.id ? { ...s, leaderToken: value } : s));
+          setCustomLeaderTokenInput('');
+        } catch (err) {
+          console.error('Gagal menyetel token kustom Store Leader "' + store.id + '":', err);
+          setCustomLeaderTokenError('Gagal menyimpan token. Coba lagi.');
+        } finally {
+          setSettingCustomLeaderToken(false);
+        }
+      };
+
       const openDetail = (store) => {
         setDetailStore(store);
         setShowToken(false);
@@ -4234,6 +4421,12 @@ const { useState, useEffect } = React;
         setRegeneratedToken(null);
         setCustomTokenInput('');
         setCustomTokenError(null);
+        // Reset juga state kredensial Store Leader (2026-08) setiap kali modal detail toko
+        // yang berbeda dibuka, supaya tidak salah tampil token/pesan dari toko sebelumnya.
+        setShowLeaderToken(false);
+        setRegeneratedLeaderToken(null);
+        setCustomLeaderTokenInput('');
+        setCustomLeaderTokenError(null);
         // Data (riwayat, foto rijek, Telegram) diambil otomatis & realtime oleh useEffect di atas.
       };
 
@@ -5442,6 +5635,58 @@ const { useState, useEffect } = React;
                       </div>
                     </div>
 
+                    {/* ===== TAMBAHAN: Akun Store Leader (2026-08) ===== */}
+                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-3">
+                      <h4 className="font-bold text-slate-700 text-sm flex items-center gap-1.5"><i data-lucide="user-cog" className="w-3.5 h-3.5"></i> Kredensial Login Store Leader</h4>
+                      <p className="text-[10px] text-slate-500">Akun terpisah dari akun toko, dengan akses terbatas: Pendapatan Harian, Stock Inventory (lihat saja), & Absensi.</p>
+                      {detailStore.leaderToken ? (
+                        <React.Fragment>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 font-mono text-sm select-all">
+                              {showLeaderToken ? detailStore.leaderToken : '•'.repeat(Math.min(detailStore.leaderToken.length, 16))}
+                            </div>
+                            <button onClick={() => setShowLeaderToken(v => !v)} className="shrink-0 p-2 bg-white border border-slate-200 rounded-lg text-slate-500"><i data-lucide={showLeaderToken ? 'eye-off' : 'eye'} className="w-4 h-4"></i></button>
+                            <button onClick={() => navigator.clipboard?.writeText(detailStore.leaderToken)} className="shrink-0 p-2 bg-white border border-slate-200 rounded-lg text-slate-500"><i data-lucide="copy" className="w-4 h-4"></i></button>
+                          </div>
+                          <button onClick={() => handleRegenerateLeaderToken(detailStore)} disabled={regeneratingLeaderToken || settingCustomLeaderToken} className="w-full bg-slate-800 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">
+                            {regeneratingLeaderToken ? 'Mengganti Token...' : 'Reset / Ganti Token Leader (Acak)'}
+                          </button>
+                        </React.Fragment>
+                      ) : (
+                        <button onClick={() => handleRegenerateLeaderToken(detailStore)} disabled={regeneratingLeaderToken} className="w-full bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-lg">
+                          {regeneratingLeaderToken ? 'Membuat...' : '+ Buat Akun Store Leader'}
+                        </button>
+                      )}
+                      {regeneratedLeaderToken === 'ERROR' && <p className="text-[10px] text-rose-600 font-semibold">Gagal menyimpan token. Coba lagi.</p>}
+                      {regeneratedLeaderToken && regeneratedLeaderToken !== 'ERROR' && <p className="text-[10px] text-emerald-600 font-semibold">Token tersimpan di atas. Beritahu store leader kode toko + token barunya.</p>}
+
+                      {detailStore.leaderToken && (
+                        <div className="pt-2 border-t border-purple-200 space-y-1.5">
+                          <label htmlFor="customLeaderTokenInput" className="block text-[10px] font-semibold text-slate-600">Atau set token kustom (pilihan sendiri)</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              id="customLeaderTokenInput"
+                              type="text"
+                              value={customLeaderTokenInput}
+                              onChange={(e) => { setCustomLeaderTokenInput(e.target.value); setCustomLeaderTokenError(null); }}
+                              placeholder="mis. leader-toko-jaya-01"
+                              className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                              autoComplete="off"
+                            />
+                            <button
+                              onClick={() => handleSetCustomLeaderToken(detailStore)}
+                              disabled={settingCustomLeaderToken || regeneratingLeaderToken || !customLeaderTokenInput.trim()}
+                              className="shrink-0 bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2 px-3 rounded-lg"
+                            >
+                              {settingCustomLeaderToken ? 'Menyimpan...' : 'Simpan'}
+                            </button>
+                          </div>
+                          <p className="text-[10px] text-slate-400">Minimal 6 karakter. Huruf, angka, titik ( . ), underscore ( _ ), dan strip ( - ) saja, tanpa spasi.</p>
+                          {customLeaderTokenError && <p className="text-[10px] text-rose-600 font-semibold">{customLeaderTokenError}</p>}
+                        </div>
+                      )}
+                    </div>
+
                     <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 space-y-3">
                       <h4 className="font-bold text-slate-700 text-sm flex items-center gap-1.5"><i data-lucide="send" className="w-3.5 h-3.5"></i> Integrasi Bot Telegram</h4>
                       <p className="text-[10px] text-slate-500">Hanya admin yang dapat mengatur ini. Toko tidak lagi bisa mengubah Bot Token / Chat ID sendiri.</p>
@@ -5755,7 +6000,369 @@ const { useState, useEffect } = React;
         return <AdminPanel onLogout={handleLogout} />;
       }
 
+      if (session.role === 'leader') {
+        return <LeaderApp storeId={session.storeId} storeName={session.storeName} onLogout={handleLogout} />;
+      }
+
       return <StoreApp storeId={session.storeId} storeName={session.storeName} onLogout={handleLogout} />;
+    }
+
+    // ==========================================
+    // LEADER APP (2026-08) — Dashboard akun Store Leader
+    // ==========================================
+    // SENGAJA komponen BARU & TERPISAH dari StoreApp (bukan StoreApp dengan menu
+    // disembunyikan) — supaya permukaan fitur yang leader BISA akses secara fisik terbatas
+    // pada apa yang benar-benar dirender di sini, bukan cuma disembunyikan lewat CSS/kondisi
+    // (yang gampang salah/lupa kalau StoreApp terus berkembang). Pembatasan SEBENARNYA tetap
+    // di backend (lihat assertPathReadable/assertPathWritable role 'leader' di worker.js) —
+    // komponen ini "hanya" memastikan UI leader memang cuma menawarkan 3 hal yang diizinkan:
+    // Pendapatan Harian, Stock Inventory (lihat saja), dan Absensi.
+    function LeaderApp({ storeId, storeName, onLogout }) {
+      const storeBase = `stores/${storeId}`;
+      const [activeTab, setActiveTab] = useState('pendapatan'); // 'pendapatan' | 'inventory' | 'absensi'
+      const [notification, setNotification] = useState(null);
+      const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
+      const showToast = (message) => {
+        setNotification(message);
+        setTimeout(() => setNotification(null), 3000);
+      };
+
+      const numVal = (val) => {
+        const n = parseFloat(val);
+        return isNaN(n) ? 0 : n;
+      };
+
+      const formatIndonesianDate = (dateStr) => {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      };
+
+      // Ubah label field kamelCase (mis. "fillingStrawberry") jadi lebih enak dibaca
+      // ("Filling Strawberry") — dipakai untuk render Stock Inventory secara generik di
+      // bawah, karena daftar field inventory toko sangat banyak & bisa bertambah kapan saja
+      // (termasuk field kustom yang admin tambahkan sendiri lewat menu Form Kustom).
+      const humanizeFieldKey = (key) => key
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/^./, (c) => c.toUpperCase());
+
+      // Data gabungan (revenue, sales, inventory) untuk tanggal terpilih — SATU listener live
+      // dipakai bersama oleh tab Pendapatan & Stock Inventory karena memang satu node yang sama
+      // di database (lihat catatan di worker.js soal struktur `history/{tanggal}`).
+      const [historyForDate, setHistoryForDate] = useState(null);
+      const [loadingHistory, setLoadingHistory] = useState(true);
+      useEffect(() => {
+        setLoadingHistory(true);
+        const ref = db.ref(`${storeBase}/history/${selectedDate}`);
+        const unbind = bindLiveValue(ref, (snap) => {
+          setHistoryForDate(snap.val() || null);
+          setLoadingHistory(false);
+        }, () => setLoadingHistory(false));
+        return unbind;
+      }, [storeId, selectedDate]);
+
+      // ===== Tab Pendapatan Harian =====
+      const [revenueInput, setRevenueInput] = useState('');
+      const [savingRevenue, setSavingRevenue] = useState(false);
+      useEffect(() => {
+        // Setiap pindah tanggal / data live berubah, samakan kotak input dengan nilai
+        // tersimpan saat ini — supaya tidak menampilkan nilai tanggal sebelumnya.
+        setRevenueInput(historyForDate && historyForDate.revenue != null ? String(historyForDate.revenue) : '');
+      }, [selectedDate, historyForDate && historyForDate.revenue]);
+
+      const handleSaveRevenue = async () => {
+        if (revenueInput === '' || isNaN(Number(revenueInput))) {
+          showToast('⚠️ Isi nominal pendapatan yang valid.');
+          return;
+        }
+        setSavingRevenue(true);
+        try {
+          // PENTING: menulis LANGSUNG ke leaf `revenue`, BUKAN ke node `history/{tanggal}`
+          // secara keseluruhan — supaya data detail penjualan/stok yang mungkin sudah diisi
+          // toko untuk tanggal ini TIDAK ikut tertimpa/hilang (lihat juga pembatasan yang
+          // sama persis di sisi server, worker.js assertPathWritable role 'leader').
+          await restSet(db.ref(`${storeBase}/history/${selectedDate}/revenue`), numVal(revenueInput));
+          showToast('Pendapatan harian tersimpan! 💰');
+        } catch (err) {
+          console.error('Gagal menyimpan pendapatan:', err);
+          showToast(`Gagal menyimpan: ${err && err.message ? err.message : 'periksa koneksi internet Anda'}`);
+        } finally {
+          setSavingRevenue(false);
+        }
+      };
+
+      // ===== Tab Absensi =====
+      const ABSENSI_STATUS_OPTIONS = ['Hadir', 'Libur', 'Izin', 'Sakit', 'Cuti'];
+      const [absensiList, setAbsensiList] = useState([]);
+      const [loadingAbsensi, setLoadingAbsensi] = useState(true);
+      const [absensiForm, setAbsensiForm] = useState({ nama: '', role: '', status: 'Hadir', jamMasuk: '', jamPulang: '' });
+      const [savingAbsensi, setSavingAbsensi] = useState(false);
+
+      useEffect(() => {
+        setLoadingAbsensi(true);
+        const ref = db.ref(`${storeBase}/attendance/${selectedDate}`);
+        const unbind = bindLiveValue(ref, (snap) => {
+          const data = snap.val() || {};
+          const list = Object.keys(data).map(key => ({ firebaseKey: key, ...data[key] })).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+          setAbsensiList(list);
+          setLoadingAbsensi(false);
+        }, () => setLoadingAbsensi(false));
+        return unbind;
+      }, [storeId, selectedDate]);
+
+      const handleAddAbsensi = async (e) => {
+        e.preventDefault();
+        if (!absensiForm.nama.trim()) {
+          showToast('⚠️ Isi nama karyawan terlebih dahulu.');
+          return;
+        }
+        setSavingAbsensi(true);
+        try {
+          const entryId = Date.now().toString();
+          const payload = {
+            nama: absensiForm.nama.trim(),
+            role: absensiForm.role.trim(),
+            status: absensiForm.status,
+            // Jam masuk/pulang hanya relevan kalau statusnya "Hadir" — untuk Libur/Izin/Sakit/Cuti
+            // dikosongkan otomatis supaya tidak menyimpan jam yang tidak berarti.
+            jamMasuk: absensiForm.status === 'Hadir' ? absensiForm.jamMasuk : '',
+            jamPulang: absensiForm.status === 'Hadir' ? absensiForm.jamPulang : '',
+            createdAt: Date.now(),
+          };
+          await restSet(db.ref(`${storeBase}/attendance/${selectedDate}/${entryId}`), payload);
+          setAbsensiForm({ nama: '', role: '', status: 'Hadir', jamMasuk: '', jamPulang: '' });
+          showToast('Absensi tersimpan! ✅');
+        } catch (err) {
+          console.error('Gagal menyimpan absensi:', err);
+          showToast(`Gagal menyimpan: ${err && err.message ? err.message : 'periksa koneksi internet Anda'}`);
+        } finally {
+          setSavingAbsensi(false);
+        }
+      };
+
+      const handleDeleteAbsensi = async (firebaseKey) => {
+        try {
+          await db.ref(`${storeBase}/attendance/${selectedDate}/${firebaseKey}`).remove();
+          showToast('Data absensi dihapus.');
+        } catch (err) {
+          showToast('Gagal menghapus data absensi.');
+        }
+      };
+
+      const ABSENSI_STATUS_COLOR = {
+        Hadir: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+        Libur: 'bg-slate-100 text-slate-600 border-slate-200',
+        Izin: 'bg-amber-50 text-amber-700 border-amber-100',
+        Sakit: 'bg-rose-50 text-rose-700 border-rose-100',
+        Cuti: 'bg-sky-50 text-sky-700 border-sky-100',
+      };
+
+      useEffect(() => { scheduleLucideIcons(); });
+
+      const TABS = [
+        { key: 'pendapatan', label: 'Pendapatan', icon: 'wallet' },
+        { key: 'inventory', label: 'Stock', icon: 'package' },
+        { key: 'absensi', label: 'Absensi', icon: 'clipboard-list' },
+      ];
+
+      return (
+        <div className="min-h-screen bg-slate-50 pb-24">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-purple-800 to-indigo-900 text-white px-4 py-4 sticky top-0 z-20 shadow-md">
+            <div className="flex items-center justify-between">
+              <div className="min-w-0">
+                <p className="text-[10px] text-purple-200 font-semibold tracking-wide">STORE LEADER</p>
+                <h1 className="font-display font-extrabold text-base truncate">{storeName || storeId}</h1>
+              </div>
+              <button onClick={onLogout} className="shrink-0 bg-white/10 hover:bg-white/20 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5">
+                <i data-lucide="log-out" className="w-3.5 h-3.5"></i>
+                <span>Keluar</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Notifikasi toast */}
+          {notification && (
+            <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg animate-fadeIn max-w-[90%] text-center">
+              {notification}
+            </div>
+          )}
+
+          {/* Navigasi tanggal — dipakai bersama oleh ketiga tab */}
+          <div className="bg-white border-b border-slate-200 px-4 py-3 sticky top-[68px] z-10">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() - 1); setSelectedDate(d.toISOString().split('T')[0]); }}
+                className="shrink-0 p-2 bg-slate-100 rounded-lg text-slate-600"
+              >
+                <i data-lucide="chevron-left" className="w-4 h-4"></i>
+              </button>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-center font-semibold"
+              />
+              <button
+                onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() + 1); setSelectedDate(d.toISOString().split('T')[0]); }}
+                className="shrink-0 p-2 bg-slate-100 rounded-lg text-slate-600"
+              >
+                <i data-lucide="chevron-right" className="w-4 h-4"></i>
+              </button>
+              <button
+                onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
+                className="shrink-0 bg-purple-50 text-purple-700 text-xs font-bold px-3 py-2 rounded-lg"
+              >
+                Hari Ini
+              </button>
+            </div>
+            <p className="text-center text-xs font-semibold text-purple-700 mt-2">{formatIndonesianDate(selectedDate)}</p>
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* ===== TAB: PENDAPATAN HARIAN ===== */}
+            {activeTab === 'pendapatan' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-4">
+                <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="wallet" className="w-4 h-4 text-purple-700"></i> Pendapatan Harian</h2>
+                {loadingHistory ? (
+                  <p className="text-sm text-slate-400">Memuat data...</p>
+                ) : (
+                  <React.Fragment>
+                    <div>
+                      <label htmlFor="leaderRevenueInput" className="block text-xs font-semibold text-slate-600 mb-1.5">Total Pendapatan (Rp)</label>
+                      <input
+                        id="leaderRevenueInput"
+                        type="number"
+                        value={revenueInput}
+                        onChange={(e) => setRevenueInput(e.target.value)}
+                        placeholder="0"
+                        className="w-full px-3 py-3 border border-slate-300 rounded-xl text-lg font-bold"
+                      />
+                    </div>
+                    <button onClick={handleSaveRevenue} disabled={savingRevenue} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                      {savingRevenue ? 'Menyimpan...' : 'Simpan Pendapatan'}
+                    </button>
+                    {/* Konteks tambahan (baca saja) kalau toko sudah mengisi laporan detail
+                        untuk tanggal ini — membantu leader lihat gambaran, tanpa bisa mengubahnya. */}
+                    {historyForDate && historyForDate.totalSales != null && (
+                      <div className="bg-slate-50 rounded-xl p-3 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-500">Roti Terjual (Laporan Toko)</span>
+                        <span className="text-sm font-bold text-slate-700">{historyForDate.totalSales} pcs</span>
+                      </div>
+                    )}
+                  </React.Fragment>
+                )}
+              </div>
+            )}
+
+            {/* ===== TAB: STOCK INVENTORY (lihat saja) ===== */}
+            {activeTab === 'inventory' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="package" className="w-4 h-4 text-purple-700"></i> Stock Inventory</h2>
+                <p className="text-[11px] text-slate-400">Menampilkan data yang sudah diisi toko untuk tanggal ini — hanya bisa dilihat, tidak bisa diubah dari akun Store Leader.</p>
+                {loadingHistory ? (
+                  <p className="text-sm text-slate-400">Memuat data...</p>
+                ) : !historyForDate || !historyForDate.inventory ? (
+                  <p className="text-sm text-slate-400 text-center py-6">Belum ada data Stock Inventory untuk tanggal ini.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {Object.entries(historyForDate.inventory)
+                      .filter(([key, val]) => typeof val === 'number' || (typeof val === 'string' && val !== ''))
+                      .map(([key, val]) => (
+                        <div key={key} className="flex items-center justify-between py-2">
+                          <span className="text-xs text-slate-600">{humanizeFieldKey(key)}</span>
+                          <span className="text-sm font-bold text-slate-800">{val}</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ===== TAB: ABSENSI ===== */}
+            {activeTab === 'absensi' && (
+              <div className="space-y-4">
+                <form onSubmit={handleAddAbsensi} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="clipboard-list" className="w-4 h-4 text-purple-700"></i> Tambah Absensi</h2>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label htmlFor="absensiNama" className="block text-xs font-semibold text-slate-600 mb-1">Nama</label>
+                      <input id="absensiNama" type="text" value={absensiForm.nama} onChange={(e) => setAbsensiForm({ ...absensiForm, nama: e.target.value })} placeholder="Nama karyawan" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
+                    </div>
+                    <div>
+                      <label htmlFor="absensiRole" className="block text-xs font-semibold text-slate-600 mb-1">Role / Jabatan</label>
+                      <input id="absensiRole" type="text" value={absensiForm.role} onChange={(e) => setAbsensiForm({ ...absensiForm, role: e.target.value })} placeholder="mis. Kasir, Baker" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor="absensiStatus" className="block text-xs font-semibold text-slate-600 mb-1">Status</label>
+                    <select id="absensiStatus" value={absensiForm.status} onChange={(e) => setAbsensiForm({ ...absensiForm, status: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                      {ABSENSI_STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  </div>
+                  {absensiForm.status === 'Hadir' && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label htmlFor="absensiJamMasuk" className="block text-xs font-semibold text-slate-600 mb-1">Jam Masuk</label>
+                        <input id="absensiJamMasuk" type="time" value={absensiForm.jamMasuk} onChange={(e) => setAbsensiForm({ ...absensiForm, jamMasuk: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                      </div>
+                      <div>
+                        <label htmlFor="absensiJamPulang" className="block text-xs font-semibold text-slate-600 mb-1">Jam Pulang</label>
+                        <input id="absensiJamPulang" type="time" value={absensiForm.jamPulang} onChange={(e) => setAbsensiForm({ ...absensiForm, jamPulang: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                      </div>
+                    </div>
+                  )}
+                  <button type="submit" disabled={savingAbsensi} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
+                    {savingAbsensi ? 'Menyimpan...' : '+ Tambah Absensi'}
+                  </button>
+                </form>
+
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2">
+                  <h3 className="font-bold text-slate-700 text-sm">Daftar Absensi — {formatIndonesianDate(selectedDate)}</h3>
+                  {loadingAbsensi ? (
+                    <p className="text-sm text-slate-400">Memuat data...</p>
+                  ) : absensiList.length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-6">Belum ada data absensi untuk tanggal ini.</p>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
+                      {absensiList.map(item => (
+                        <div key={item.firebaseKey} className="py-2.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-800 text-sm truncate">{item.nama} {item.role && <span className="text-slate-400 font-normal">· {item.role}</span>}</p>
+                            <p className="text-[11px] text-slate-500">
+                              {item.status === 'Hadir' && (item.jamMasuk || item.jamPulang) ? `${item.jamMasuk || '-'} – ${item.jamPulang || '-'}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${ABSENSI_STATUS_COLOR[item.status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>{item.status}</span>
+                            <button onClick={() => handleDeleteAbsensi(item.firebaseKey)} className="text-rose-500 p-1"><i data-lucide="trash-2" className="w-4 h-4"></i></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom nav — 3 tab saja, sengaja tetap sesederhana ini (lihat catatan di
+              handleSaveAllRecap/komentar atas file soal rencana pengembangan bertahap). */}
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex z-30">
+            {TABS.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[11px] font-bold transition-all ${activeTab === tab.key ? 'text-purple-800' : 'text-slate-400'}`}
+              >
+                <i data-lucide={tab.icon} className="w-5 h-5"></i>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      );
     }
 
     function StoreApp({ storeId, storeName, onLogout }) {

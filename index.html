@@ -6017,9 +6017,20 @@ const { useState, useEffect } = React;
     // di backend (lihat assertPathReadable/assertPathWritable role 'leader' di worker.js) —
     // komponen ini "hanya" memastikan UI leader memang cuma menawarkan 3 hal yang diizinkan:
     // Pendapatan Harian, Stock Inventory (lihat saja), dan Absensi.
+    // ==========================================
+    // LEADER APP (2026-08, diperluas) — Dashboard akun Store Leader
+    // ==========================================
+    // SENGAJA komponen BARU & TERPISAH dari StoreApp (bukan StoreApp dengan menu
+    // disembunyikan) — supaya permukaan fitur yang leader BISA akses secara fisik terbatas
+    // pada apa yang benar-benar dirender di sini, bukan cuma disembunyikan lewat CSS/kondisi.
+    // Pembatasan SEBENARNYA tetap di backend (assertPathReadable/assertPathWritable role
+    // 'leader' di worker.js) — komponen ini "hanya" memastikan UI leader memang cuma
+    // menawarkan menu yang diizinkan: Dashboard, Transfer Barang, Jadwal Absensi, Inventory
+    // Store, dan Hasil Psikotes OJT.
     function LeaderApp({ storeId, storeName, onLogout }) {
       const storeBase = `stores/${storeId}`;
-      const [activeTab, setActiveTab] = useState('pendapatan'); // 'pendapatan' | 'inventory' | 'absensi'
+      const [activeMenu, setActiveMenu] = useState('dashboard'); // 'dashboard' | 'transfer' | 'jadwal' | 'inventory' | 'psikotes'
+      const [menuOpen, setMenuOpen] = useState(false); // drawer hamburger
       const [notification, setNotification] = useState(null);
       const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
@@ -6040,16 +6051,48 @@ const { useState, useEffect } = React;
       };
 
       // Ubah label field kamelCase (mis. "fillingStrawberry") jadi lebih enak dibaca
-      // ("Filling Strawberry") — dipakai untuk render Stock Inventory secara generik di
-      // bawah, karena daftar field inventory toko sangat banyak & bisa bertambah kapan saja
-      // (termasuk field kustom yang admin tambahkan sendiri lewat menu Form Kustom).
+      // ("Filling Strawberry") — dipakai untuk render Inventory Store secara generik,
+      // karena daftar field inventory toko sangat banyak & bisa bertambah kapan saja.
       const humanizeFieldKey = (key) => key
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .replace(/^./, (c) => c.toUpperCase());
 
-      // Data gabungan (revenue, sales, inventory) untuk tanggal terpilih — SATU listener live
-      // dipakai bersama oleh tab Pendapatan & Stock Inventory karena memang satu node yang sama
-      // di database (lihat catatan di worker.js soal struktur `history/{tanggal}`).
+      useEffect(() => { scheduleLucideIcons(); });
+
+      // Config Telegram toko (READ SAJA — lihat worker.js) — dibutuhkan tombol "Kirim ke
+      // Telegram" di menu Transfer & Jadwal Absensi. Leader tidak pernah bisa mengubah ini.
+      const [tgConfig, setTgConfig] = useState({ botToken: '', chatId: '' });
+      useEffect(() => {
+        const ref = db.ref(`${storeBase}/telegramConfig`);
+        return bindLiveValue(ref, (snap) => setTgConfig(snap.val() || { botToken: '', chatId: '' }));
+      }, [storeId]);
+
+      const sendToStoreTelegram = async (text) => {
+        if (!tgConfig.botToken || !tgConfig.chatId) {
+          showToast('⚠️ Bot Telegram toko ini belum diatur admin.');
+          return false;
+        }
+        try {
+          const res = await fetch(`https://api.telegram.org/bot${tgConfig.botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: tgConfig.chatId, text, parse_mode: 'Markdown' }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (data.ok) return true;
+          showToast(`Gagal kirim ke Telegram: ${data.description || 'periksa Bot Token/Chat ID'}`);
+          return false;
+        } catch (err) {
+          showToast('Gagal kirim ke Telegram: periksa koneksi internet.');
+          return false;
+        }
+      };
+
+      // ==========================================
+      // Data gabungan (revenue, sales, inventory) untuk TANGGAL TERPILIH — dipakai tab
+      // Pendapatan (di Dashboard) & Inventory Store, karena memang satu node yang sama di
+      // database (lihat catatan di worker.js soal struktur `history/{tanggal}`).
+      // ==========================================
       const [historyForDate, setHistoryForDate] = useState(null);
       const [loadingHistory, setLoadingHistory] = useState(true);
       useEffect(() => {
@@ -6062,12 +6105,9 @@ const { useState, useEffect } = React;
         return unbind;
       }, [storeId, selectedDate]);
 
-      // ===== Tab Pendapatan Harian =====
       const [revenueInput, setRevenueInput] = useState('');
       const [savingRevenue, setSavingRevenue] = useState(false);
       useEffect(() => {
-        // Setiap pindah tanggal / data live berubah, samakan kotak input dengan nilai
-        // tersimpan saat ini — supaya tidak menampilkan nilai tanggal sebelumnya.
         setRevenueInput(historyForDate && historyForDate.revenue != null ? String(historyForDate.revenue) : '');
       }, [selectedDate, historyForDate && historyForDate.revenue]);
 
@@ -6080,8 +6120,7 @@ const { useState, useEffect } = React;
         try {
           // PENTING: menulis LANGSUNG ke leaf `revenue`, BUKAN ke node `history/{tanggal}`
           // secara keseluruhan — supaya data detail penjualan/stok yang mungkin sudah diisi
-          // toko untuk tanggal ini TIDAK ikut tertimpa/hilang (lihat juga pembatasan yang
-          // sama persis di sisi server, worker.js assertPathWritable role 'leader').
+          // toko untuk tanggal ini TIDAK ikut tertimpa/hilang.
           await restSet(db.ref(`${storeBase}/history/${selectedDate}/revenue`), numVal(revenueInput));
           showToast('Pendapatan harian tersimpan! 💰');
         } catch (err) {
@@ -6092,95 +6131,359 @@ const { useState, useEffect } = React;
         }
       };
 
-      // ===== Tab Absensi =====
-      const ABSENSI_STATUS_OPTIONS = ['Hadir', 'Libur', 'Izin', 'Sakit', 'Cuti'];
-      const [absensiList, setAbsensiList] = useState([]);
-      const [loadingAbsensi, setLoadingAbsensi] = useState(true);
-      const [absensiForm, setAbsensiForm] = useState({ nama: '', role: '', status: 'Hadir', jamMasuk: '', jamPulang: '' });
-      const [savingAbsensi, setSavingAbsensi] = useState(false);
-
+      // ==========================================
+      // DASHBOARD: dataset 60 hari terakhir — SATU query (limitToLast), dipakai bersama oleh
+      // Best Seller, Pencapaian Sales Bulanan, & Saran Roti Matang. Sengaja SATU listener untuk
+      // ketiganya (bukan tiga query terpisah / query per-tanggal satu-satu) supaya hemat
+      // pembacaan D1 di Cloudflare — jendela tanggal yang dipilih user tinggal DIFILTER dari
+      // data yang sama ini di browser, TANPA request baru ke server.
+      // ==========================================
+      const [historyRecent, setHistoryRecent] = useState({}); // { 'YYYY-MM-DD': {...record} }
+      const [loadingRecent, setLoadingRecent] = useState(true);
       useEffect(() => {
-        setLoadingAbsensi(true);
-        const ref = db.ref(`${storeBase}/attendance/${selectedDate}`);
+        setLoadingRecent(true);
+        const ref = db.ref(`${storeBase}/history`).limitToLast(60);
         const unbind = bindLiveValue(ref, (snap) => {
-          const data = snap.val() || {};
-          const list = Object.keys(data).map(key => ({ firebaseKey: key, ...data[key] })).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-          setAbsensiList(list);
-          setLoadingAbsensi(false);
-        }, () => setLoadingAbsensi(false));
+          setHistoryRecent(snap.val() || {});
+          setLoadingRecent(false);
+        }, () => setLoadingRecent(false));
         return unbind;
-      }, [storeId, selectedDate]);
+      }, [storeId]);
 
-      const handleAddAbsensi = async (e) => {
-        e.preventDefault();
-        if (!absensiForm.nama.trim()) {
-          showToast('⚠️ Isi nama karyawan terlebih dahulu.');
+      // ----- Best Seller -----
+      const BUN_FLAVOR_LABELS = { original: 'Original', coklat: 'Coklat', vanilla: 'Vanilla', peach: 'Peach', raspberry: 'Raspberry', nanas: 'Nanas', familyBox: 'Family Box' };
+      const [bestSellerRangeDays, setBestSellerRangeDays] = useState(7);
+      const bestSellerRanking = React.useMemo(() => {
+        const totals = {};
+        const today = new Date(selectedDate);
+        for (let i = 0; i < bestSellerRangeDays; i++) {
+          const d = new Date(today);
+          d.setDate(d.getDate() - i);
+          const key = d.toISOString().split('T')[0];
+          const rec = historyRecent[key];
+          if (!rec || !rec.sales || !rec.sales.soldBuns) continue;
+          Object.entries(rec.sales.soldBuns).forEach(([flavor, qty]) => {
+            totals[flavor] = (totals[flavor] || 0) + numVal(qty);
+          });
+        }
+        return Object.entries(totals)
+          .filter(([, qty]) => qty > 0)
+          .sort((a, b) => b[1] - a[1])
+          .map(([flavor, qty]) => ({ flavor, label: BUN_FLAVOR_LABELS[flavor] || humanizeFieldKey(flavor), qty }));
+      }, [historyRecent, bestSellerRangeDays, selectedDate]);
+
+      // ----- Pencapaian Sales Bulanan -----
+      const currentMonthKey = selectedDate.slice(0, 7); // 'YYYY-MM'
+      const monthRevenueTotal = React.useMemo(() => {
+        return Object.entries(historyRecent)
+          .filter(([date]) => date.startsWith(currentMonthKey))
+          .reduce((sum, [, rec]) => sum + numVal(rec && rec.revenue), 0);
+      }, [historyRecent, currentMonthKey]);
+
+      const [salesTarget, setSalesTarget] = useState(null);
+      const [targetInput, setTargetInput] = useState('');
+      const [savingTarget, setSavingTarget] = useState(false);
+      const [editingTarget, setEditingTarget] = useState(false);
+      useEffect(() => {
+        const ref = db.ref(`${storeBase}/salesTarget/${currentMonthKey}`);
+        return bindLiveValue(ref, (snap) => {
+          const val = snap.val();
+          setSalesTarget(val || null);
+          setTargetInput(val ? String(val) : '');
+        });
+      }, [storeId, currentMonthKey]);
+
+      const handleSaveTarget = async () => {
+        if (targetInput === '' || isNaN(Number(targetInput)) || numVal(targetInput) <= 0) {
+          showToast('⚠️ Isi target penjualan bulanan yang valid.');
           return;
         }
-        setSavingAbsensi(true);
+        setSavingTarget(true);
         try {
-          const entryId = Date.now().toString();
-          const payload = {
-            nama: absensiForm.nama.trim(),
-            role: absensiForm.role.trim(),
-            status: absensiForm.status,
-            // Jam masuk/pulang hanya relevan kalau statusnya "Hadir" — untuk Libur/Izin/Sakit/Cuti
-            // dikosongkan otomatis supaya tidak menyimpan jam yang tidak berarti.
-            jamMasuk: absensiForm.status === 'Hadir' ? absensiForm.jamMasuk : '',
-            jamPulang: absensiForm.status === 'Hadir' ? absensiForm.jamPulang : '',
-            createdAt: Date.now(),
-          };
-          await restSet(db.ref(`${storeBase}/attendance/${selectedDate}/${entryId}`), payload);
-          setAbsensiForm({ nama: '', role: '', status: 'Hadir', jamMasuk: '', jamPulang: '' });
-          showToast('Absensi tersimpan! ✅');
+          await restSet(db.ref(`${storeBase}/salesTarget/${currentMonthKey}`), numVal(targetInput));
+          showToast('Target bulanan tersimpan! 🎯');
+          setEditingTarget(false);
         } catch (err) {
-          console.error('Gagal menyimpan absensi:', err);
+          showToast(`Gagal menyimpan target: ${err && err.message ? err.message : 'periksa koneksi internet Anda'}`);
+        } finally {
+          setSavingTarget(false);
+        }
+      };
+      const targetPercentage = salesTarget ? Math.min(999, Math.round((monthRevenueTotal / salesTarget) * 100)) : null;
+
+      // ----- Saran Roti Matang -----
+      // Rumus: roti terjual di hari yang SAMA minggu lalu (H-7) + 20%. Contoh: hari ini Jumat
+      // -> lihat total roti terjual Jumat kemarin (H-7), lalu tambah 20% -> itu saran hari ini.
+      const saranRotiMatang = React.useMemo(() => {
+        const d = new Date(selectedDate);
+        d.setDate(d.getDate() - 7);
+        const key = d.toISOString().split('T')[0];
+        const rec = historyRecent[key];
+        const baseQty = rec && rec.totalSales != null ? numVal(rec.totalSales) : null;
+        return {
+          tanggalAcuan: key,
+          baseQty,
+          saran: baseQty != null ? Math.ceil(baseQty * 1.2) : null,
+        };
+      }, [historyRecent, selectedDate]);
+
+      // ==========================================
+      // TRANSFER BARANG IN/OUT
+      // ==========================================
+      const [transferList, setTransferList] = useState([]);
+      const [loadingTransfer, setLoadingTransfer] = useState(true);
+      useEffect(() => {
+        setLoadingTransfer(true);
+        const ref = db.ref(`${storeBase}/transfers`).limitToLast(100);
+        const unbind = bindLiveValue(ref, (snap) => {
+          const data = snap.val() || {};
+          const list = Object.keys(data).map(key => ({ firebaseKey: key, ...data[key] })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          setTransferList(list);
+          setLoadingTransfer(false);
+        }, () => setLoadingTransfer(false));
+        return unbind;
+      }, [storeId]);
+
+      const getEmptyTransferForm = () => ({ tipe: 'in', pihak: '', jenisBarang: '', jumlah: '', keterangan: '' });
+      const [transferForm, setTransferForm] = useState(getEmptyTransferForm());
+      const [savingTransfer, setSavingTransfer] = useState(false);
+
+      const buildTransferText = (form, tanggal) => {
+        const label = form.tipe === 'in' ? 'TRANSFER IN' : 'TRANSFER OUT';
+        const pihakLabel = form.tipe === 'in' ? 'Pengirim' : 'Penerima';
+        return `*${label} — ${storeName || storeId}*\nTanggal: ${formatIndonesianDate(tanggal)}\n\n`
+          + `${pihakLabel}: ${form.pihak}\n`
+          + `Jenis Barang: ${form.jenisBarang}\n`
+          + `Jumlah: ${form.jumlah}\n`
+          + `Keterangan: ${form.keterangan || '-'}`;
+      };
+
+      const handleSaveTransfer = async (e) => {
+        e.preventDefault();
+        if (!transferForm.pihak.trim() || !transferForm.jenisBarang.trim() || !transferForm.jumlah) {
+          showToast('⚠️ Lengkapi semua field wajib terlebih dahulu.');
+          return;
+        }
+        setSavingTransfer(true);
+        try {
+          const id = Date.now().toString();
+          const tanggal = new Date().toISOString().split('T')[0];
+          const payload = { ...transferForm, pihak: transferForm.pihak.trim(), jenisBarang: transferForm.jenisBarang.trim(), tanggal, createdAt: Date.now() };
+          await restSet(db.ref(`${storeBase}/transfers/${id}`), payload);
+          showToast('Transfer tersimpan! 📦');
+          await sendToStoreTelegram(buildTransferText(payload, tanggal));
+          setTransferForm(getEmptyTransferForm());
+        } catch (err) {
           showToast(`Gagal menyimpan: ${err && err.message ? err.message : 'periksa koneksi internet Anda'}`);
         } finally {
-          setSavingAbsensi(false);
+          setSavingTransfer(false);
         }
       };
 
-      const handleDeleteAbsensi = async (firebaseKey) => {
+      const handleDeleteTransfer = async (firebaseKey) => {
         try {
-          await db.ref(`${storeBase}/attendance/${selectedDate}/${firebaseKey}`).remove();
-          showToast('Data absensi dihapus.');
+          await db.ref(`${storeBase}/transfers/${firebaseKey}`).remove();
+          showToast('Data transfer dihapus.');
         } catch (err) {
-          showToast('Gagal menghapus data absensi.');
+          showToast('Gagal menghapus data transfer.');
         }
       };
 
-      const ABSENSI_STATUS_COLOR = {
+      // ==========================================
+      // JADWAL ABSENSI (+ kirim otomatis harian ke Telegram)
+      // ==========================================
+      const JADWAL_STATUS_OPTIONS = ['Hadir', 'Libur', 'Izin', 'Sakit', 'Cuti'];
+      const JADWAL_STATUS_COLOR = {
         Hadir: 'bg-emerald-50 text-emerald-700 border-emerald-100',
         Libur: 'bg-slate-100 text-slate-600 border-slate-200',
         Izin: 'bg-amber-50 text-amber-700 border-amber-100',
         Sakit: 'bg-rose-50 text-rose-700 border-rose-100',
         Cuti: 'bg-sky-50 text-sky-700 border-sky-100',
       };
+      const [jadwalList, setJadwalList] = useState([]);
+      const [loadingJadwal, setLoadingJadwal] = useState(true);
+      const [jadwalForm, setJadwalForm] = useState({ nama: '', role: '', status: 'Hadir', jamMasuk: '', jamPulang: '' });
+      const [savingJadwal, setSavingJadwal] = useState(false);
 
-      useEffect(() => { scheduleLucideIcons(); });
+      useEffect(() => {
+        setLoadingJadwal(true);
+        const ref = db.ref(`${storeBase}/schedule/${selectedDate}`);
+        const unbind = bindLiveValue(ref, (snap) => {
+          const data = snap.val() || {};
+          const list = Object.keys(data).map(key => ({ firebaseKey: key, ...data[key] })).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+          setJadwalList(list);
+          setLoadingJadwal(false);
+        }, () => setLoadingJadwal(false));
+        return unbind;
+      }, [storeId, selectedDate]);
 
-      const TABS = [
-        { key: 'pendapatan', label: 'Pendapatan', icon: 'wallet' },
-        { key: 'inventory', label: 'Stock', icon: 'package' },
-        { key: 'absensi', label: 'Absensi', icon: 'clipboard-list' },
+      const handleAddJadwal = async (e) => {
+        e.preventDefault();
+        if (!jadwalForm.nama.trim()) {
+          showToast('⚠️ Isi nama karyawan terlebih dahulu.');
+          return;
+        }
+        setSavingJadwal(true);
+        try {
+          const entryId = Date.now().toString();
+          const payload = {
+            nama: jadwalForm.nama.trim(),
+            role: jadwalForm.role.trim(),
+            status: jadwalForm.status,
+            jamMasuk: jadwalForm.status === 'Hadir' ? jadwalForm.jamMasuk : '',
+            jamPulang: jadwalForm.status === 'Hadir' ? jadwalForm.jamPulang : '',
+            createdAt: Date.now(),
+          };
+          await restSet(db.ref(`${storeBase}/schedule/${selectedDate}/${entryId}`), payload);
+          setJadwalForm({ nama: '', role: '', status: 'Hadir', jamMasuk: '', jamPulang: '' });
+          showToast('Jadwal tersimpan! ✅');
+        } catch (err) {
+          showToast(`Gagal menyimpan: ${err && err.message ? err.message : 'periksa koneksi internet Anda'}`);
+        } finally {
+          setSavingJadwal(false);
+        }
+      };
+
+      const handleDeleteJadwal = async (firebaseKey) => {
+        try {
+          await db.ref(`${storeBase}/schedule/${selectedDate}/${firebaseKey}`).remove();
+          showToast('Jadwal dihapus.');
+        } catch (err) {
+          showToast('Gagal menghapus jadwal.');
+        }
+      };
+
+      const buildJadwalText = (list, tanggal) => {
+        let text = `*JADWAL ABSENSI HARI INI*\n${storeName || storeId}\n${formatIndonesianDate(tanggal)}\n\n`;
+        if (list.length === 0) {
+          text += 'Belum ada jadwal yang diisi untuk hari ini.';
+        } else {
+          list.forEach((it, i) => {
+            const jamText = it.status === 'Hadir' ? ` (${it.jamMasuk || '-'} – ${it.jamPulang || '-'})` : ` — ${it.status}`;
+            text += `${i + 1}. ${it.nama}${it.role ? ` (${it.role})` : ''}${jamText}\n`;
+          });
+        }
+        return text;
+      };
+
+      const [sendingJadwalNow, setSendingJadwalNow] = useState(false);
+      const handleSendJadwalNow = async () => {
+        setSendingJadwalNow(true);
+        try {
+          const ok = await sendToStoreTelegram(buildJadwalText(jadwalList, selectedDate));
+          if (ok) showToast('Jadwal terkirim ke Telegram! 🚀');
+        } finally {
+          setSendingJadwalNow(false);
+        }
+      };
+
+      // Pengaturan kirim otomatis harian — dieksekusi server-side (Cron Trigger Cloudflare,
+      // lihat sendDailyScheduleToTelegram di worker.js), leader cuma atur ON/OFF & jam kirim.
+      const [scheduleSettings, setScheduleSettings] = useState({ autoSendEnabled: false, sendHour: 6 });
+      useEffect(() => {
+        const ref = db.ref(`${storeBase}/scheduleSettings`);
+        return bindLiveValue(ref, (snap) => setScheduleSettings(prev => ({ ...prev, ...(snap.val() || {}) })));
+      }, [storeId]);
+
+      const handleUpdateScheduleSettings = async (patch) => {
+        try {
+          await restSet(db.ref(`${storeBase}/scheduleSettings`), { ...scheduleSettings, ...patch });
+          showToast('Pengaturan kirim otomatis tersimpan.');
+        } catch (err) {
+          showToast('Gagal menyimpan pengaturan.');
+        }
+      };
+
+      // ==========================================
+      // MENU & NAVIGASI
+      // ==========================================
+      const MENU_ITEMS = [
+        { key: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
+        { key: 'transfer', label: 'Transfer Barang', icon: 'arrow-left-right' },
+        { key: 'jadwal', label: 'Jadwal Absensi', icon: 'calendar-clock' },
+        { key: 'inventory', label: 'Inventory Store', icon: 'package' },
+        { key: 'psikotes', label: 'Hasil Psikotes OJT', icon: 'graduation-cap' },
       ];
 
+      const DateNav = () => (
+        <div className="bg-white border-b border-slate-200 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() - 1); setSelectedDate(d.toISOString().split('T')[0]); }}
+              className="shrink-0 p-2 bg-slate-100 rounded-lg text-slate-600"
+            >
+              <i data-lucide="chevron-left" className="w-4 h-4"></i>
+            </button>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-center font-semibold"
+            />
+            <button
+              onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() + 1); setSelectedDate(d.toISOString().split('T')[0]); }}
+              className="shrink-0 p-2 bg-slate-100 rounded-lg text-slate-600"
+            >
+              <i data-lucide="chevron-right" className="w-4 h-4"></i>
+            </button>
+            <button
+              onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
+              className="shrink-0 bg-purple-50 text-purple-700 text-xs font-bold px-3 py-2 rounded-lg"
+            >
+              Hari Ini
+            </button>
+          </div>
+          <p className="text-center text-xs font-semibold text-purple-700 mt-2">{formatIndonesianDate(selectedDate)}</p>
+        </div>
+      );
+
       return (
-        <div className="min-h-screen bg-slate-50 pb-24">
-          {/* Header */}
-          <div className="bg-gradient-to-r from-purple-800 to-indigo-900 text-white px-4 py-4 sticky top-0 z-20 shadow-md">
-            <div className="flex items-center justify-between">
-              <div className="min-w-0">
+        <div className="min-h-screen bg-slate-50 pb-8">
+          {/* Header + tombol hamburger */}
+          <div className="bg-gradient-to-r from-purple-800 to-indigo-900 text-white px-4 py-4 sticky top-0 z-30 shadow-md">
+            <div className="flex items-center justify-between gap-3">
+              <button onClick={() => setMenuOpen(true)} className="shrink-0 bg-white/10 hover:bg-white/20 p-2 rounded-lg">
+                <i data-lucide="menu" className="w-5 h-5"></i>
+              </button>
+              <div className="min-w-0 flex-1 text-center">
                 <p className="text-[10px] text-purple-200 font-semibold tracking-wide">STORE LEADER</p>
                 <h1 className="font-display font-extrabold text-base truncate">{storeName || storeId}</h1>
               </div>
               <button onClick={onLogout} className="shrink-0 bg-white/10 hover:bg-white/20 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5">
                 <i data-lucide="log-out" className="w-3.5 h-3.5"></i>
-                <span>Keluar</span>
               </button>
             </div>
           </div>
+
+          {/* Drawer menu hamburger */}
+          {menuOpen && (
+            <div className="fixed inset-0 z-40 flex">
+              <div className="absolute inset-0 bg-black/40" onClick={() => setMenuOpen(false)}></div>
+              <div className="relative w-72 max-w-[80%] bg-white h-full shadow-xl flex flex-col animate-fadeIn">
+                <div className="bg-gradient-to-r from-purple-800 to-indigo-900 text-white px-4 py-5">
+                  <p className="text-[10px] text-purple-200 font-semibold tracking-wide">STORE LEADER</p>
+                  <h2 className="font-display font-extrabold text-lg">{storeName || storeId}</h2>
+                </div>
+                <div className="flex-1 overflow-y-auto py-2">
+                  {MENU_ITEMS.map(item => (
+                    <button
+                      key={item.key}
+                      onClick={() => { setActiveMenu(item.key); setMenuOpen(false); }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-all ${activeMenu === item.key ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      <i data-lucide={item.icon} className="w-4 h-4"></i>
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="p-4 border-t border-slate-100">
+                  <button onClick={onLogout} className="w-full flex items-center justify-center gap-2 bg-rose-50 text-rose-600 font-bold text-sm py-2.5 rounded-xl">
+                    <i data-lucide="log-out" className="w-4 h-4"></i> Keluar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Notifikasi toast */}
           {notification && (
@@ -6189,144 +6492,240 @@ const { useState, useEffect } = React;
             </div>
           )}
 
-          {/* Navigasi tanggal — dipakai bersama oleh ketiga tab */}
-          <div className="bg-white border-b border-slate-200 px-4 py-3 sticky top-[68px] z-10">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() - 1); setSelectedDate(d.toISOString().split('T')[0]); }}
-                className="shrink-0 p-2 bg-slate-100 rounded-lg text-slate-600"
-              >
-                <i data-lucide="chevron-left" className="w-4 h-4"></i>
-              </button>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-center font-semibold"
-              />
-              <button
-                onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() + 1); setSelectedDate(d.toISOString().split('T')[0]); }}
-                className="shrink-0 p-2 bg-slate-100 rounded-lg text-slate-600"
-              >
-                <i data-lucide="chevron-right" className="w-4 h-4"></i>
-              </button>
-              <button
-                onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
-                className="shrink-0 bg-purple-50 text-purple-700 text-xs font-bold px-3 py-2 rounded-lg"
-              >
-                Hari Ini
-              </button>
-            </div>
-            <p className="text-center text-xs font-semibold text-purple-700 mt-2">{formatIndonesianDate(selectedDate)}</p>
-          </div>
-
-          <div className="p-4 space-y-4">
-            {/* ===== TAB: PENDAPATAN HARIAN ===== */}
-            {activeTab === 'pendapatan' && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-4">
-                <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="wallet" className="w-4 h-4 text-purple-700"></i> Pendapatan Harian</h2>
-                {loadingHistory ? (
-                  <p className="text-sm text-slate-400">Memuat data...</p>
-                ) : (
-                  <React.Fragment>
-                    <div>
-                      <label htmlFor="leaderRevenueInput" className="block text-xs font-semibold text-slate-600 mb-1.5">Total Pendapatan (Rp)</label>
+          {/* ===== MENU: DASHBOARD ===== */}
+          {activeMenu === 'dashboard' && (
+            <React.Fragment>
+              <DateNav />
+              <div className="p-4 space-y-4">
+                {/* Pendapatan Harian */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="wallet" className="w-4 h-4 text-purple-700"></i> Pendapatan Harian</h2>
+                  {loadingHistory ? (
+                    <p className="text-sm text-slate-400">Memuat data...</p>
+                  ) : (
+                    <React.Fragment>
                       <input
-                        id="leaderRevenueInput"
                         type="number"
                         value={revenueInput}
                         onChange={(e) => setRevenueInput(e.target.value)}
                         placeholder="0"
                         className="w-full px-3 py-3 border border-slate-300 rounded-xl text-lg font-bold"
                       />
-                    </div>
-                    <button onClick={handleSaveRevenue} disabled={savingRevenue} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
-                      {savingRevenue ? 'Menyimpan...' : 'Simpan Pendapatan'}
-                    </button>
-                    {/* Konteks tambahan (baca saja) kalau toko sudah mengisi laporan detail
-                        untuk tanggal ini — membantu leader lihat gambaran, tanpa bisa mengubahnya. */}
-                    {historyForDate && historyForDate.totalSales != null && (
-                      <div className="bg-slate-50 rounded-xl p-3 flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Roti Terjual (Laporan Toko)</span>
-                        <span className="text-sm font-bold text-slate-700">{historyForDate.totalSales} pcs</span>
-                      </div>
-                    )}
-                  </React.Fragment>
-                )}
-              </div>
-            )}
+                      <button onClick={handleSaveRevenue} disabled={savingRevenue} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
+                        {savingRevenue ? 'Menyimpan...' : 'Simpan Pendapatan'}
+                      </button>
+                    </React.Fragment>
+                  )}
+                </div>
 
-            {/* ===== TAB: STOCK INVENTORY (lihat saja) ===== */}
-            {activeTab === 'inventory' && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
-                <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="package" className="w-4 h-4 text-purple-700"></i> Stock Inventory</h2>
-                <p className="text-[11px] text-slate-400">Menampilkan data yang sudah diisi toko untuk tanggal ini — hanya bisa dilihat, tidak bisa diubah dari akun Store Leader.</p>
-                {loadingHistory ? (
-                  <p className="text-sm text-slate-400">Memuat data...</p>
-                ) : !historyForDate || !historyForDate.inventory ? (
-                  <p className="text-sm text-slate-400 text-center py-6">Belum ada data Stock Inventory untuk tanggal ini.</p>
-                ) : (
-                  <div className="divide-y divide-slate-100">
-                    {Object.entries(historyForDate.inventory)
-                      .filter(([key, val]) => typeof val === 'number' || (typeof val === 'string' && val !== ''))
-                      .map(([key, val]) => (
-                        <div key={key} className="flex items-center justify-between py-2">
-                          <span className="text-xs text-slate-600">{humanizeFieldKey(key)}</span>
-                          <span className="text-sm font-bold text-slate-800">{val}</span>
+                {/* Best Seller */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="trophy" className="w-4 h-4 text-amber-500"></i> Best Seller</h2>
+                    <select value={bestSellerRangeDays} onChange={(e) => setBestSellerRangeDays(Number(e.target.value))} className="text-xs font-semibold border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
+                      <option value={7}>7 Hari</option>
+                      <option value={14}>14 Hari</option>
+                      <option value={30}>30 Hari</option>
+                      <option value={60}>60 Hari</option>
+                    </select>
+                  </div>
+                  {loadingRecent ? (
+                    <p className="text-sm text-slate-400">Memuat data...</p>
+                  ) : bestSellerRanking.length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-4">Belum ada data penjualan pada rentang ini.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {bestSellerRanking.slice(0, 5).map((item, idx) => (
+                        <div key={item.flavor} className={`flex items-center gap-3 p-2.5 rounded-xl ${idx === 0 ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`}>
+                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0 ${idx === 0 ? 'bg-amber-400 text-white' : 'bg-slate-200 text-slate-600'}`}>{idx + 1}</span>
+                          <span className="flex-1 text-sm font-semibold text-slate-700 truncate">{item.label}</span>
+                          <span className="text-sm font-extrabold text-slate-800">{item.qty} pcs</span>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Pencapaian Sales Bulanan */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="target" className="w-4 h-4 text-emerald-600"></i> Pencapaian Sales Bulanan</h2>
+                  <p className="text-[11px] text-slate-400">Periode: {new Date(currentMonthKey + '-01').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</p>
+                  {salesTarget && !editingTarget ? (
+                    <React.Fragment>
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-xl font-extrabold text-slate-800">Rp {monthRevenueTotal.toLocaleString('id-ID')}</span>
+                        <span className="text-xs text-slate-400">dari Rp {salesTarget.toLocaleString('id-ID')}</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                        <div className={`h-full rounded-full ${targetPercentage >= 100 ? 'bg-emerald-500' : 'bg-purple-700'}`} style={{ width: `${Math.min(100, targetPercentage)}%` }}></div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className={`text-sm font-extrabold ${targetPercentage >= 100 ? 'text-emerald-600' : 'text-purple-700'}`}>{targetPercentage}% tercapai</span>
+                        <button onClick={() => setEditingTarget(true)} className="text-[11px] font-bold text-purple-700">Ubah Target</button>
+                      </div>
+                    </React.Fragment>
+                  ) : (
+                    <React.Fragment>
+                      <p className="text-xs text-slate-500">{salesTarget ? 'Ubah target penjualan bulan ini:' : 'Target bulan ini belum diatur. Isi target penjualan:'}</p>
+                      <div className="flex items-center gap-2">
+                        <input type="number" value={targetInput} onChange={(e) => setTargetInput(e.target.value)} placeholder="mis. 50000000" className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                        <button onClick={handleSaveTarget} disabled={savingTarget} className="shrink-0 bg-purple-800 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-lg">
+                          {savingTarget ? '...' : 'Simpan'}
+                        </button>
+                      </div>
+                    </React.Fragment>
+                  )}
+                </div>
+
+                {/* Saran Roti Matang */}
+                <div className="bg-gradient-to-br from-purple-800 to-indigo-900 text-white rounded-2xl p-4 space-y-2">
+                  <h2 className="font-bold flex items-center gap-2"><i data-lucide="croissant" className="w-4 h-4"></i> Saran Roti Matang Hari Ini</h2>
+                  {loadingRecent ? (
+                    <p className="text-sm text-purple-200">Memuat data...</p>
+                  ) : saranRotiMatang.saran == null ? (
+                    <p className="text-sm text-purple-200">Belum ada data penjualan di {formatIndonesianDate(saranRotiMatang.tanggalAcuan)} (H-7) untuk dijadikan acuan.</p>
+                  ) : (
+                    <React.Fragment>
+                      <p className="text-4xl font-extrabold">{saranRotiMatang.saran} <span className="text-base font-semibold text-purple-200">pcs</span></p>
+                      <p className="text-[11px] text-purple-200">Berdasarkan {formatIndonesianDate(saranRotiMatang.tanggalAcuan)} ({saranRotiMatang.baseQty} pcs terjual) + 20%</p>
+                    </React.Fragment>
+                  )}
+                </div>
+              </div>
+            </React.Fragment>
+          )}
+
+          {/* ===== MENU: TRANSFER BARANG IN/OUT ===== */}
+          {activeMenu === 'transfer' && (
+            <div className="p-4 space-y-4">
+              <form onSubmit={handleSaveTransfer} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="arrow-left-right" className="w-4 h-4 text-purple-700"></i> Transfer Barang</h2>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setTransferForm({ ...transferForm, tipe: 'in' })} className={`py-2.5 rounded-xl text-sm font-bold border ${transferForm.tipe === 'in' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-300'}`}>Transfer In</button>
+                  <button type="button" onClick={() => setTransferForm({ ...transferForm, tipe: 'out' })} className={`py-2.5 rounded-xl text-sm font-bold border ${transferForm.tipe === 'out' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-slate-600 border-slate-300'}`}>Transfer Out</button>
+                </div>
+                <div>
+                  <label htmlFor="transferPihak" className="block text-xs font-semibold text-slate-600 mb-1">{transferForm.tipe === 'in' ? 'Pengirim' : 'Penerima'}</label>
+                  <input id="transferPihak" type="text" value={transferForm.pihak} onChange={(e) => setTransferForm({ ...transferForm, pihak: e.target.value })} placeholder={transferForm.tipe === 'in' ? 'Nama toko/gudang pengirim' : 'Nama toko/gudang penerima'} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
+                </div>
+                <div>
+                  <label htmlFor="transferJenis" className="block text-xs font-semibold text-slate-600 mb-1">Jenis Barang</label>
+                  <input id="transferJenis" type="text" value={transferForm.jenisBarang} onChange={(e) => setTransferForm({ ...transferForm, jenisBarang: e.target.value })} placeholder="mis. Topping Taro, Cup, dll" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
+                </div>
+                <div>
+                  <label htmlFor="transferJumlah" className="block text-xs font-semibold text-slate-600 mb-1">Jumlah</label>
+                  <input id="transferJumlah" type="text" value={transferForm.jumlah} onChange={(e) => setTransferForm({ ...transferForm, jumlah: e.target.value })} placeholder="mis. 5 pcs / 2 kg" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
+                </div>
+                <div>
+                  <label htmlFor="transferKet" className="block text-xs font-semibold text-slate-600 mb-1">Keterangan</label>
+                  <textarea id="transferKet" value={transferForm.keterangan} onChange={(e) => setTransferForm({ ...transferForm, keterangan: e.target.value })} rows={2} placeholder="Opsional" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                </div>
+                <button type="submit" disabled={savingTransfer} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2">
+                  <i data-lucide="send" className="w-4 h-4"></i>
+                  {savingTransfer ? 'Menyimpan & Mengirim...' : 'Simpan & Kirim ke Telegram'}
+                </button>
+              </form>
+
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2">
+                <h3 className="font-bold text-slate-700 text-sm">Riwayat Transfer</h3>
+                {loadingTransfer ? (
+                  <p className="text-sm text-slate-400">Memuat data...</p>
+                ) : transferList.length === 0 ? (
+                  <p className="text-sm text-slate-400 text-center py-6">Belum ada data transfer.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {transferList.map(item => (
+                      <div key={item.firebaseKey} className="py-2.5 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-800 text-sm truncate">{item.jenisBarang} · {item.jumlah}</p>
+                          <p className="text-[11px] text-slate-500 truncate">{item.tipe === 'in' ? 'Dari' : 'Ke'}: {item.pihak} — {item.tanggal}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${item.tipe === 'in' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>{item.tipe === 'in' ? 'IN' : 'OUT'}</span>
+                          <button onClick={() => handleDeleteTransfer(item.firebaseKey)} className="text-rose-500 p-1"><i data-lucide="trash-2" className="w-4 h-4"></i></button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* ===== TAB: ABSENSI ===== */}
-            {activeTab === 'absensi' && (
-              <div className="space-y-4">
-                <form onSubmit={handleAddAbsensi} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
-                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="clipboard-list" className="w-4 h-4 text-purple-700"></i> Tambah Absensi</h2>
+          {/* ===== MENU: JADWAL ABSENSI ===== */}
+          {activeMenu === 'jadwal' && (
+            <React.Fragment>
+              <DateNav />
+              <div className="p-4 space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="send" className="w-4 h-4 text-purple-700"></i> Kirim Otomatis Harian</h2>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Aktifkan kirim otomatis ke Telegram</span>
+                    <button
+                      onClick={() => handleUpdateScheduleSettings({ autoSendEnabled: !scheduleSettings.autoSendEnabled })}
+                      className={`w-12 h-7 rounded-full transition-all relative ${scheduleSettings.autoSendEnabled ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                    >
+                      <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${scheduleSettings.autoSendEnabled ? 'left-6' : 'left-1'}`}></span>
+                    </button>
+                  </div>
+                  {scheduleSettings.autoSendEnabled && (
+                    <div className="flex items-center gap-2">
+                      <label htmlFor="sendHourSelect" className="text-xs font-semibold text-slate-600 shrink-0">Jam kirim (WIB):</label>
+                      <select id="sendHourSelect" value={scheduleSettings.sendHour} onChange={(e) => handleUpdateScheduleSettings({ sendHour: Number(e.target.value) })} className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
+                        {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <button onClick={handleSendJadwalNow} disabled={sendingJadwalNow} className="w-full bg-sky-600 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">
+                    {sendingJadwalNow ? 'Mengirim...' : 'Kirim Jadwal Tanggal Ini Sekarang'}
+                  </button>
+                </div>
+              </div>
+              <div className="px-4 pb-4 space-y-4">
+                <form onSubmit={handleAddJadwal} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="calendar-clock" className="w-4 h-4 text-purple-700"></i> Tambah Jadwal</h2>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label htmlFor="absensiNama" className="block text-xs font-semibold text-slate-600 mb-1">Nama</label>
-                      <input id="absensiNama" type="text" value={absensiForm.nama} onChange={(e) => setAbsensiForm({ ...absensiForm, nama: e.target.value })} placeholder="Nama karyawan" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
+                      <label htmlFor="jadwalNama" className="block text-xs font-semibold text-slate-600 mb-1">Nama</label>
+                      <input id="jadwalNama" type="text" value={jadwalForm.nama} onChange={(e) => setJadwalForm({ ...jadwalForm, nama: e.target.value })} placeholder="Nama karyawan" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" required />
                     </div>
                     <div>
-                      <label htmlFor="absensiRole" className="block text-xs font-semibold text-slate-600 mb-1">Role / Jabatan</label>
-                      <input id="absensiRole" type="text" value={absensiForm.role} onChange={(e) => setAbsensiForm({ ...absensiForm, role: e.target.value })} placeholder="mis. Kasir, Baker" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                      <label htmlFor="jadwalRole" className="block text-xs font-semibold text-slate-600 mb-1">Role / Jabatan</label>
+                      <input id="jadwalRole" type="text" value={jadwalForm.role} onChange={(e) => setJadwalForm({ ...jadwalForm, role: e.target.value })} placeholder="mis. Kasir, Baker" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="absensiStatus" className="block text-xs font-semibold text-slate-600 mb-1">Status</label>
-                    <select id="absensiStatus" value={absensiForm.status} onChange={(e) => setAbsensiForm({ ...absensiForm, status: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
-                      {ABSENSI_STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    <label htmlFor="jadwalStatus" className="block text-xs font-semibold text-slate-600 mb-1">Status</label>
+                    <select id="jadwalStatus" value={jadwalForm.status} onChange={(e) => setJadwalForm({ ...jadwalForm, status: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                      {JADWAL_STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
                   </div>
-                  {absensiForm.status === 'Hadir' && (
+                  {jadwalForm.status === 'Hadir' && (
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label htmlFor="absensiJamMasuk" className="block text-xs font-semibold text-slate-600 mb-1">Jam Masuk</label>
-                        <input id="absensiJamMasuk" type="time" value={absensiForm.jamMasuk} onChange={(e) => setAbsensiForm({ ...absensiForm, jamMasuk: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                        <label htmlFor="jadwalJamMasuk" className="block text-xs font-semibold text-slate-600 mb-1">Jam Masuk</label>
+                        <input id="jadwalJamMasuk" type="time" value={jadwalForm.jamMasuk} onChange={(e) => setJadwalForm({ ...jadwalForm, jamMasuk: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
                       </div>
                       <div>
-                        <label htmlFor="absensiJamPulang" className="block text-xs font-semibold text-slate-600 mb-1">Jam Pulang</label>
-                        <input id="absensiJamPulang" type="time" value={absensiForm.jamPulang} onChange={(e) => setAbsensiForm({ ...absensiForm, jamPulang: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                        <label htmlFor="jadwalJamPulang" className="block text-xs font-semibold text-slate-600 mb-1">Jam Pulang</label>
+                        <input id="jadwalJamPulang" type="time" value={jadwalForm.jamPulang} onChange={(e) => setJadwalForm({ ...jadwalForm, jamPulang: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
                       </div>
                     </div>
                   )}
-                  <button type="submit" disabled={savingAbsensi} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
-                    {savingAbsensi ? 'Menyimpan...' : '+ Tambah Absensi'}
+                  <button type="submit" disabled={savingJadwal} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
+                    {savingJadwal ? 'Menyimpan...' : '+ Tambah ke Jadwal'}
                   </button>
                 </form>
 
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2">
-                  <h3 className="font-bold text-slate-700 text-sm">Daftar Absensi — {formatIndonesianDate(selectedDate)}</h3>
-                  {loadingAbsensi ? (
+                  <h3 className="font-bold text-slate-700 text-sm">Jadwal — {formatIndonesianDate(selectedDate)}</h3>
+                  {loadingJadwal ? (
                     <p className="text-sm text-slate-400">Memuat data...</p>
-                  ) : absensiList.length === 0 ? (
-                    <p className="text-sm text-slate-400 text-center py-6">Belum ada data absensi untuk tanggal ini.</p>
+                  ) : jadwalList.length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-6">Belum ada jadwal untuk tanggal ini.</p>
                   ) : (
                     <div className="divide-y divide-slate-100">
-                      {absensiList.map(item => (
+                      {jadwalList.map(item => (
                         <div key={item.firebaseKey} className="py-2.5 flex items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="font-semibold text-slate-800 text-sm truncate">{item.nama} {item.role && <span className="text-slate-400 font-normal">· {item.role}</span>}</p>
@@ -6335,8 +6734,8 @@ const { useState, useEffect } = React;
                             </p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${ABSENSI_STATUS_COLOR[item.status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>{item.status}</span>
-                            <button onClick={() => handleDeleteAbsensi(item.firebaseKey)} className="text-rose-500 p-1"><i data-lucide="trash-2" className="w-4 h-4"></i></button>
+                            <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${JADWAL_STATUS_COLOR[item.status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>{item.status}</span>
+                            <button onClick={() => handleDeleteJadwal(item.firebaseKey)} className="text-rose-500 p-1"><i data-lucide="trash-2" className="w-4 h-4"></i></button>
                           </div>
                         </div>
                       ))}
@@ -6344,26 +6743,51 @@ const { useState, useEffect } = React;
                   )}
                 </div>
               </div>
-            )}
-          </div>
+            </React.Fragment>
+          )}
 
-          {/* Bottom nav — 3 tab saja, sengaja tetap sesederhana ini (lihat catatan di
-              handleSaveAllRecap/komentar atas file soal rencana pengembangan bertahap). */}
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex z-30">
-            {TABS.map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[11px] font-bold transition-all ${activeTab === tab.key ? 'text-purple-800' : 'text-slate-400'}`}
-              >
-                <i data-lucide={tab.icon} className="w-5 h-5"></i>
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </div>
+          {/* ===== MENU: INVENTORY STORE (lihat saja) ===== */}
+          {activeMenu === 'inventory' && (
+            <React.Fragment>
+              <DateNav />
+              <div className="p-4">
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="package" className="w-4 h-4 text-purple-700"></i> Inventory Store</h2>
+                  <p className="text-[11px] text-slate-400">Menampilkan data yang sudah diisi toko untuk tanggal ini — hanya bisa dilihat, tidak bisa diubah dari akun Store Leader.</p>
+                  {loadingHistory ? (
+                    <p className="text-sm text-slate-400">Memuat data...</p>
+                  ) : !historyForDate || !historyForDate.inventory ? (
+                    <p className="text-sm text-slate-400 text-center py-6">Belum ada data Inventory Store untuk tanggal ini.</p>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
+                      {Object.entries(historyForDate.inventory)
+                        .filter(([key, val]) => typeof val === 'number' || (typeof val === 'string' && val !== ''))
+                        .map(([key, val]) => (
+                          <div key={key} className="flex items-center justify-between py-2">
+                            <span className="text-xs text-slate-600">{humanizeFieldKey(key)}</span>
+                            <span className="text-sm font-bold text-slate-800">{val}</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </React.Fragment>
+          )}
+
+          {/* ===== MENU: HASIL PSIKOTES OJT ===== */}
+          {/* Reuse langsung StorePsikotesTab -- komponen yang sama persis dipakai akun Toko,
+              backend-nya (worker.js) sudah difilter WHERE store_id = session.storeId, jadi
+              aman dipakai ulang tanpa kode baru sama sekali (hemat & konsisten). */}
+          {activeMenu === 'psikotes' && (
+            <div className="p-4">
+              <StorePsikotesTab />
+            </div>
+          )}
         </div>
       );
     }
+
 
     function StoreApp({ storeId, storeName, onLogout }) {
       // Semua data toko ini disimpan terpisah di bawah node stores/{storeId}/...

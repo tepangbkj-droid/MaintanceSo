@@ -2,19 +2,35 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
   <title>Tarobun SO Mandiri Hub</title>
 
   <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
+  <!--
+    KEAMANAN (2026-09): CSP diperkuat berdasarkan laporan audit keamanan.
+    Catatan: meta http-equiv CSP ini berfungsi sebagai fallback dan tetap dibutuhkan
+    karena beberapa scanner membaca dari HTML. Header HTTP sungguhan (lebih kuat)
+    dikirim oleh Vercel via vercel.json dan oleh Worker via corsHeaders().
+    
+    Kenapa 'unsafe-inline' & 'unsafe-eval' MASIH diperlukan:
+    - Babel standalone (@babel/standalone) WAJIB 'unsafe-eval' untuk transpile JSX di browser
+    - Tailwind CDN WAJIB 'unsafe-inline' untuk inject style dinamis
+    - Inline event handlers di React dibutuhkan untuk interaktivitas
+    Solusi jangka panjang: build step (Vite/Next.js) yang menghilangkan ketergantungan ini.
+    Saat ini risiko dimitigasi dengan: allowlist sumber yang ketat, HTTPS-only,
+    frame-ancestors 'none' (mencegah clickjacking), dan HSTS.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com https://fonts.gstatic.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self';">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="X-Frame-Options" content="DENY">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <!-- KEAMANAN (hardening, 2026-08): cegah web ini muncul di hasil pencarian Google/Bing dkk.
        Ini aplikasi internal toko, bukan halaman publik -- tidak perlu (dan tidak boleh)
        ke-index search engine. Dipasangkan juga dengan file robots.txt terpisah. -->
-  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noodp, noydir">
 
  <!-- React core -->
   <link rel="manifest" href="manifest.json">
@@ -25,30 +41,38 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-512.png">
 
-<script src="https://unpkg.com/react@18/umd/react.development.js" defer></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" defer></script>
+<!--
+  KEAMANAN (2026-09): Gunakan build PRODUCTION (lebih kecil & tidak mengandung warning).
+  SRI hash bisa digenerate dengan: openssl dgst -sha384 -binary FILE | openssl base64 -A
+  lalu tambahkan integrity="sha384-HASH" ke masing-masing tag.
+  Untuk saat ini crossorigin="anonymous" sudah memenuhi CORS requirement CDN.
+-->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+  defer crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+  defer crossorigin="anonymous"></script>
 
 <!-- Babel (versi dipin, hindari @latest/min.js yang sering pecah di unpkg) -->
-<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.js" defer></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js" defer crossorigin="anonymous"></script>
 
 <!-- Tailwind CDN (wajib ada sebelum tailwind.config dipanggil) -->
-<script src="https://cdn.tailwindcss.com" defer></script>
+<script src="https://cdn.tailwindcss.com" defer crossorigin="anonymous"></script>
 
 <!-- Firebase SDK dihapus — sudah diganti Cloudflare Worker (lihat shim di bawah) -->
 
 <!-- Lucide -->
-<script src="https://unpkg.com/lucide@latest" defer crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.min.js" defer crossorigin="anonymous"></script>
 
 <!-- Tipografi: Inter (teks/UI/data, sangat jelas di ukuran kecil) + Plus Jakarta Sans (judul/heading,
      lebih berkarakter & modern). Dimuat dari unpkg (sudah di-whitelist di CSP di atas) supaya tidak
      perlu menambah domain baru (fonts.googleapis.com/fonts.gstatic.com TIDAK ada di CSP saat ini). -->
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/400.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/500.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/600.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/700.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/600.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/800.css">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/400.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/500.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/600.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/700.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/600.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/800.css" crossorigin="anonymous">
 
   <script>
     // Karena script CDN di atas sekarang di-defer, konfigurasi tailwind ini

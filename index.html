@@ -558,6 +558,54 @@ const { useState, useEffect } = React;
     };
 
     // ==========================================
+    // BUGFIX (2026-09): fitur Investory (AdminInvestoryLinks, invFetch, invSave, invDelete,
+    // dst.) ditulis dengan memanggil `apiFetch(path, opts)` -- helper ringkas yang otomatis
+    // menempelkan WORKER_BASE + parse JSON + lempar Error kalau gagal. TERNYATA helper ini
+    // TIDAK PERNAH dibuat di file ini (hanya `__apiFetch` yang ada, dan itu return Response
+    // mentah, bukan data ter-parse). Akibatnya SETIAP panggilan `apiFetch(...)` di fitur
+    // Investory langsung gagal dengan "ReferenceError: apiFetch is not defined" -- dan
+    // karena tempat manggilnya dibungkus try{...}catch(e){} KOSONG (lihat loadToken/
+    // regenToken di AdminInvestoryLinks), errornya tertelan diam-diam: tombol "Buat Link
+    // Investory" kelihatan seperti tidak melakukan apa-apa, tanpa pesan error sama sekali.
+    // Ini akar masalah "tidak bisa buat link Investory" yang dilaporkan. Definisi di bawah
+    // melengkapi helper yang hilang itu, DAN tetap tercatat di __tarobunDiagLog (lewat
+    // __apiFetch di dalamnya) supaya kalau ada kegagalan lain di masa depan, penyebabnya
+    // kelihatan lewat panel diagnostik (lihat DiagnosticPanel & useDiagLog di bawah),
+    // bukan tertelan diam-diam lagi.
+    // ==========================================
+    async function apiFetch(path, opts = {}) {
+      const url = /^https?:\/\//i.test(path) ? path : `${WORKER_BASE}${path}`;
+      const method = (opts.method || 'GET').toUpperCase();
+      const headers = { ...(opts.headers || {}) };
+      // Otomatis set Content-Type kalau ada body JSON dan pemanggil belum menentukannya sendiri
+      // (semua pemanggil apiFetch di fitur Investory mengirim body: JSON.stringify(...) tanpa
+      // pernah menyertakan header ini secara manual).
+      if (opts.body && !headers['Content-Type'] && !headers['content-type']) {
+        headers['Content-Type'] = 'application/json';
+      }
+      let res;
+      try {
+        res = await __apiFetch(url, { ...opts, method, headers });
+      } catch (networkErr) {
+        // Gagal di level jaringan (offline, CORS diblokir, worker down, dsb) -- BUKAN
+        // error dari server. Dibedakan pesannya supaya diagnosanya jelas.
+        const e = new Error(`Gagal terhubung ke server: ${networkErr && networkErr.message ? networkErr.message : networkErr}`);
+        e.isNetworkError = true;
+        throw e;
+      }
+      let data = null;
+      try { data = await res.json(); } catch (parseErr) { data = null; }
+      if (!res.ok) {
+        const msg = (data && data.error) ? data.error : `Server menjawab HTTP ${res.status} tanpa keterangan.`;
+        const e = new Error(msg);
+        e.status = res.status;
+        e.data = data;
+        throw e;
+      }
+      return data || {};
+    }
+
+    // ==========================================
     // KEAMANAN (2026-08): sesi login awalnya didesain HANYA lewat Set-Cookie HttpOnly
     // (bukan token di localStorage), supaya JS/XSS tidak bisa membaca token sesi.
     // PERBAIKAN (2026-08-15): ternyata Cookie lintas-origin ini bisa diblokir browser
@@ -13073,30 +13121,65 @@ Daily inventory done✅
       );
     }
 
+    // Kotak diagnostik ringkas: menampilkan log request API terakhir (dari
+    // window.__tarobunDiagLog, lihat __apiFetch) yang cocok dengan `filter`. Dipakai supaya
+    // kalau ada fitur gagal, penyebabnya (status HTTP / pesan error) kelihatan LANGSUNG di
+    // HP tanpa perlu buka Console/DevTools.
+    function DiagBox({ filter }) {
+      const [log, setLog] = useState(() => (window.__tarobunDiagLog || []).filter(e => !filter || e.url.includes(filter)));
+      useEffect(() => {
+        const refresh = () => setLog((window.__tarobunDiagLog || []).filter(e => !filter || e.url.includes(filter)));
+        refresh();
+        window.addEventListener('tarobun-diag-update', refresh);
+        return () => window.removeEventListener('tarobun-diag-update', refresh);
+      }, [filter]);
+      if (log.length === 0) return <p className="text-[10px] text-slate-400 italic">Belum ada request tercatat untuk fitur ini.</p>;
+      return (
+        <div className="bg-slate-900 rounded-xl p-2.5 text-[10px] font-mono space-y-1 max-h-48 overflow-auto">
+          {log.slice(0, 15).map((e, i) => (
+            <div key={i} className={e.ok ? 'text-emerald-400' : 'text-rose-400'}>
+              [{e.time}] {e.method} {e.url} → {e.status ?? 'GAGAL KONEKSI'}{e.error ? ` — ${e.error}` : ''} ({e.ms}ms)
+            </div>
+          ))}
+        </div>
+      );
+    }
+
     // ── AdminPanel: Investory link management ──
     function AdminInvestoryLinks({ stores }) {
       const [tokens, setTokens] = useState({});
       const [loading, setLoading] = useState({});
       const [copied, setCopied] = useState({});
       const [regen, setRegen] = useState({});
+      const [errors, setErrors] = useState({});
+      const [showDiag, setShowDiag] = useState(false);
       // Pakai PUBLIC_APP_BASE yang sama dengan psikotes, tapi arahkan ke investory.html
       // (halaman publik Investory yang terpisah) — BUKAN ke root index.html.
       const INVESTORY_URL = `${PUBLIC_APP_BASE}/investory.html`;
 
       async function loadToken(storeId) {
         setLoading(l => ({...l,[storeId]:true}));
+        setErrors(er => ({...er,[storeId]:null}));
         try {
           const d = await apiFetch(`/api/investory/token?storeId=${storeId}`);
           setTokens(t => ({...t,[storeId]:d.token}));
-        } catch(e) {}
+        } catch(e) {
+          // BUGFIX (2026-09): dulu error di sini ditangkap lalu DIBUANG (catch kosong),
+          // jadi tombol kelihatan tidak melakukan apa-apa kalau gagal. Sekarang pesannya
+          // ditampilkan ke admin supaya kegagalan tidak lagi diam-diam.
+          setErrors(er => ({...er,[storeId]: e.message || 'Gagal membuat link, coba lagi.'}));
+        }
         finally { setLoading(l => ({...l,[storeId]:false})); }
       }
       async function regenToken(storeId) {
         setRegen(r => ({...r,[storeId]:true}));
+        setErrors(er => ({...er,[storeId]:null}));
         try {
           const d = await apiFetch('/api/investory/token/regen', {method:'POST',body:JSON.stringify({storeId})});
           setTokens(t => ({...t,[storeId]:d.token}));
-        } catch(e) {}
+        } catch(e) {
+          setErrors(er => ({...er,[storeId]: e.message || 'Gagal membuat ulang link, coba lagi.'}));
+        }
         finally { setRegen(r => ({...r,[storeId]:false})); }
       }
       // Format link: investory.html?token=TOKEN — HARUS pakai nama parameter "token" karena
@@ -13112,12 +13195,23 @@ Daily inventory done✅
       return (
         <div className="max-w-3xl mx-auto space-y-4">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-1">
-            <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-              <i data-lucide="thermometer-snowflake" className="w-4 h-4 text-purple-700"></i> Link Investory per Toko
-            </h3>
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                <i data-lucide="thermometer-snowflake" className="w-4 h-4 text-purple-700"></i> Link Investory per Toko
+              </h3>
+              <button onClick={() => setShowDiag(s => !s)} className="text-[10px] font-semibold text-slate-400 underline shrink-0">
+                {showDiag ? 'Sembunyikan diagnostik' : 'Diagnostik'}
+              </button>
+            </div>
             <p className="text-[11px] text-slate-500">
               Setiap toko punya link Investory tersendiri yang bisa dibagikan. Siapa pun yang membuka link ini bisa <b>mencatat stok baru</b> tanpa perlu login — cocok dibagikan ke staf toko lewat WhatsApp/Telegram.
             </p>
+            {showDiag && (
+              <div className="pt-2 space-y-1">
+                <p className="text-[10px] text-slate-400">Riwayat request ke <code>/api/investory</code> (terbaru di atas). Kalau tombol "Buat Link" tidak berhasil, lihat di sini apa pesan errornya.</p>
+                <DiagBox filter="/api/investory" />
+              </div>
+            )}
           </div>
           {stores.length===0 && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center text-slate-400 text-sm">Belum ada toko terdaftar.</div>}
           {stores.map(store => {
@@ -13129,10 +13223,16 @@ Daily inventory done✅
                   <p className="font-bold text-slate-800 text-sm">{store.name}</p>
                   <span className="text-[10px] text-slate-400 font-mono">{store.id}</span>
                 </div>
+                {errors[store.id] && (
+                  <div className="bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-semibold rounded-xl p-2.5 flex items-start gap-1.5">
+                    <i data-lucide="alert-triangle" className="w-3.5 h-3.5 shrink-0 mt-0.5"></i>
+                    <span>{errors[store.id]}</span>
+                  </div>
+                )}
                 {!token ? (
                   <button onClick={() => loadToken(store.id)} disabled={loading[store.id]}
                     className="w-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-100 py-2 rounded-xl hover:bg-purple-100 disabled:opacity-50">
-                    {loading[store.id] ? 'Memuat...' : 'Tampilkan / Buat Link Investory'}
+                    {loading[store.id] ? 'Memuat...' : (errors[store.id] ? 'Coba Lagi' : 'Tampilkan / Buat Link Investory')}
                   </button>
                 ) : (
                   <React.Fragment>

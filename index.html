@@ -333,6 +333,80 @@
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
 
+<!-- ===================== PANEL DIAGNOSTIK SEMENTARA ===================== -->
+<!-- Hapus seluruh blok <div id="tarobun-diag">...</div> ini setelah selesai debug. -->
+<div id="tarobun-diag" style="position:fixed;top:0;left:0;right:0;z-index:999999;background:#111;color:#0f0;font-family:monospace;font-size:12px;padding:10px;max-height:45vh;overflow:auto;border-bottom:3px solid #0f0;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+    <strong style="color:#fff;">🔍 DIAGNOSTIK TAROBUN</strong>
+    <button onclick="document.getElementById('tarobun-diag').remove()" style="background:#f00;color:#fff;border:none;padding:4px 10px;border-radius:4px;font-family:monospace;">Tutup X</button>
+  </div>
+  <div id="tarobun-diag-log">Menjalankan pengecekan...</div>
+</div>
+<script>
+(function () {
+  var logEl = document.getElementById('tarobun-diag-log');
+  var lines = [];
+
+  function log(label, ok, detail) {
+    var icon = ok === true ? '✅' : ok === false ? '❌' : 'ℹ️';
+    lines.push(icon + ' ' + label + (detail ? ' — ' + detail : ''));
+    render();
+  }
+
+  function render() {
+    logEl.innerHTML = lines.map(function (l) {
+      return l
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }).join('<br>');
+  }
+
+  // 1) Tangkap SEMUA error JS global (termasuk script gagal load / diblokir CSP)
+  window.addEventListener('error', function (e) {
+    if (e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
+      log('GAGAL MEMUAT: ' + (e.target.src || e.target.href), false, 'Kemungkinan diblokir CSP atau 404');
+    } else if (e.message) {
+      log('JS ERROR', false, e.message + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'));
+    }
+  }, true);
+
+  // 2) Tangkap pelanggaran CSP secara spesifik (paling akurat)
+  document.addEventListener('securitypolicyviolation', function (e) {
+    log('CSP BLOCKED', false, e.violatedDirective + ' → ' + e.blockedURI);
+  });
+
+  // 3) Cek versi CSP yang benar-benar aktif (gabungan meta + header, kalau bisa dibaca)
+  var metaCsp = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  log('Meta CSP ditemukan', !!metaCsp, metaCsp ? 'ada di HTML' : 'tidak ada tag meta CSP');
+
+  // 4) Cek satu-satu resource kunci setelah window load
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      log('window.React', typeof window.React !== 'undefined');
+      log('window.ReactDOM', typeof window.ReactDOM !== 'undefined');
+      log('window.Babel', typeof window.Babel !== 'undefined');
+      log('window.tailwind (Tailwind CDN)', typeof window.tailwind !== 'undefined');
+      log('window.lucide (ikon)', typeof window.lucide !== 'undefined');
+
+      // Tes nyata: apakah class tailwind BENAR-BENAR menghasilkan CSS?
+      var test = document.createElement('div');
+      test.className = 'bg-red-500';
+      test.style.position = 'absolute';
+      test.style.left = '-9999px';
+      document.body.appendChild(test);
+      var bg = getComputedStyle(test).backgroundColor;
+      document.body.removeChild(test);
+      var tailwindWorks = bg === 'rgb(239, 68, 68)'; // warna resmi bg-red-500
+      log('Tailwind CSS benar2 aktif', tailwindWorks, 'bg-red-500 → ' + bg);
+
+      log('Semua pengecekan awal selesai', null, 'Kalau ada tulisan merah (❌) di atas, screenshot & kirim ke saya');
+    }, 1500); // beri waktu script defer & tailwind JIT selesai jalan
+  });
+
+  log('Panel diagnostik aktif, menunggu window load...', null);
+})();
+</script>
+<!-- =================== AKHIR PANEL DIAGNOSTIK SEMENTARA =================== -->
+
 
   <div id="root"></div>
 

@@ -119,19 +119,40 @@
        gara-gara satu kali gagal fetch seperti kemarin. -->
   <script>
     (function () {
-      var MAX_RETRY = 4;
+      // Beberapa jaringan/ISP (terutama filter DNS di Indonesia) salah mengklasifikasikan
+      // domain cdn.tailwindcss.com sebagai situs "gambling" dan memblokirnya di level DNS —
+      // ini masalah yang sudah dikenal luas, bukan soal server Tailwind down. Koneksi bisa
+      // saja cepat & normal, tapi domain SPESIFIK ini tetap gagal di-resolve.
+      //
+      // Solusinya: sediakan SUMBER CADANGAN dari domain lain (unpkg.com, yang sudah
+      // whitelisted di CSP situs ini) yang meng-hosting file identik lewat paket npm
+      // "tailwindcss-cdn". Kalau sumber utama gagal berkali-kali, otomatis pindah ke
+      // sumber cadangan — jadi tetap jalan meski domain utamanya diblokir jaringan.
+      var SOURCES = [
+        'https://cdn.tailwindcss.com',
+        'https://unpkg.com/tailwindcss-cdn@3.4.10/tailwindcss.js'
+      ];
+      var RETRY_PER_SOURCE = 2;
+      var sourceIndex = 0;
       var attempt = 0;
 
       function loadTailwindCDN() {
         attempt++;
         var s = document.createElement('script');
-        // parameter attempt di URL cuma buat cache-busting supaya browser tidak
+        var base = SOURCES[sourceIndex];
+        var sep = base.indexOf('?') === -1 ? '?' : '&';
+        // parameter retry di URL cuma buat cache-busting supaya browser tidak
         // memakai ulang response gagal/parsial yang mungkin sempat ke-cache.
-        s.src = 'https://cdn.tailwindcss.com?retry=' + attempt;
+        s.src = base + sep + 'retry=' + attempt;
         s.crossOrigin = 'anonymous';
         s.onerror = function () {
-          if (attempt < MAX_RETRY) {
-            setTimeout(loadTailwindCDN, attempt * 1000); // jeda 1s, 2s, 3s, ...
+          if (attempt < RETRY_PER_SOURCE) {
+            setTimeout(loadTailwindCDN, attempt * 1000); // jeda 1s, 2s, ...
+          } else if (sourceIndex < SOURCES.length - 1) {
+            // sumber ini sudah dicoba beberapa kali & tetap gagal -> pindah ke cadangan
+            sourceIndex++;
+            attempt = 0;
+            loadTailwindCDN();
           } else {
             showReloadBanner();
           }

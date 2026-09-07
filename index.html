@@ -33,9 +33,6 @@
 <!-- Babel (versi dipin, hindari @latest/min.js yang sering pecah di unpkg) -->
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js" defer crossorigin="anonymous"></script>
 
-<!-- Tailwind CDN (wajib ada sebelum tailwind.config dipanggil) -->
-<script src="https://cdn.tailwindcss.com" defer crossorigin="anonymous"></script>
-
 <!-- Firebase SDK dihapus — sudah diganti Cloudflare Worker (lihat shim di bawah) -->
 
 <!-- Lucide -->
@@ -52,62 +49,113 @@
 <link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css">
 <link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/800.css">
 
+  <!-- Preconnect: siapkan koneksi ke CDN Tailwind lebih awal supaya lebih cepat & lebih kecil
+       kemungkinan timeout di jaringan lambat. -->
+  <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+
   <script>
-    // Karena script CDN di atas sekarang di-defer, konfigurasi tailwind ini
-    // (script inline, TIDAK ikut defer) harus ditunda sampai window "load"
-    // agar variabel global `tailwind` sudah pasti terdefinisi.
-    window.addEventListener('load', function () {
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              brand: {
-                purple: '#6D28D9',
-                dark: '#1E1B4B',
-                // Skala brand tambahan — dipakai utk gradient header/tombol utama yang lebih
-                // dalam & "premium" dibanding purple-800/indigo-900 polos, tetap satu keluarga
-                // warna dengan brand.purple yang sudah ada supaya identitas tidak berubah drastis.
-                50:  '#F5F3FF',
-                100: '#EDE9FE',
-                600: '#7C3AED',
-                700: '#6D28D9',
-                800: '#5B21B6',
-                900: '#3B1370',
-              },
-              // Aksen hangat (nuansa "roti panggang") — dipakai TIPIS-TIPIS untuk highlight,
-              // badge, atau progress, bukan warna dominan, supaya dashboard tidak monoton ungu.
-              wheat: {
-                50:  '#FFFBEB',
-                100: '#FEF3C7',
-                500: '#D97706',
-                600: '#B45309',
-              },
-              ink: '#1E1B2E',
+    // PENTING: window.tailwind.config HARUS sudah ada SEBELUM script CDN Tailwind
+    // dieksekusi (bukan setelah window "load" seperti sebelumnya — itu bug, karena
+    // Tailwind CDN langsung men-scan & apply style begitu scriptnya jalan, bukan
+    // menunggu window load). Makanya config ini didefinisikan lebih dulu, lalu baru
+    // script Tailwind CDN kita masukkan lewat loader di bawah.
+    window.tailwind = window.tailwind || {};
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              purple: '#6D28D9',
+              dark: '#1E1B4B',
+              // Skala brand tambahan — dipakai utk gradient header/tombol utama yang lebih
+              // dalam & "premium" dibanding purple-800/indigo-900 polos, tetap satu keluarga
+              // warna dengan brand.purple yang sudah ada supaya identitas tidak berubah drastis.
+              50:  '#F5F3FF',
+              100: '#EDE9FE',
+              600: '#7C3AED',
+              700: '#6D28D9',
+              800: '#5B21B6',
+              900: '#3B1370',
             },
-            fontFamily: {
-              // font-sans (body/UI/data) tetap default di seluruh app tanpa perlu ganti className
-              // manapun; font-display dipakai eksplisit hanya di judul-judul besar/hero.
-              sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-              display: ['"Plus Jakarta Sans"', 'Inter', 'ui-sans-serif', 'sans-serif'],
+            // Aksen hangat (nuansa "roti panggang") — dipakai TIPIS-TIPIS untuk highlight,
+            // badge, atau progress, bukan warna dominan, supaya dashboard tidak monoton ungu.
+            wheat: {
+              50:  '#FFFBEB',
+              100: '#FEF3C7',
+              500: '#D97706',
+              600: '#B45309',
             },
-            boxShadow: {
-              // Bayangan lembut & "mengambang", lebih halus dari shadow-lg/xl bawaan Tailwind
-              // yang cenderung keras — dipakai utk kartu & modal supaya kesan "ringan".
-              soft: '0 2px 8px -2px rgba(30, 27, 46, 0.06), 0 8px 24px -8px rgba(30, 27, 46, 0.10)',
-              softHover: '0 4px 14px -2px rgba(30, 27, 46, 0.08), 0 16px 32px -12px rgba(30, 27, 46, 0.16)',
+            ink: '#1E1B2E',
+          },
+          fontFamily: {
+            // font-sans (body/UI/data) tetap default di seluruh app tanpa perlu ganti className
+            // manapun; font-display dipakai eksplisit hanya di judul-judul besar/hero.
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            display: ['"Plus Jakarta Sans"', 'Inter', 'ui-sans-serif', 'sans-serif'],
+          },
+          boxShadow: {
+            // Bayangan lembut & "mengambang", lebih halus dari shadow-lg/xl bawaan Tailwind
+            // yang cenderung keras — dipakai utk kartu & modal supaya kesan "ringan".
+            soft: '0 2px 8px -2px rgba(30, 27, 46, 0.06), 0 8px 24px -8px rgba(30, 27, 46, 0.10)',
+            softHover: '0 4px 14px -2px rgba(30, 27, 46, 0.08), 0 16px 32px -12px rgba(30, 27, 46, 0.16)',
+          },
+          keyframes: {
+            shimmer: {
+              '100%': { transform: 'translateX(100%)' },
             },
-            keyframes: {
-              shimmer: {
-                '100%': { transform: 'translateX(100%)' },
-              },
-            },
-            animation: {
-              shimmer: 'shimmer 1.6s ease-in-out infinite',
-            },
-          }
+          },
+          animation: {
+            shimmer: 'shimmer 1.6s ease-in-out infinite',
+          },
         }
-      };
-    });
+      }
+    };
+  </script>
+
+  <!-- Loader Tailwind CDN dengan AUTO-RETRY (ditambahkan 2026-09): kalau gagal dimuat
+       karena jaringan lambat/putus (bukan diblokir CSP), otomatis dicoba ulang sampai
+       4 kali dengan jeda makin lama, sebelum akhirnya menampilkan tombol "Muat Ulang"
+       kalau memang semua percobaan gagal. Ini supaya tampilan tidak langsung polos
+       gara-gara satu kali gagal fetch seperti kemarin. -->
+  <script>
+    (function () {
+      var MAX_RETRY = 4;
+      var attempt = 0;
+
+      function loadTailwindCDN() {
+        attempt++;
+        var s = document.createElement('script');
+        // parameter attempt di URL cuma buat cache-busting supaya browser tidak
+        // memakai ulang response gagal/parsial yang mungkin sempat ke-cache.
+        s.src = 'https://cdn.tailwindcss.com?retry=' + attempt;
+        s.crossOrigin = 'anonymous';
+        s.onerror = function () {
+          if (attempt < MAX_RETRY) {
+            setTimeout(loadTailwindCDN, attempt * 1000); // jeda 1s, 2s, 3s, ...
+          } else {
+            showReloadBanner();
+          }
+        };
+        document.head.appendChild(s);
+      }
+
+      function showReloadBanner() {
+        function append() {
+          var b = document.createElement('div');
+          b.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:999999;' +
+            'background:#B91C1C;color:#fff;padding:10px 14px;font-family:sans-serif;' +
+            'font-size:13px;text-align:center;';
+          b.innerHTML = 'Gagal memuat tampilan (koneksi bermasalah). ' +
+            '<button onclick="location.reload()" style="margin-left:8px;background:#fff;' +
+            'color:#B91C1C;border:none;padding:4px 10px;border-radius:4px;font-weight:600;">' +
+            'Muat Ulang</button>';
+          document.body.appendChild(b);
+        }
+        if (document.body) { append(); } else { document.addEventListener('DOMContentLoaded', append); }
+      }
+
+      loadTailwindCDN();
+    })();
   </script>
 
   <!-- Animasi untuk pop-up notifikasi Update Sistem -->
@@ -332,80 +380,6 @@
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
-
-<!-- ===================== PANEL DIAGNOSTIK SEMENTARA ===================== -->
-<!-- Hapus seluruh blok <div id="tarobun-diag">...</div> ini setelah selesai debug. -->
-<div id="tarobun-diag" style="position:fixed;top:0;left:0;right:0;z-index:999999;background:#111;color:#0f0;font-family:monospace;font-size:12px;padding:10px;max-height:45vh;overflow:auto;border-bottom:3px solid #0f0;">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-    <strong style="color:#fff;">🔍 DIAGNOSTIK TAROBUN</strong>
-    <button onclick="document.getElementById('tarobun-diag').remove()" style="background:#f00;color:#fff;border:none;padding:4px 10px;border-radius:4px;font-family:monospace;">Tutup X</button>
-  </div>
-  <div id="tarobun-diag-log">Menjalankan pengecekan...</div>
-</div>
-<script>
-(function () {
-  var logEl = document.getElementById('tarobun-diag-log');
-  var lines = [];
-
-  function log(label, ok, detail) {
-    var icon = ok === true ? '✅' : ok === false ? '❌' : 'ℹ️';
-    lines.push(icon + ' ' + label + (detail ? ' — ' + detail : ''));
-    render();
-  }
-
-  function render() {
-    logEl.innerHTML = lines.map(function (l) {
-      return l
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }).join('<br>');
-  }
-
-  // 1) Tangkap SEMUA error JS global (termasuk script gagal load / diblokir CSP)
-  window.addEventListener('error', function (e) {
-    if (e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
-      log('GAGAL MEMUAT: ' + (e.target.src || e.target.href), false, 'Kemungkinan diblokir CSP atau 404');
-    } else if (e.message) {
-      log('JS ERROR', false, e.message + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'));
-    }
-  }, true);
-
-  // 2) Tangkap pelanggaran CSP secara spesifik (paling akurat)
-  document.addEventListener('securitypolicyviolation', function (e) {
-    log('CSP BLOCKED', false, e.violatedDirective + ' → ' + e.blockedURI);
-  });
-
-  // 3) Cek versi CSP yang benar-benar aktif (gabungan meta + header, kalau bisa dibaca)
-  var metaCsp = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
-  log('Meta CSP ditemukan', !!metaCsp, metaCsp ? 'ada di HTML' : 'tidak ada tag meta CSP');
-
-  // 4) Cek satu-satu resource kunci setelah window load
-  window.addEventListener('load', function () {
-    setTimeout(function () {
-      log('window.React', typeof window.React !== 'undefined');
-      log('window.ReactDOM', typeof window.ReactDOM !== 'undefined');
-      log('window.Babel', typeof window.Babel !== 'undefined');
-      log('window.tailwind (Tailwind CDN)', typeof window.tailwind !== 'undefined');
-      log('window.lucide (ikon)', typeof window.lucide !== 'undefined');
-
-      // Tes nyata: apakah class tailwind BENAR-BENAR menghasilkan CSS?
-      var test = document.createElement('div');
-      test.className = 'bg-red-500';
-      test.style.position = 'absolute';
-      test.style.left = '-9999px';
-      document.body.appendChild(test);
-      var bg = getComputedStyle(test).backgroundColor;
-      document.body.removeChild(test);
-      var tailwindWorks = bg === 'rgb(239, 68, 68)'; // warna resmi bg-red-500
-      log('Tailwind CSS benar2 aktif', tailwindWorks, 'bg-red-500 → ' + bg);
-
-      log('Semua pengecekan awal selesai', null, 'Kalau ada tulisan merah (❌) di atas, screenshot & kirim ke saya');
-    }, 1500); // beri waktu script defer & tailwind JIT selesai jalan
-  });
-
-  log('Panel diagnostik aktif, menunggu window load...', null);
-})();
-</script>
-<!-- =================== AKHIR PANEL DIAGNOSTIK SEMENTARA =================== -->
 
 
   <div id="root"></div>

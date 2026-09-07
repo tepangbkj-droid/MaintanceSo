@@ -9,6 +9,20 @@
   <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
+  <!--
+    KEAMANAN (2026-09): CSP diperkuat berdasarkan laporan audit keamanan.
+    Catatan: meta http-equiv CSP ini berfungsi sebagai fallback dan tetap dibutuhkan
+    karena beberapa scanner membaca dari HTML. Header HTTP sungguhan (lebih kuat)
+    dikirim oleh Vercel via vercel.json dan oleh Worker via corsHeaders().
+    
+    Kenapa 'unsafe-inline' & 'unsafe-eval' MASIH diperlukan:
+    - Babel standalone (@babel/standalone) WAJIB 'unsafe-eval' untuk transpile JSX di browser
+    - Tailwind CDN WAJIB 'unsafe-inline' untuk inject style dinamis
+    - Inline event handlers di React dibutuhkan untuk interaktivitas
+    Solusi jangka panjang: build step (Vite/Next.js) yang menghilangkan ketergantungan ini.
+    Saat ini risiko dimitigasi dengan: allowlist sumber yang ketat, HTTPS-only,
+    frame-ancestors 'none' (mencegah clickjacking), dan HSTS.
+  -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com https://fonts.gstatic.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self';">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta http-equiv="X-Frame-Options" content="DENY">
@@ -27,11 +41,22 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-512.png">
 
-<script src="https://unpkg.com/react@18/umd/react.development.js" defer></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" defer></script>
+<!--
+  KEAMANAN (2026-09): Gunakan build PRODUCTION (lebih kecil & tidak mengandung warning).
+  SRI hash bisa digenerate dengan: openssl dgst -sha384 -binary FILE | openssl base64 -A
+  lalu tambahkan integrity="sha384-HASH" ke masing-masing tag.
+  Untuk saat ini crossorigin="anonymous" sudah memenuhi CORS requirement CDN.
+-->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+  defer crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+  defer crossorigin="anonymous"></script>
 
 <!-- Babel (versi dipin, hindari @latest/min.js yang sering pecah di unpkg) -->
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js" defer crossorigin="anonymous"></script>
+
+<!-- Tailwind CDN (wajib ada sebelum tailwind.config dipanggil) -->
+<script src="https://cdn.tailwindcss.com" defer crossorigin="anonymous"></script>
 
 <!-- Firebase SDK dihapus — sudah diganti Cloudflare Worker (lihat shim di bawah) -->
 
@@ -41,142 +66,70 @@
 <!-- Tipografi: Inter (teks/UI/data, sangat jelas di ukuran kecil) + Plus Jakarta Sans (judul/heading,
      lebih berkarakter & modern). Dimuat dari unpkg (sudah di-whitelist di CSP di atas) supaya tidak
      perlu menambah domain baru (fonts.googleapis.com/fonts.gstatic.com TIDAK ada di CSP saat ini). -->
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/400.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/500.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/600.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/700.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/600.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/800.css">
-
-  <!-- Preconnect: siapkan koneksi ke CDN Tailwind lebih awal supaya lebih cepat & lebih kecil
-       kemungkinan timeout di jaringan lambat. -->
-  <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/400.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/500.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/600.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/700.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/600.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/800.css" crossorigin="anonymous">
 
   <script>
-    // PENTING: window.tailwind.config HARUS sudah ada SEBELUM script CDN Tailwind
-    // dieksekusi (bukan setelah window "load" seperti sebelumnya — itu bug, karena
-    // Tailwind CDN langsung men-scan & apply style begitu scriptnya jalan, bukan
-    // menunggu window load). Makanya config ini didefinisikan lebih dulu, lalu baru
-    // script Tailwind CDN kita masukkan lewat loader di bawah.
-    window.tailwind = window.tailwind || {};
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              purple: '#6D28D9',
-              dark: '#1E1B4B',
-              // Skala brand tambahan — dipakai utk gradient header/tombol utama yang lebih
-              // dalam & "premium" dibanding purple-800/indigo-900 polos, tetap satu keluarga
-              // warna dengan brand.purple yang sudah ada supaya identitas tidak berubah drastis.
-              50:  '#F5F3FF',
-              100: '#EDE9FE',
-              600: '#7C3AED',
-              700: '#6D28D9',
-              800: '#5B21B6',
-              900: '#3B1370',
+    // Karena script CDN di atas sekarang di-defer, konfigurasi tailwind ini
+    // (script inline, TIDAK ikut defer) harus ditunda sampai window "load"
+    // agar variabel global `tailwind` sudah pasti terdefinisi.
+    window.addEventListener('load', function () {
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                purple: '#6D28D9',
+                dark: '#1E1B4B',
+                // Skala brand tambahan — dipakai utk gradient header/tombol utama yang lebih
+                // dalam & "premium" dibanding purple-800/indigo-900 polos, tetap satu keluarga
+                // warna dengan brand.purple yang sudah ada supaya identitas tidak berubah drastis.
+                50:  '#F5F3FF',
+                100: '#EDE9FE',
+                600: '#7C3AED',
+                700: '#6D28D9',
+                800: '#5B21B6',
+                900: '#3B1370',
+              },
+              // Aksen hangat (nuansa "roti panggang") — dipakai TIPIS-TIPIS untuk highlight,
+              // badge, atau progress, bukan warna dominan, supaya dashboard tidak monoton ungu.
+              wheat: {
+                50:  '#FFFBEB',
+                100: '#FEF3C7',
+                500: '#D97706',
+                600: '#B45309',
+              },
+              ink: '#1E1B2E',
             },
-            // Aksen hangat (nuansa "roti panggang") — dipakai TIPIS-TIPIS untuk highlight,
-            // badge, atau progress, bukan warna dominan, supaya dashboard tidak monoton ungu.
-            wheat: {
-              50:  '#FFFBEB',
-              100: '#FEF3C7',
-              500: '#D97706',
-              600: '#B45309',
+            fontFamily: {
+              // font-sans (body/UI/data) tetap default di seluruh app tanpa perlu ganti className
+              // manapun; font-display dipakai eksplisit hanya di judul-judul besar/hero.
+              sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+              display: ['"Plus Jakarta Sans"', 'Inter', 'ui-sans-serif', 'sans-serif'],
             },
-            ink: '#1E1B2E',
-          },
-          fontFamily: {
-            // font-sans (body/UI/data) tetap default di seluruh app tanpa perlu ganti className
-            // manapun; font-display dipakai eksplisit hanya di judul-judul besar/hero.
-            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-            display: ['"Plus Jakarta Sans"', 'Inter', 'ui-sans-serif', 'sans-serif'],
-          },
-          boxShadow: {
-            // Bayangan lembut & "mengambang", lebih halus dari shadow-lg/xl bawaan Tailwind
-            // yang cenderung keras — dipakai utk kartu & modal supaya kesan "ringan".
-            soft: '0 2px 8px -2px rgba(30, 27, 46, 0.06), 0 8px 24px -8px rgba(30, 27, 46, 0.10)',
-            softHover: '0 4px 14px -2px rgba(30, 27, 46, 0.08), 0 16px 32px -12px rgba(30, 27, 46, 0.16)',
-          },
-          keyframes: {
-            shimmer: {
-              '100%': { transform: 'translateX(100%)' },
+            boxShadow: {
+              // Bayangan lembut & "mengambang", lebih halus dari shadow-lg/xl bawaan Tailwind
+              // yang cenderung keras — dipakai utk kartu & modal supaya kesan "ringan".
+              soft: '0 2px 8px -2px rgba(30, 27, 46, 0.06), 0 8px 24px -8px rgba(30, 27, 46, 0.10)',
+              softHover: '0 4px 14px -2px rgba(30, 27, 46, 0.08), 0 16px 32px -12px rgba(30, 27, 46, 0.16)',
             },
-          },
-          animation: {
-            shimmer: 'shimmer 1.6s ease-in-out infinite',
-          },
-        }
-      }
-    };
-  </script>
-
-  <!-- Loader Tailwind CDN dengan AUTO-RETRY (ditambahkan 2026-09): kalau gagal dimuat
-       karena jaringan lambat/putus (bukan diblokir CSP), otomatis dicoba ulang sampai
-       4 kali dengan jeda makin lama, sebelum akhirnya menampilkan tombol "Muat Ulang"
-       kalau memang semua percobaan gagal. Ini supaya tampilan tidak langsung polos
-       gara-gara satu kali gagal fetch seperti kemarin. -->
-  <script>
-    (function () {
-      // Beberapa jaringan/ISP (terutama filter DNS di Indonesia) salah mengklasifikasikan
-      // domain cdn.tailwindcss.com sebagai situs "gambling" dan memblokirnya di level DNS —
-      // ini masalah yang sudah dikenal luas, bukan soal server Tailwind down. Koneksi bisa
-      // saja cepat & normal, tapi domain SPESIFIK ini tetap gagal di-resolve.
-      //
-      // Solusinya: sediakan SUMBER CADANGAN dari domain lain (unpkg.com, yang sudah
-      // whitelisted di CSP situs ini) yang meng-hosting file identik lewat paket npm
-      // "tailwindcss-cdn". Kalau sumber utama gagal berkali-kali, otomatis pindah ke
-      // sumber cadangan — jadi tetap jalan meski domain utamanya diblokir jaringan.
-      var SOURCES = [
-        'https://cdn.tailwindcss.com',
-        'https://unpkg.com/tailwindcss-cdn@3.4.10/tailwindcss.js'
-      ];
-      var RETRY_PER_SOURCE = 2;
-      var sourceIndex = 0;
-      var attempt = 0;
-
-      function loadTailwindCDN() {
-        attempt++;
-        var s = document.createElement('script');
-        var base = SOURCES[sourceIndex];
-        var sep = base.indexOf('?') === -1 ? '?' : '&';
-        // parameter retry di URL cuma buat cache-busting supaya browser tidak
-        // memakai ulang response gagal/parsial yang mungkin sempat ke-cache.
-        s.src = base + sep + 'retry=' + attempt;
-        s.crossOrigin = 'anonymous';
-        s.onerror = function () {
-          if (attempt < RETRY_PER_SOURCE) {
-            setTimeout(loadTailwindCDN, attempt * 1000); // jeda 1s, 2s, ...
-          } else if (sourceIndex < SOURCES.length - 1) {
-            // sumber ini sudah dicoba beberapa kali & tetap gagal -> pindah ke cadangan
-            sourceIndex++;
-            attempt = 0;
-            loadTailwindCDN();
-          } else {
-            showReloadBanner();
+            keyframes: {
+              shimmer: {
+                '100%': { transform: 'translateX(100%)' },
+              },
+            },
+            animation: {
+              shimmer: 'shimmer 1.6s ease-in-out infinite',
+            },
           }
-        };
-        document.head.appendChild(s);
-      }
-
-      function showReloadBanner() {
-        function append() {
-          var b = document.createElement('div');
-          b.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:999999;' +
-            'background:#B91C1C;color:#fff;padding:10px 14px;font-family:sans-serif;' +
-            'font-size:13px;text-align:center;';
-          b.innerHTML = 'Gagal memuat tampilan (koneksi bermasalah). ' +
-            '<button onclick="location.reload()" style="margin-left:8px;background:#fff;' +
-            'color:#B91C1C;border:none;padding:4px 10px;border-radius:4px;font-weight:600;">' +
-            'Muat Ulang</button>';
-          document.body.appendChild(b);
         }
-        if (document.body) { append(); } else { document.addEventListener('DOMContentLoaded', append); }
-      }
-
-      loadTailwindCDN();
-    })();
+      };
+    });
   </script>
 
   <!-- Animasi untuk pop-up notifikasi Update Sistem -->
@@ -3749,6 +3702,36 @@ const { useState, useEffect } = React;
       const [telegramForm, setTelegramForm] = useState({ botToken: '', chatId: '' });
       const [savingTelegram, setSavingTelegram] = useState(false);
       const [telegramSaved, setTelegramSaved] = useState(false);
+      const [investoryLink, setInvestoryLink] = useState(null); // { store_id, token, active }
+      const [investoryLinkLoading, setInvestoryLinkLoading] = useState(false);
+      useEffect(() => {
+        if (!detailStore) { setInvestoryLink(null); return; }
+        __apiFetch(`${WORKER_BASE}/api/admin/investory/link?storeId=${encodeURIComponent(detailStore.id)}`, { headers: __authHeaders() })
+          .then(res => res.json())
+          .then(d => { if (d.ok) setInvestoryLink(d.link); })
+          .catch(() => {});
+      }, [detailStore && detailStore.id]);
+      const handleGenerateInvestoryLink = async () => {
+        setInvestoryLinkLoading(true);
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/admin/investory/link`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId: detailStore.id }),
+          });
+          const d = await res.json();
+          if (d.ok) setInvestoryLink({ store_id: detailStore.id, token: d.token, active: 1 });
+        } finally { setInvestoryLinkLoading(false); }
+      };
+      const handleToggleInvestoryLink = async (active) => {
+        setInvestoryLinkLoading(true);
+        try {
+          await __apiFetch(`${WORKER_BASE}/api/admin/investory/link/toggle`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId: detailStore.id, active }),
+          });
+          setInvestoryLink(prev => prev ? { ...prev, active: active ? 1 : 0 } : prev);
+        } finally { setInvestoryLinkLoading(false); }
+      };
       const [regeneratingToken, setRegeneratingToken] = useState(false);
       const [regeneratedToken, setRegeneratedToken] = useState(null);
       // ===== TAMBAHAN: Admin bisa set token KUSTOM (2026-07-25) =====
@@ -4931,10 +4914,6 @@ const { useState, useEffect } = React;
                     <i data-lucide="monitor-smartphone" className="w-4 h-4"></i>
                     <span>Perangkat</span>
                   </button>
-                  <button onClick={() => { setTab('investory'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'investory' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="thermometer-snowflake" className="w-4 h-4"></i>
-                    <span>Link Investory</span>
-                  </button>
 
                   <div className="pt-3 mt-3 border-t border-slate-100 space-y-1">
                     <button onClick={() => { setShowOnboarding(true); setShowMenu(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-all">
@@ -5493,10 +5472,6 @@ const { useState, useEffect } = React;
                 )}
               </div>
             )}
-
-            {tab === 'investory' && (
-              <AdminInvestoryLinks stores={stores} />
-            )}
           </main>
 
           {/* Modal Tambah Toko */}
@@ -5782,6 +5757,56 @@ const { useState, useEffect } = React;
                       </button>
                     </div>
 
+                    <div className="bg-cyan-50 border border-cyan-200 rounded-xl p-4 space-y-3">
+                      <h4 className="font-bold text-slate-700 text-sm flex items-center gap-1.5">
+                        <i data-lucide="link" className="w-3.5 h-3.5"></i> Link Khusus Investory
+                      </h4>
+                      <p className="text-[10px] text-slate-500">
+                        Siapa pun yang membuka link ini bisa mencatat stok Investory (Frizer/Chiller) toko ini TANPA login. Bagikan hanya ke orang yang bertugas mencatat stok.
+                      </p>
+                      {investoryLink && investoryLink.token ? (
+                        <React.Fragment>
+                          <div className="flex items-center gap-2">
+                            <input
+                              readOnly
+                              value={`https://so-mandiri-tarobun.vercel.app/investory.html?token=${investoryLink.token}`}
+                              className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-[11px] font-mono bg-white"
+                              onFocus={(e) => e.target.select()}
+                            />
+                            <button
+                              onClick={() => navigator.clipboard.writeText(`https://so-mandiri-tarobun.vercel.app/investory.html?token=${investoryLink.token}`)}
+                              className="shrink-0 bg-cyan-700 text-white text-xs font-bold py-2 px-3 rounded-lg"
+                            >
+                              Salin
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${investoryLink.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
+                              {investoryLink.active ? 'AKTIF' : 'NONAKTIF'}
+                            </span>
+                            <button
+                              onClick={() => handleToggleInvestoryLink(!investoryLink.active)}
+                              disabled={investoryLinkLoading}
+                              className="text-[10px] font-bold text-slate-600 underline disabled:opacity-50"
+                            >
+                              {investoryLink.active ? 'Nonaktifkan' : 'Aktifkan lagi'}
+                            </button>
+                            <button
+                              onClick={handleGenerateInvestoryLink}
+                              disabled={investoryLinkLoading}
+                              className="text-[10px] font-bold text-rose-600 underline disabled:opacity-50 ml-auto"
+                            >
+                              Buat ulang link
+                            </button>
+                          </div>
+                        </React.Fragment>
+                      ) : (
+                        <button onClick={handleGenerateInvestoryLink} disabled={investoryLinkLoading} className="w-full bg-cyan-700 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">
+                          {investoryLinkLoading ? 'Membuat...' : 'Buat Link Investory'}
+                        </button>
+                      )}
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3">
                       <div className="bg-purple-50 rounded-xl p-4">
                         <p className="text-[10px] text-purple-500 font-bold uppercase">Total Laporan</p>
@@ -5960,15 +5985,6 @@ const { useState, useEffect } = React;
         return <PsikotesOjtPublicPage linkToken={ojtToken} assigned={true} />;
       }
 
-      // ── INVESTORY PUBLIC PAGE ──
-      // Link dibagikan admin per toko: ?investory=TOKEN&store=STOREID
-      // Bisa dibuka siapa saja tanpa login — tampilan read-only stok toko
-      const investoryToken = new URLSearchParams(window.location.search).get('investory');
-      const investoryStore = new URLSearchParams(window.location.search).get('store');
-      if (investoryToken && investoryStore) {
-        return <InvestoryPublicPage storeId={investoryStore} token={investoryToken} />;
-      }
-
       const [session, setSession] = useState(() => loadSession());
       const [checking, setChecking] = useState(true);
       // Splash screen animasi masuk: tampil sebentar di awal, lalu otomatis hilang
@@ -6121,6 +6137,17 @@ const { useState, useEffect } = React;
       const [menuOpen, setMenuOpen] = useState(false); // drawer hamburger
       const [notification, setNotification] = useState(null);
       const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+      const [investoryData, setInvestoryData] = useState({ summary: [], history: [] });
+      const [investoryLoading, setInvestoryLoading] = useState(false);
+      useEffect(() => {
+        if (activeMenu !== 'investory') return;
+        setInvestoryLoading(true);
+        __apiFetch(`${WORKER_BASE}/api/store/investory/list`, { headers: __authHeaders() })
+          .then(res => res.json())
+          .then(d => { if (d.ok) setInvestoryData(d); })
+          .catch(() => {})
+          .finally(() => setInvestoryLoading(false));
+      }, [activeMenu]);
 
       const showToast = (message) => {
         setNotification(message);
@@ -6446,109 +6473,6 @@ const { useState, useEffect } = React;
       const [jadwalForm, setJadwalForm] = useState({ tanggal: selectedDate, nama: '', role: JADWAL_ROLE_OPTIONS[0], status: 'Hadir', jamMasuk: '', jamPulang: '' });
       const [savingJadwal, setSavingJadwal] = useState(false);
 
-      // ── GRID MINGGUAN ──
-      const [jadwalViewMode, setJadwalViewMode] = useState('form'); // 'form' | 'grid'
-      const getWeekDates = (anchorDateStr) => {
-        const anchor = anchorDateStr ? new Date(anchorDateStr + 'T00:00:00') : new Date();
-        const day = anchor.getDay();
-        const diffToMon = day === 0 ? -6 : 1 - day;
-        const monday = new Date(anchor);
-        monday.setDate(anchor.getDate() + diffToMon);
-        return Array.from({ length: 7 }, (_, i) => {
-          const d = new Date(monday);
-          d.setDate(monday.getDate() + i);
-          return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        });
-      };
-      const [weekAnchor, setWeekAnchor] = useState(selectedDate);
-      const weekDates = getWeekDates(weekAnchor);
-      const [weekData, setWeekData] = useState({});
-      const [loadingWeek, setLoadingWeek] = useState(false);
-      const [gridEditCell, setGridEditCell] = useState(null);
-      const [gridEditForm, setGridEditForm] = useState({ nama: '', role: JADWAL_ROLE_OPTIONS[0], status: 'Hadir', jamMasuk: '', jamPulang: '' });
-      const [savingGridCell, setSavingGridCell] = useState(false);
-
-      useEffect(() => {
-        if (jadwalViewMode !== 'grid') return;
-        setLoadingWeek(true);
-        Promise.all(
-          weekDates.map(dateStr =>
-            restOnce(db.ref(`${storeBase}/schedule/${dateStr}`))
-              .then(snap => ({ dateStr, val: snap.val() || {} }))
-              .catch(() => ({ dateStr, val: {} }))
-          )
-        ).then(results => {
-          const nd = {};
-          results.forEach(({ dateStr, val }) => { nd[dateStr] = val; });
-          setWeekData(nd);
-          setLoadingWeek(false);
-        });
-        const unsubscribers = weekDates.map(dateStr => {
-          const ref = db.ref(`${storeBase}/schedule/${dateStr}`);
-          return bindLiveValue(ref, (snap) => {
-            setWeekData(prev => ({ ...prev, [dateStr]: snap.val() || {} }));
-            setLoadingWeek(false);
-          });
-        });
-        return () => unsubscribers.forEach(fn => fn && fn());
-      }, [storeId, jadwalViewMode, weekAnchor]);
-
-      const weekEmployees = React.useMemo(() => {
-        const names = new Set();
-        weekDates.forEach(d => { Object.values(weekData[d] || {}).forEach(e => { if (e.nama) names.add(e.nama); }); });
-        return Array.from(names).sort();
-      }, [weekData, weekDates]);
-
-      const getGridEntry = (nama, dateStr) => {
-        const day = weekData[dateStr] || {};
-        const found = Object.entries(day).find(([,e]) => e.nama === nama);
-        return found ? { firebaseKey: found[0], ...found[1] } : null;
-      };
-
-      const handleSaveGridCell = async () => {
-        if (!gridEditForm.nama.trim() || !gridEditCell) return;
-        setSavingGridCell(true);
-        try {
-          const { dateStr, firebaseKey } = gridEditCell;
-          const payload = { nama: gridEditForm.nama.trim(), role: gridEditForm.role, status: gridEditForm.status, jamMasuk: gridEditForm.status === 'Hadir' ? gridEditForm.jamMasuk : '', jamPulang: gridEditForm.status === 'Hadir' ? gridEditForm.jamPulang : '', updatedAt: Date.now(), ...(firebaseKey ? {} : { createdAt: Date.now() }) };
-          const key = firebaseKey || Date.now().toString();
-          await db.ref(`${storeBase}/schedule/${dateStr}/${key}`).set(payload);
-          setGridEditCell(null);
-          showToast('Jadwal tersimpan! ✅');
-        } catch (err) { showToast('Gagal menyimpan jadwal.'); }
-        finally { setSavingGridCell(false); }
-      };
-
-      const handleDeleteGridCell = async (dateStr, firebaseKey) => {
-        try { await db.ref(`${storeBase}/schedule/${dateStr}/${firebaseKey}`).remove(); showToast('Jadwal dihapus.'); }
-        catch (err) { showToast('Gagal menghapus jadwal.'); }
-      };
-
-      const DAY_LABELS_ID = ['Sen','Sel','Rab','Kam','Jum','Sab','Min'];
-      const formatShortDate = (dateStr) => {
-        const d = new Date(dateStr + 'T00:00:00');
-        return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
-      };
-      const goPrevWeek = () => { const d = new Date(weekAnchor+'T00:00:00'); d.setDate(d.getDate()-7); setWeekAnchor(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); };
-      const goNextWeek = () => { const d = new Date(weekAnchor+'T00:00:00'); d.setDate(d.getDate()+7); setWeekAnchor(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); };
-      const goThisWeek = () => setWeekAnchor(new Date().toISOString().slice(0,10));
-      const GRID_STATUS_BG = { Hadir:'bg-emerald-50 border-emerald-200', Libur:'bg-slate-100 border-slate-200', Izin:'bg-amber-50 border-amber-200', Sakit:'bg-rose-50 border-rose-200', Cuti:'bg-sky-50 border-sky-200' };
-      const GRID_STATUS_TEXT = { Hadir:'text-emerald-700', Libur:'text-slate-500', Izin:'text-amber-700', Sakit:'text-rose-700', Cuti:'text-sky-700' };
-      const calcWeekTotal = (nama) => {
-        let total = 0;
-        weekDates.forEach(d => {
-          const entry = getGridEntry(nama, d);
-          if (entry && entry.status === 'Hadir' && entry.jamMasuk && entry.jamPulang) {
-            const [hIn,mIn] = entry.jamMasuk.split(':').map(Number);
-            const [hOut,mOut] = entry.jamPulang.split(':').map(Number);
-            let mins = (hOut*60+mOut) - (hIn*60+mIn);
-            if (mins < 0) mins += 1440;
-            total += Math.round(mins/60);
-          }
-        });
-        return total;
-      };
-
       // Samakan tanggal default di form Tambah Jadwal dengan tanggal yang lagi dilihat di
       // DateNav -- tapi tetap bisa diganti manual di dalam form itu sendiri (mis. mau
       // langsung mengisi jadwal untuk beberapa hari ke depan tanpa gonta-ganti DateNav).
@@ -6662,8 +6586,8 @@ const { useState, useEffect } = React;
         { key: 'transfer', label: 'Transfer Barang', icon: 'arrow-left-right' },
         { key: 'jadwal', label: 'Jadwal Absensi', icon: 'calendar-clock' },
         { key: 'inventory', label: 'Inventory Store', icon: 'package' },
+        { key: 'investory', label: 'Investory (Frizer/Chiller)', icon: 'snowflake' },
         { key: 'psikotes', label: 'Hasil Psikotes OJT', icon: 'graduation-cap' },
-        { key: 'investory', label: 'Investory', icon: 'thermometer-snowflake' },
       ];
 
       const DateNav = () => (
@@ -6970,34 +6894,25 @@ const { useState, useEffect } = React;
           {/* ===== MENU: JADWAL ABSENSI ===== */}
           {activeMenu === 'jadwal' && (
             <React.Fragment>
-              {/* Toggle Form Harian / Grid Mingguan */}
-              <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center gap-2">
-                <button onClick={() => setJadwalViewMode('form')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${jadwalViewMode==='form'?'bg-purple-800 text-white':'bg-slate-100 text-slate-600'}`}>
-                  <i data-lucide="list" className="w-3 h-3 inline mr-1"></i> Form Harian
-                </button>
-                <button onClick={() => { setJadwalViewMode('grid'); setGridEditCell(null); }} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${jadwalViewMode==='grid'?'bg-purple-800 text-white':'bg-slate-100 text-slate-600'}`}>
-                  <i data-lucide="layout-dashboard" className="w-3 h-3 inline mr-1"></i> Grid Mingguan
-                </button>
-              </div>
-
-              {jadwalViewMode === 'form' && (
-                <React.Fragment>
-                  <DateNav />
-                  <div className="p-4 space-y-4">
-                    <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
-                      <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="send" className="w-4 h-4 text-purple-700"></i> Kirim Otomatis Harian</h2>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600">Aktifkan kirim otomatis ke Telegram</span>
-                        <button onClick={() => handleUpdateScheduleSettings({ autoSendEnabled: !scheduleSettings.autoSendEnabled })} className={`w-12 h-7 rounded-full transition-all relative ${scheduleSettings.autoSendEnabled ? 'bg-emerald-500' : 'bg-slate-300'}`}>
-                          <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${scheduleSettings.autoSendEnabled ? 'left-6' : 'left-1'}`}></span>
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-slate-400">Kalau aktif: setiap hari jam <span className="font-bold">19:00 WIB</span>, jadwal untuk <span className="font-bold">besok</span> otomatis terkirim ke grup Telegram toko — supaya karyawan tidak lupa jadwalnya. Kalau jadwal besok belum diisi, tidak akan ada pesan yang terkirim.</p>
-                      <button onClick={handleSendJadwalNow} disabled={sendingJadwalNow} className="w-full bg-sky-600 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">
-                        {sendingJadwalNow ? 'Mengirim...' : 'Kirim Jadwal Tanggal Ini Sekarang'}
-                      </button>
-                    </div>
+              <DateNav />
+              <div className="p-4 space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="send" className="w-4 h-4 text-purple-700"></i> Kirim Otomatis Harian</h2>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Aktifkan kirim otomatis ke Telegram</span>
+                    <button
+                      onClick={() => handleUpdateScheduleSettings({ autoSendEnabled: !scheduleSettings.autoSendEnabled })}
+                      className={`w-12 h-7 rounded-full transition-all relative ${scheduleSettings.autoSendEnabled ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                    >
+                      <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${scheduleSettings.autoSendEnabled ? 'left-6' : 'left-1'}`}></span>
+                    </button>
                   </div>
+                  <p className="text-[11px] text-slate-400">Kalau aktif: setiap hari jam <span className="font-bold">19:00 WIB</span>, jadwal untuk <span className="font-bold">besok</span> otomatis terkirim ke grup Telegram toko — supaya karyawan tidak lupa jadwalnya. Kalau jadwal besok belum diisi, tidak akan ada pesan yang terkirim.</p>
+                  <button onClick={handleSendJadwalNow} disabled={sendingJadwalNow} className="w-full bg-sky-600 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">
+                    {sendingJadwalNow ? 'Mengirim...' : 'Kirim Jadwal Tanggal Ini Sekarang'}
+                  </button>
+                </div>
+              </div>
               <div className="px-4 pb-4 space-y-4">
                 <form onSubmit={handleAddJadwal} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
                   <h2 className="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="calendar-clock" className="w-4 h-4 text-purple-700"></i> Tambah Jadwal</h2>
@@ -7064,137 +6979,6 @@ const { useState, useEffect } = React;
                   )}
                 </div>
               </div>
-                </React.Fragment>
-              )}
-
-              {/* ── GRID MINGGUAN ── */}
-              {jadwalViewMode === 'grid' && (
-                <React.Fragment>
-                  <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-2">
-                    <button onClick={goPrevWeek} className="p-1.5 rounded-lg bg-slate-100 text-slate-600"><i data-lucide="chevron-left" className="w-4 h-4"></i></button>
-                    <div className="flex-1 text-center">
-                      <p className="text-xs font-bold text-slate-800">{formatShortDate(weekDates[0])} – {formatShortDate(weekDates[6])}</p>
-                      <p className="text-[10px] text-slate-400">Senin – Minggu</p>
-                    </div>
-                    <button onClick={goThisWeek} className="px-2 py-1 rounded-lg bg-purple-50 text-purple-700 text-[10px] font-bold">Minggu ini</button>
-                    <button onClick={goNextWeek} className="p-1.5 rounded-lg bg-slate-100 text-slate-600"><i data-lucide="chevron-right" className="w-4 h-4"></i></button>
-                  </div>
-                  <div className="overflow-x-auto pb-4">
-                    {loadingWeek ? (
-                      <div className="p-8 text-center text-sm text-slate-400">Memuat jadwal minggu ini...</div>
-                    ) : (
-                      <table className="min-w-full border-collapse" style={{minWidth:'680px'}}>
-                        <thead>
-                          <tr className="bg-slate-50">
-                            <th className="sticky left-0 z-10 bg-slate-50 border border-slate-200 px-3 py-2 text-left text-xs font-bold text-slate-600 min-w-[110px]">Nama</th>
-                            {weekDates.map((d,i) => {
-                              const isToday = d === new Date().toISOString().slice(0,10);
-                              return (
-                                <th key={d} className={`border border-slate-200 px-2 py-2 text-center text-xs font-bold min-w-[92px] ${isToday?'bg-purple-100 text-purple-800':'text-slate-600'}`}>
-                                  <div>{DAY_LABELS_ID[i]}</div>
-                                  <div className={`text-[10px] font-normal ${isToday?'text-purple-600':'text-slate-400'}`}>{formatShortDate(d)}</div>
-                                </th>
-                              );
-                            })}
-                            <th className="border border-slate-200 px-2 py-2 text-center text-xs font-bold text-slate-600 min-w-[52px]">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {weekEmployees.length === 0 ? (
-                            <tr><td colSpan={9} className="border border-slate-200 px-4 py-8 text-center text-sm text-slate-400">Belum ada jadwal minggu ini.</td></tr>
-                          ) : weekEmployees.map(nama => (
-                            <tr key={nama} className="hover:bg-slate-50">
-                              <td className="sticky left-0 z-10 bg-white border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 max-w-[110px]">
-                                <div className="truncate" title={nama}>{nama}</div>
-                              </td>
-                              {weekDates.map(d => {
-                                const entry = getGridEntry(nama, d);
-                                const isEditing = gridEditCell && gridEditCell.dateStr === d && gridEditCell.namaTarget === nama;
-                                const isToday = d === new Date().toISOString().slice(0,10);
-                                return (
-                                  <td key={d} className={`border border-slate-200 p-1 align-top ${isToday?'bg-purple-50/40':''}`}>
-                                    {isEditing ? (
-                                      <div className="space-y-1 p-1">
-                                        <select value={gridEditForm.status} onChange={e => setGridEditForm(f => ({...f,status:e.target.value}))} className="w-full text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white">
-                                          {JADWAL_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                                        </select>
-                                        {gridEditForm.status==='Hadir' && (
-                                          <React.Fragment>
-                                            <input type="time" value={gridEditForm.jamMasuk} onChange={e => setGridEditForm(f => ({...f,jamMasuk:e.target.value}))} className="w-full text-[10px] border border-slate-300 rounded px-1 py-0.5" />
-                                            <input type="time" value={gridEditForm.jamPulang} onChange={e => setGridEditForm(f => ({...f,jamPulang:e.target.value}))} className="w-full text-[10px] border border-slate-300 rounded px-1 py-0.5" />
-                                            <select value={gridEditForm.role} onChange={e => setGridEditForm(f => ({...f,role:e.target.value}))} className="w-full text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white">
-                                              {JADWAL_ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-                                            </select>
-                                          </React.Fragment>
-                                        )}
-                                        <div className="flex gap-1">
-                                          <button onClick={handleSaveGridCell} disabled={savingGridCell} className="flex-1 bg-purple-800 disabled:opacity-50 text-white text-[9px] font-bold py-0.5 rounded">{savingGridCell?'...':'Simpan'}</button>
-                                          <button onClick={() => setGridEditCell(null)} className="flex-1 bg-slate-100 text-slate-600 text-[9px] font-bold py-0.5 rounded">Batal</button>
-                                        </div>
-                                      </div>
-                                    ) : entry ? (
-                                      <div className={`rounded-md border px-1.5 py-1 cursor-pointer ${GRID_STATUS_BG[entry.status]||'bg-slate-50 border-slate-200'}`}
-                                        onClick={() => { setGridEditCell({dateStr:d,firebaseKey:entry.firebaseKey,namaTarget:nama}); setGridEditForm({nama:entry.nama,role:entry.role||JADWAL_ROLE_OPTIONS[0],status:entry.status||'Hadir',jamMasuk:entry.jamMasuk||'',jamPulang:entry.jamPulang||''}); }}>
-                                        {entry.status==='Hadir' ? (
-                                          <React.Fragment>
-                                            <div className="text-[9px] font-bold text-slate-700">{entry.jamMasuk||'-'}–{entry.jamPulang||'-'}</div>
-                                            <div className={`text-[9px] font-semibold truncate ${GRID_STATUS_TEXT[entry.status]}`}>{entry.role||'–'}</div>
-                                          </React.Fragment>
-                                        ) : (
-                                          <div className={`text-[10px] font-bold text-center py-0.5 ${GRID_STATUS_TEXT[entry.status]||'text-slate-500'}`}>{entry.status}</div>
-                                        )}
-                                        <button onClick={ev => { ev.stopPropagation(); handleDeleteGridCell(d, entry.firebaseKey); }} className="block text-rose-400 ml-auto mt-0.5" title="Hapus">
-                                          <i data-lucide="x" className="w-3 h-3"></i>
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button onClick={() => { setGridEditCell({dateStr:d,firebaseKey:null,namaTarget:nama}); setGridEditForm({nama,role:JADWAL_ROLE_OPTIONS[0],status:'Hadir',jamMasuk:'',jamPulang:''}); }}
-                                        className="w-full h-full min-h-[36px] flex items-center justify-center text-slate-300 hover:text-purple-400 hover:bg-purple-50 rounded-md">
-                                        <i data-lucide="plus" className="w-3.5 h-3.5"></i>
-                                      </button>
-                                    )}
-                                  </td>
-                                );
-                              })}
-                              <td className="border border-slate-200 px-2 py-2 text-center text-xs font-bold text-slate-700">
-                                {calcWeekTotal(nama) > 0 ? calcWeekTotal(nama) : <span className="text-slate-300">–</span>}
-                              </td>
-                            </tr>
-                          ))}
-                          <tr>
-                            <td colSpan={9} className="border border-slate-200 px-3 py-2">
-                              {gridEditCell && gridEditCell.namaTarget === '__new__' ? (
-                                <div className="flex flex-wrap gap-2 items-end">
-                                  <input type="text" value={gridEditForm.nama} onChange={e => setGridEditForm(f => ({...f,nama:e.target.value}))} placeholder="Nama karyawan..." className="flex-1 min-w-[120px] text-xs border border-slate-300 rounded-lg px-2 py-1.5" autoFocus />
-                                  <select value={gridEditCell.dateStr} onChange={e => setGridEditCell(c => ({...c,dateStr:e.target.value}))} className="text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
-                                    {weekDates.map((d,i) => <option key={d} value={d}>{DAY_LABELS_ID[i]} {formatShortDate(d)}</option>)}
-                                  </select>
-                                  <button onClick={handleSaveGridCell} disabled={savingGridCell||!gridEditForm.nama.trim()} className="bg-purple-800 disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 rounded-lg">{savingGridCell?'...':'Tambah'}</button>
-                                  <button onClick={() => setGridEditCell(null)} className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-lg">Batal</button>
-                                </div>
-                              ) : (
-                                <button onClick={() => { setGridEditCell({dateStr:weekDates[0],firebaseKey:null,namaTarget:'__new__'}); setGridEditForm({nama:'',role:JADWAL_ROLE_OPTIONS[0],status:'Hadir',jamMasuk:'',jamPulang:''}); }}
-                                  className="flex items-center gap-2 text-xs text-purple-700 font-semibold">
-                                  <i data-lucide="user-plus" className="w-3.5 h-3.5"></i> Tambah Karyawan
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                  <div className="px-4 pb-4">
-                    <div className="bg-white rounded-xl border border-slate-200 p-3">
-                      <p className="text-[10px] font-bold text-slate-500 mb-2">LEGENDA</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {Object.entries(JADWAL_STATUS_COLOR).map(([s,cls]) => (<span key={s} className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${cls}`}>{s}</span>))}
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-2">Tap cell untuk edit · Total = total jam hadir seminggu</p>
-                    </div>
-                  </div>
-                </React.Fragment>
-              )}
             </React.Fragment>
           )}
 
@@ -7227,6 +7011,76 @@ const { useState, useEffect } = React;
             </React.Fragment>
           )}
 
+          {/* ===== MENU: INVESTORY (stok Frizer/Chiller) ===== */}
+          {activeMenu === 'investory' && (
+            <div className="p-4 space-y-4">
+              {(() => {
+                const lowItems = (investoryData.summary || []).filter(r => r.isLow);
+                return lowItems.length > 0 && (
+                  <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
+                    <h4 className="font-bold text-rose-700 text-sm flex items-center gap-1.5 mb-2">
+                      <i data-lucide="alert-triangle" className="w-4 h-4"></i> Stok Menipis — Segera Isi Ulang
+                    </h4>
+                    <ul className="space-y-1">
+                      {lowItems.map((r, i) => (
+                        <li key={i} className="text-xs text-rose-700 flex justify-between">
+                          <span>{r.item} ({r.location})</span>
+                          <span className="font-bold">{r.qty} {r.unit}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
+
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+                <h3 className="font-bold text-slate-800 text-sm mb-3">Stok Investory Saat Ini</h3>
+                {investoryLoading ? (
+                  <p className="text-xs text-slate-400">Memuat...</p>
+                ) : (investoryData.summary || []).length === 0 ? (
+                  <p className="text-xs text-slate-500">Belum ada catatan Investory untuk toko ini.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {investoryData.summary.map((r, i) => (
+                      <div key={i} className="py-2.5 flex justify-between items-center text-sm">
+                        <div>
+                          <p className="font-semibold text-slate-700">
+                            {r.item}
+                            {r.isLow && <span className="ml-2 text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full">MENIPIS</span>}
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {r.location}{r.expiry_date ? ` · ED ${r.expiry_date}` : ''} · diubah {new Date(r.updated_at).toLocaleString('id-ID')}
+                          </p>
+                        </div>
+                        <p className="font-bold text-slate-800">{r.qty} {r.unit}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+                <h3 className="font-bold text-slate-800 text-sm mb-3">History Pencatatan</h3>
+                {(investoryData.history || []).length === 0 ? (
+                  <p className="text-xs text-slate-500">Belum ada history.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
+                    {investoryData.history.map((h) => (
+                      <div key={h.id} className="py-2 text-xs">
+                        <p className="font-semibold text-slate-700">{h.item} — {h.location} ({h.qty} {h.unit})</p>
+                        <p className="text-slate-400">
+                          {new Date(h.created_at).toLocaleString('id-ID')}
+                          {h.recorded_by ? ` · dicatat oleh ${h.recorded_by}` : ''}
+                          {h.expiry_date ? ` · ED ${h.expiry_date}` : ''}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* ===== MENU: HASIL PSIKOTES OJT ===== */}
           {/* Reuse langsung StorePsikotesTab -- komponen yang sama persis dipakai akun Toko,
               backend-nya (worker.js) sudah difilter WHERE store_id = session.storeId, jadi
@@ -7235,10 +7089,6 @@ const { useState, useEffect } = React;
             <div className="p-4">
               <StorePsikotesTab />
             </div>
-          )}
-
-          {activeMenu === 'investory' && (
-            <LeaderInvestoryTab storeId={storeId} storeName={storeName} />
           )}
         </div>
       );
@@ -7258,6 +7108,17 @@ const { useState, useEffect } = React;
       // yang dipakai di AdminApp.
       const escapeTelegramMarkdown = (text) => String(text === null || text === undefined ? '' : text).replace(/([_*`\[])/g, '\\$1');
   const [activeTab, setActiveTab] = useState('dashboard');
+      const [investoryData, setInvestoryData] = useState({ summary: [], history: [] });
+      const [investoryLoading, setInvestoryLoading] = useState(false);
+      useEffect(() => {
+        if (activeTab !== 'investory') return;
+        setInvestoryLoading(true);
+        __apiFetch(`${WORKER_BASE}/api/store/investory/list`, { headers: __authHeaders() })
+          .then(res => res.json())
+          .then(d => { if (d.ok) setInvestoryData(d); })
+          .catch(() => {})
+          .finally(() => setInvestoryLoading(false));
+      }, [activeTab]);
       const [notification, setNotification] = useState(null);
       const [showConfig, setShowConfig] = useState(false);
       // isFirstTime: true kalau flag 'tarobun_onboarding_store_<id>' belum ada di localStorage
@@ -10104,6 +9965,10 @@ Daily inventory done✅
                     <i data-lucide="package" className="w-4 h-4"></i>
                     <span>SO Stok</span>
                   </button>
+                  <button data-tour="menu-investory" onClick={() => { setActiveTab('investory'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'investory' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="snowflake" className="w-4 h-4"></i>
+                    <span>Investory</span>
+                  </button>
                   <button data-tour="menu-preorder" onClick={() => { setActiveTab('preorder'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'preorder' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="calendar-clock" className="w-4 h-4"></i>
                     <span>PO (Pre Order)</span>
@@ -10143,10 +10008,6 @@ Daily inventory done✅
                   <button data-tour="menu-psikotes-ojt" onClick={() => { setActiveTab('psikotesOjt'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'psikotesOjt' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="graduation-cap" className="w-4 h-4"></i>
                     <span>Progres OJT</span>
-                  </button>
-                  <button onClick={() => { setActiveTab('investory'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'investory' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="thermometer-snowflake" className="w-4 h-4"></i>
-                    <span>Investory</span>
                   </button>
 
                   <div className="pt-3 mt-3 border-t border-slate-100 space-y-1">
@@ -10964,6 +10825,55 @@ Daily inventory done✅
                   <button onClick={handleSaveToDevice} className="w-full bg-indigo-700 hover:bg-indigo-800 text-white font-bold py-3 rounded-xl transition-all shadow-sm">
                     Simpan Data Cloud & Hitung
                   </button>
+                </div>
+              </div>
+            )}
+
+            {/* Tab: Investory (stok Frizer/Chiller — beda dari SO Stok harian di atas) */}
+            {activeTab === 'investory' && (
+              <div className="space-y-4">
+                <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm">
+                  <h3 className="font-bold text-slate-800 text-lg mb-1">Investory — Stok Frizer & Chiller</h3>
+                  <p className="text-xs text-slate-500 mb-4">Pencatatan dilakukan lewat link khusus yang dibagikan Admin. Di sini kamu hanya bisa melihat catatan yang sudah masuk.</p>
+                  {investoryLoading ? (
+                    <p className="text-xs text-slate-400">Memuat...</p>
+                  ) : (investoryData.summary || []).length === 0 ? (
+                    <p className="text-xs text-slate-500">Belum ada catatan Investory untuk toko ini.</p>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
+                      {investoryData.summary.map((r, i) => (
+                        <div key={i} className="py-2.5 flex justify-between items-center text-sm">
+                          <div>
+                            <p className="font-semibold text-slate-700">{r.item}</p>
+                            <p className="text-[11px] text-slate-400">
+                              {r.location}{r.expiry_date ? ` · ED ${r.expiry_date}` : ''} · diubah {new Date(r.updated_at).toLocaleString('id-ID')}
+                            </p>
+                          </div>
+                          <p className="font-bold text-slate-800">{r.qty} {r.unit}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm">
+                  <h3 className="font-bold text-slate-800 text-sm mb-3">History Pencatatan</h3>
+                  {(investoryData.history || []).length === 0 ? (
+                    <p className="text-xs text-slate-500">Belum ada history.</p>
+                  ) : (
+                    <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
+                      {investoryData.history.map((h) => (
+                        <div key={h.id} className="py-2 text-xs">
+                          <p className="font-semibold text-slate-700">{h.item} — {h.location} ({h.qty} {h.unit})</p>
+                          <p className="text-slate-400">
+                            {new Date(h.created_at).toLocaleString('id-ID')}
+                            {h.recorded_by ? ` · dicatat oleh ${h.recorded_by}` : ''}
+                            {h.expiry_date ? ` · ED ${h.expiry_date}` : ''}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -12352,10 +12262,6 @@ Daily inventory done✅
               <StorePsikotesTab />
             )}
 
-            {activeTab === 'investory' && (
-              <StoreInvestoryView storeId={storeId} />
-            )}
-
           </main>
 
         </div>
@@ -12485,679 +12391,6 @@ Daily inventory done✅
     // ==========================================
     // KOMPONEN CHAT (dipakai oleh Toko & Admin)
     // ==========================================
-
-    // ==========================================
-    // KOMPONEN INVESTORY (2026-09)
-    // ==========================================
-    const INV_ITEMS = [
-      { key: 'frozenDough',   label: 'Frozen Dough',  unit: 'bag' },
-      { key: 'coklat',        label: 'Coklat',         unit: 'bag' },
-      { key: 'vanilla',       label: 'Vanilla',        unit: 'bag' },
-      { key: 'rasberi',       label: 'Rasberi',        unit: 'bag' },
-      { key: 'peach',         label: 'Peach',          unit: 'bag' },
-      { key: 'nanas',         label: 'Nanas',          unit: 'bag' },
-      { key: 'whippingCream', label: 'Whipping Cream', unit: 'bag' },
-      { key: 'esBatu',        label: 'Es Batu',        unit: 'pcs' },
-    ];
-    const INV_LOCATIONS = ['Freezer 1', 'Freezer 2', 'Chiller Bawah', 'Chiller Atas'];
-    const INV_UNITS = ['bag', 'pcs'];
-
-    function invGetThreshold(itemKey, unit) {
-      if (itemKey === 'frozenDough') return { val: 10, unit: 'bag' };
-      if (unit === 'pcs') return { val: 15, unit: 'pcs' };
-      return { val: 2, unit: 'bag' };
-    }
-    function invIsLow(entry) {
-      const item = INV_ITEMS.find(i => i.label === entry.namaBarang || i.key === entry.itemKey);
-      if (!item) return false;
-      const th = invGetThreshold(item.key, entry.satuan);
-      return parseFloat(entry.jumlah) < th.val;
-    }
-    function invIsExpiringSoon(ed) {
-      if (!ed) return false;
-      const diff = (new Date(ed + 'T00:00:00') - new Date()) / 86400000;
-      return diff >= 0 && diff <= 1;
-    }
-    function invIsExpired(ed) {
-      if (!ed) return false;
-      return new Date(ed + 'T00:00:00') < new Date(new Date().toDateString());
-    }
-    function invFmtDate(ts) {
-      if (!ts) return '-';
-      return new Date(ts).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-    }
-    function invFmtDateShort(ds) {
-      if (!ds) return '-';
-      return new Date(ds + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
-    }
-    function invTodayStr() {
-      const d = new Date();
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    }
-    async function invFetch(storeId) {
-      const d = await apiFetch(`/api/investory?storeId=${storeId}`);
-      return d.entries || [];
-    }
-    async function invSave(storeId, entry) {
-      return apiFetch('/api/investory', { method: 'POST', body: JSON.stringify({ storeId, ...entry }) });
-    }
-    async function invDelete(storeId, entryId) {
-      return apiFetch(`/api/investory/${entryId}?storeId=${storeId}`, { method: 'DELETE' });
-    }
-
-    function InvBadge({ entry }) {
-      const exp = invIsExpired(entry.ed), soon = !exp && invIsExpiringSoon(entry.ed), low = invIsLow(entry);
-      if (exp)  return <span className="text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-full">KADALUARSA</span>;
-      if (soon) return <span className="text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">⚠ ED Besok</span>;
-      if (low)  return <span className="text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200 px-2 py-0.5 rounded-full">🔴 Menipis</span>;
-      return <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">OK</span>;
-    }
-
-    function InvAlertPanel({ entries }) {
-      const alerts = entries.filter(e => invIsLow(e) || invIsExpiringSoon(e) || invIsExpired(e));
-      if (alerts.length === 0) return null;
-      return (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
-          <h3 className="text-sm font-bold text-amber-800 flex items-center gap-1.5">
-            <i data-lucide="alert-triangle" className="w-4 h-4"></i> Perhatian
-          </h3>
-          {alerts.map((e, i) => {
-            const item = INV_ITEMS.find(ii => ii.label === e.namaBarang || ii.key === e.itemKey);
-            const th = item ? invGetThreshold(item.key, e.satuan) : null;
-            return (
-              <div key={e.id || i} className="flex items-start gap-2 text-xs text-amber-800">
-                <span>{invIsExpired(e.ed) ? '🔴' : invIsExpiringSoon(e.ed) ? '⚠️' : '🟠'}</span>
-                <span><b>{e.namaBarang}</b> ({e.lokasi})
-                  {invIsExpired(e.ed) && ` — Kadaluarsa! ${invFmtDateShort(e.ed)}`}
-                  {invIsExpiringSoon(e.ed) && !invIsExpired(e.ed) && ` — ED besok (${invFmtDateShort(e.ed)})`}
-                  {invIsLow(e) && ` — Stok menipis: ${e.jumlah} ${e.satuan}${th ? ` (batas ${th.val} ${th.unit})` : ''}`}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      );
-    }
-
-    const INV_EMPTY_FORM = { namaBarang: INV_ITEMS[0].label, itemKey: INV_ITEMS[0].key, lokasi: INV_LOCATIONS[0], jumlah: '', satuan: 'bag', ed: '', entryId: null };
-    function InvForm({ initial, storeId, onSaved, onCancel }) {
-      const [form, setForm] = useState(initial || { ...INV_EMPTY_FORM, ed: invTodayStr() });
-      const [saving, setSaving] = useState(false);
-      const [err, setErr] = useState('');
-
-      function pickItem(label) {
-        const item = INV_ITEMS.find(i => i.label === label);
-        setForm(f => ({ ...f, namaBarang: label, itemKey: item ? item.key : '', satuan: item ? item.unit : 'bag' }));
-      }
-      async function handleSubmit(e) {
-        e.preventDefault(); setErr('');
-        if (!form.jumlah || isNaN(parseFloat(form.jumlah))) { setErr('Jumlah harus diisi.'); return; }
-        setSaving(true);
-        try { await invSave(storeId, form); onSaved(); }
-        catch (ex) { setErr(ex.message); }
-        finally { setSaving(false); }
-      }
-      return (
-        <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center animate-fadeIn">
-          <div className="bg-white w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl p-5 space-y-3 animate-scaleIn">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-800">{form.entryId ? 'Edit Catatan' : 'Tambah Catatan'}</h2>
-              <button onClick={onCancel} className="p-1 text-slate-400"><i data-lucide="x" className="w-5 h-5"></i></button>
-            </div>
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-600 mb-1 block">Barang</label>
-                <select value={form.namaBarang} onChange={e => pickItem(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm bg-white">
-                  {INV_ITEMS.map(i => <option key={i.key} value={i.label}>{i.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-600 mb-1 block">Lokasi</label>
-                <select value={form.lokasi} onChange={e => setForm(f => ({ ...f, lokasi: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm bg-white">
-                  {INV_LOCATIONS.map(l => <option key={l} value={l}>{l}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-semibold text-slate-600 mb-1 block">Jumlah</label>
-                  <input type="number" min="0" step="any" value={form.jumlah} onChange={e => setForm(f => ({ ...f, jumlah: e.target.value }))} required className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-slate-600 mb-1 block">Satuan</label>
-                  <select value={form.satuan} onChange={e => setForm(f => ({ ...f, satuan: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm bg-white">
-                    {INV_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-600 mb-1 block">Expired Date (ED)</label>
-                <input type="date" value={form.ed} onChange={e => setForm(f => ({ ...f, ed: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
-              </div>
-              {err && <p className="text-xs text-rose-600 font-semibold">{err}</p>}
-              <div className="flex gap-2 pt-1">
-                <button type="button" onClick={onCancel} className="flex-1 bg-slate-100 text-slate-600 font-bold py-2.5 rounded-xl text-sm">Batal</button>
-                <button type="submit" disabled={saving} className="flex-1 bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
-                  {saving ? 'Menyimpan...' : form.entryId ? 'Simpan' : 'Tambah'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      );
-    }
-
-
-    // =====================================================================
-    // INVESTORY PUBLIC PAGE
-    // Dibuka via link: ?investory=TOKEN&store=STOREID
-    // Read-only, tanpa login — persis pola PsikotesOjtPublicPage
-    // =====================================================================
-    function InvestoryPublicPage({ storeId, token }) {
-      const [entries, setEntries] = useState([]);
-      const [loading, setLoading] = useState(true);
-      const [err, setErr] = useState('');
-      const [storeName, setStoreName] = useState('');
-      const [filterLoc, setFilterLoc] = useState('Semua');
-      const [activeTab, setActiveTab] = useState('list');
-      const [lastUpdate, setLastUpdate] = useState(null);
-
-      useEffect(() => {
-        // Render lucide icons setelah mount
-        if (window.lucide) window.lucide.createIcons();
-      });
-
-      useEffect(() => {
-        async function load() {
-          setLoading(true);
-          setErr('');
-          try {
-            // Fetch stok dengan token publik (tanpa session cookie)
-            const res = await fetch(`${WORKER_BASE}/api/investory?storeId=${storeId}&token=${encodeURIComponent(token)}`);
-            const d = await res.json();
-            if (!res.ok) throw new Error(d.error || 'Token tidak valid atau sudah kedaluwarsa.');
-            setEntries(d.entries || []);
-            setLastUpdate(Date.now());
-            // Ambil nama toko dari entri atau fallback ke storeId
-            const nameRes = await fetch(`${WORKER_BASE}/api/store-info?storeId=${storeId}`).catch(() => null);
-            if (nameRes && nameRes.ok) {
-              const nd = await nameRes.json().catch(() => ({}));
-              if (nd.name) setStoreName(nd.name);
-            }
-          } catch (ex) {
-            setErr(ex.message);
-          } finally {
-            setLoading(false);
-          }
-        }
-        load();
-        // Auto-refresh tiap 60 detik
-        const t = setInterval(load, 60000);
-        return () => clearInterval(t);
-      }, [storeId, token]);
-
-      const filtered = React.useMemo(() => {
-        if (filterLoc === 'Semua') return entries;
-        return entries.filter(e => e.lokasi === filterLoc);
-      }, [entries, filterLoc]);
-
-      const history = React.useMemo(() =>
-        [...entries].sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0)),
-      [entries]);
-
-      // Ringkasan per lokasi
-      const summaryByLoc = React.useMemo(() => {
-        const m = {};
-        INV_LOCATIONS.forEach(l => { m[l] = { count: 0, alerts: 0 }; });
-        entries.forEach(e => {
-          if (!m[e.lokasi]) m[e.lokasi] = { count: 0, alerts: 0 };
-          m[e.lokasi].count++;
-          if (invIsLow(e) || invIsExpiringSoon(e.ed) || invIsExpired(e.ed)) m[e.lokasi].alerts++;
-        });
-        return m;
-      }, [entries]);
-
-      if (loading) {
-        return (
-          <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-            <div className="text-center space-y-3">
-              <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-700 rounded-full animate-spin mx-auto"></div>
-              <p className="text-sm text-slate-500 font-medium">Memuat data Investory...</p>
-            </div>
-          </div>
-        );
-      }
-
-      if (err) {
-        return (
-          <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-            <div className="text-center space-y-3 max-w-xs">
-              <div className="w-14 h-14 bg-rose-50 rounded-full flex items-center justify-center mx-auto">
-                <i data-lucide="link-2-off" className="w-7 h-7 text-rose-400"></i>
-              </div>
-              <p className="font-bold text-slate-700">Link Tidak Valid</p>
-              <p className="text-sm text-slate-400">{err}</p>
-              <p className="text-xs text-slate-400">Minta link Investory terbaru dari Store Leader atau Admin.</p>
-            </div>
-          </div>
-        );
-      }
-
-      return (
-        <div className="min-h-screen bg-slate-50 flex flex-col max-w-lg mx-auto">
-          {/* Header */}
-          <div className="bg-gradient-to-r from-purple-900 to-purple-700 text-white px-4 pt-10 pb-4">
-            <div className="flex items-center justify-between mb-1">
-              <div>
-                <p className="text-xs font-semibold text-purple-200 uppercase tracking-wider flex items-center gap-1">
-                  <i data-lucide="thermometer-snowflake" className="w-3 h-3"></i> Investory
-                </p>
-                <h1 className="font-bold text-xl">{storeName || storeId}</h1>
-              </div>
-              <div className="text-right">
-                <span className="text-[10px] font-bold bg-white/20 rounded-full px-2 py-0.5 block">Baca Saja</span>
-                {lastUpdate && <p className="text-[9px] text-purple-300 mt-0.5">Update: {new Date(lastUpdate).toLocaleTimeString('id-ID', {hour:'2-digit',minute:'2-digit'})}</p>}
-              </div>
-            </div>
-
-            {/* Ringkasan 4 lokasi */}
-            <div className="mt-3 grid grid-cols-4 gap-1.5">
-              {INV_LOCATIONS.map(loc => {
-                const s = summaryByLoc[loc] || { count: 0, alerts: 0 };
-                return (
-                  <button key={loc} onClick={() => setFilterLoc(filterLoc === loc ? 'Semua' : loc)}
-                    className={`rounded-xl py-1.5 px-1 text-center transition-all ${filterLoc === loc ? 'bg-white text-purple-800' : 'bg-white/15 text-white'}`}>
-                    <p className="text-[9px] font-semibold leading-tight">{loc}</p>
-                    <p className="text-base font-bold leading-none mt-0.5">{s.count}</p>
-                    {s.alerts > 0 && <p className="text-[9px] text-amber-300 font-bold">⚠{s.alerts}</p>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Tab */}
-          <div className="bg-white border-b border-slate-200 flex">
-            {[['list','Stok Sekarang'],['history','Riwayat']].map(([t,lbl]) => (
-              <button key={t} onClick={() => setActiveTab(t)}
-                className={`flex-1 py-2.5 text-xs font-bold border-b-2 transition-all ${activeTab===t?'border-purple-700 text-purple-800':'border-transparent text-slate-500'}`}>{lbl}</button>
-            ))}
-          </div>
-
-          {/* Filter barang */}
-          <div className="bg-white px-3 py-2 border-b border-slate-100 overflow-x-auto">
-            <div className="flex gap-1.5 min-w-max">
-              {['Semua',...INV_ITEMS.map(i=>i.label)].map(lbl => (
-                <button key={lbl} onClick={() => setFilterLoc('Semua')}
-                  className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">
-                  {lbl}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 p-4 space-y-3 pb-10">
-            {activeTab === 'list' && (
-              <React.Fragment>
-                <InvAlertPanel entries={filtered} />
-                {filtered.length === 0 ? (
-                  <div className="text-center py-12 space-y-2">
-                    <i data-lucide="package-open" className="w-10 h-10 text-slate-300 mx-auto"></i>
-                    <p className="text-sm text-slate-400">Belum ada catatan stok{filterLoc !== 'Semua' ? ` di ${filterLoc}` : ''}.</p>
-                  </div>
-                ) : (
-                  filtered.map(e => (
-                    <div key={e.id} className={`bg-white rounded-2xl border ${invIsExpired(e.ed)||invIsExpiringSoon(e.ed)?'border-amber-300':invIsLow(e)?'border-orange-300':'border-slate-200'} p-3.5 space-y-1.5`}>
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="font-bold text-slate-800 text-sm">{e.namaBarang}</p>
-                          <p className="text-xs text-slate-500">{e.lokasi}</p>
-                        </div>
-                        <InvBadge entry={e} />
-                      </div>
-                      <div className="flex items-center gap-3 text-xs">
-                        <span className="font-bold text-xl text-slate-800">{e.jumlah}</span>
-                        <span className="text-slate-400">{e.satuan}</span>
-                        {e.ed && <span className={`ml-auto text-xs font-semibold ${invIsExpired(e.ed)?'text-rose-600':invIsExpiringSoon(e.ed)?'text-amber-600':'text-slate-400'}`}>ED: {invFmtDateShort(e.ed)}</span>}
-                      </div>
-                      <p className="text-[10px] text-slate-400">Terakhir diperbarui: {invFmtDate(e.updatedAt)}</p>
-                    </div>
-                  ))
-                )}
-              </React.Fragment>
-            )}
-
-            {activeTab === 'history' && (
-              <React.Fragment>
-                <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Semua catatan — terbaru dulu</p>
-                {history.length === 0 ? (
-                  <p className="text-sm text-slate-400 text-center py-10">Belum ada riwayat catatan.</p>
-                ) : (
-                  history.filter(e => filterLoc==='Semua'||e.lokasi===filterLoc).map(e => (
-                    <div key={e.id} className="bg-white rounded-xl border border-slate-200 p-3 space-y-1 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-slate-800">{e.namaBarang}</span>
-                        <InvBadge entry={e} />
-                      </div>
-                      <div className="flex gap-3 text-slate-600">
-                        <span>{e.lokasi}</span><span>·</span>
-                        <span className="font-semibold">{e.jumlah} {e.satuan}</span>
-                        {e.ed && <span className="ml-auto text-slate-400">ED: {invFmtDateShort(e.ed)}</span>}
-                      </div>
-                      <p className="text-[10px] text-slate-400">{invFmtDate(e.updatedAt)}</p>
-                    </div>
-                  ))
-                )}
-              </React.Fragment>
-            )}
-          </div>
-
-          {/* Footer branding */}
-          <div className="bg-white border-t border-slate-100 px-4 py-3 text-center">
-            <p className="text-[10px] text-slate-400">SO Mandiri · <span className="text-purple-700 font-semibold">Tarobun</span> · Data diperbarui otomatis tiap 60 detik</p>
-          </div>
-        </div>
-      );
-    }
-
-    // ── StoreApp: Investory read-only ──
-    function StoreInvestoryView({ storeId }) {
-      const [entries, setEntries] = useState([]);
-      const [loading, setLoading] = useState(true);
-      const [err, setErr] = useState('');
-      const [filterLoc, setFilterLoc] = useState('Semua');
-      const [tab, setTab] = useState('list');
-      const [tick, setTick] = useState(0);
-
-      useEffect(() => {
-        setLoading(true);
-        invFetch(storeId)
-          .then(e => { setEntries(e); setLoading(false); })
-          .catch(ex => { setErr(ex.message); setLoading(false); });
-      }, [storeId, tick]);
-
-      const filtered = React.useMemo(() => {
-        let list = [...entries];
-        if (filterLoc !== 'Semua') list = list.filter(e => e.lokasi === filterLoc);
-        return list;
-      }, [entries, filterLoc]);
-
-      const history = React.useMemo(() => [...entries].sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0)), [entries]);
-
-      return (
-        <div>
-          <div className="bg-white border-b border-slate-200 flex sticky top-0 z-10">
-            {[['list','Stok Sekarang'],['history','Riwayat']].map(([t,lbl]) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`flex-1 py-2.5 text-xs font-bold border-b-2 transition-all ${tab===t?'border-purple-700 text-purple-800':'border-transparent text-slate-500'}`}>{lbl}</button>
-            ))}
-          </div>
-          <div className="bg-white px-3 py-2 border-b border-slate-100 overflow-x-auto">
-            <div className="flex gap-1.5 min-w-max">
-              {['Semua',...INV_LOCATIONS].map(l => (
-                <button key={l} onClick={() => setFilterLoc(l)}
-                  className={`text-[10px] font-bold px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${filterLoc===l?'bg-purple-800 text-white':'bg-slate-100 text-slate-600'}`}>{l}</button>
-              ))}
-            </div>
-          </div>
-          <div className="p-4 space-y-3">
-            {loading && <p className="text-sm text-slate-400 text-center py-8">Memuat data...</p>}
-            {!loading && err && <p className="text-sm text-rose-500 text-center py-6">{err}</p>}
-            {!loading && !err && tab==='list' && (
-              <React.Fragment>
-                <InvAlertPanel entries={filtered} />
-                {filtered.length===0 ? (
-                  <p className="text-sm text-slate-400 text-center py-10">Belum ada catatan stok.</p>
-                ) : filtered.map(e => (
-                  <div key={e.id} className={`bg-white rounded-2xl border ${invIsExpired(e.ed)||invIsExpiringSoon(e.ed)?'border-amber-300':invIsLow(e)?'border-orange-300':'border-slate-200'} p-3.5 space-y-1.5`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div><p className="font-bold text-slate-800 text-sm">{e.namaBarang}</p><p className="text-xs text-slate-500">{e.lokasi}</p></div>
-                      <InvBadge entry={e} />
-                    </div>
-                    <div className="flex items-center gap-3 text-xs">
-                      <span className="font-semibold text-base text-slate-800">{e.jumlah}</span>
-                      <span className="text-slate-400">{e.satuan}</span>
-                      {e.ed && <span className={`ml-auto ${invIsExpired(e.ed)?'text-rose-600 font-bold':invIsExpiringSoon(e.ed)?'text-amber-600 font-semibold':'text-slate-400'}`}>ED: {invFmtDateShort(e.ed)}</span>}
-                    </div>
-                    <p className="text-[10px] text-slate-400">Dicatat: {invFmtDate(e.updatedAt)}</p>
-                  </div>
-                ))}
-                <button onClick={() => setTick(x=>x+1)} className="text-xs text-purple-700 flex items-center gap-1 ml-auto"><i data-lucide="refresh-cw" className="w-3 h-3"></i> Refresh</button>
-              </React.Fragment>
-            )}
-            {!loading && !err && tab==='history' && (
-              <React.Fragment>
-                <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Riwayat — terbaru dulu</p>
-                {history.length===0 ? <p className="text-sm text-slate-400 text-center py-10">Belum ada riwayat.</p> : (
-                  history.filter(e => filterLoc==='Semua'||e.lokasi===filterLoc).map(e => (
-                    <div key={e.id} className="bg-white rounded-xl border border-slate-200 p-3 space-y-0.5 text-xs">
-                      <div className="flex items-center justify-between gap-2"><span className="font-bold text-slate-800">{e.namaBarang}</span><InvBadge entry={e} /></div>
-                      <div className="flex gap-3 text-slate-600"><span>{e.lokasi}</span><span>·</span><span className="font-semibold">{e.jumlah} {e.satuan}</span>{e.ed && <span className="ml-auto text-slate-400">ED: {invFmtDateShort(e.ed)}</span>}</div>
-                      <p className="text-[10px] text-slate-400">{invFmtDate(e.updatedAt)}</p>
-                    </div>
-                  ))
-                )}
-              </React.Fragment>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    // ── LeaderApp: Investory read+write + alert ──
-    function LeaderInvestoryTab({ storeId, storeName }) {
-      const [entries, setEntries] = useState([]);
-      const [loading, setLoading] = useState(true);
-      const [err, setErr] = useState('');
-      const [filterLoc, setFilterLoc] = useState('Semua');
-      const [tab, setTab] = useState('list');
-      const [tick, setTick] = useState(0);
-      const [showForm, setShowForm] = useState(false);
-      const [editEntry, setEditEntry] = useState(null);
-      const [delConfirm, setDelConfirm] = useState(null);
-      const [toastMsg, setToastMsg] = useState(null);
-
-      const toast = (msg, type='ok') => { setToastMsg({msg,type}); setTimeout(()=>setToastMsg(null),3000); };
-
-      useEffect(() => {
-        setLoading(true);
-        invFetch(storeId).then(e => { setEntries(e); setLoading(false); }).catch(ex => { setErr(ex.message); setLoading(false); });
-      }, [storeId, tick]);
-
-      const filtered = React.useMemo(() => {
-        let list = [...entries];
-        if (filterLoc!=='Semua') list = list.filter(e => e.lokasi===filterLoc);
-        return list;
-      }, [entries, filterLoc]);
-
-      const history = React.useMemo(() => [...entries].sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0)), [entries]);
-
-      async function doDelete(entry) {
-        setDelConfirm(null);
-        try { await invDelete(storeId, entry.id); toast('Entri dihapus.'); setTick(x=>x+1); }
-        catch (ex) { toast(ex.message, 'error'); }
-      }
-
-      return (
-        <React.Fragment>
-          <div className="bg-white border-b border-slate-200 flex sticky top-0 z-10">
-            {[['list','Stok Sekarang'],['history','Riwayat']].map(([t,lbl]) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`flex-1 py-2.5 text-xs font-bold border-b-2 transition-all ${tab===t?'border-purple-700 text-purple-800':'border-transparent text-slate-500'}`}>{lbl}</button>
-            ))}
-          </div>
-          <div className="bg-white px-3 py-2 border-b border-slate-100 overflow-x-auto">
-            <div className="flex gap-1.5 min-w-max">
-              {['Semua',...INV_LOCATIONS].map(l => (
-                <button key={l} onClick={() => setFilterLoc(l)}
-                  className={`text-[10px] font-bold px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${filterLoc===l?'bg-purple-800 text-white':'bg-slate-100 text-slate-600'}`}>{l}</button>
-              ))}
-            </div>
-          </div>
-          <div className="p-4 space-y-3 pb-24">
-            {loading && <p className="text-sm text-slate-400 text-center py-8">Memuat data...</p>}
-            {!loading && err && <p className="text-sm text-rose-500 text-center py-6">{err}</p>}
-            {!loading && !err && tab==='list' && (
-              <React.Fragment>
-                <InvAlertPanel entries={filtered} />
-                {filtered.length===0 ? (
-                  <p className="text-sm text-slate-400 text-center py-10">Belum ada catatan stok. Tap + untuk tambah.</p>
-                ) : filtered.map(e => (
-                  <div key={e.id} className={`bg-white rounded-2xl border ${invIsExpired(e.ed)||invIsExpiringSoon(e.ed)?'border-amber-300':invIsLow(e)?'border-orange-300':'border-slate-200'} p-3.5 space-y-1.5`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div><p className="font-bold text-slate-800 text-sm">{e.namaBarang}</p><p className="text-xs text-slate-500">{e.lokasi}</p></div>
-                      <InvBadge entry={e} />
-                    </div>
-                    <div className="flex items-center gap-3 text-xs">
-                      <span className="font-semibold text-base text-slate-800">{e.jumlah}</span>
-                      <span className="text-slate-400">{e.satuan}</span>
-                      {e.ed && <span className={`ml-auto ${invIsExpired(e.ed)?'text-rose-600 font-bold':invIsExpiringSoon(e.ed)?'text-amber-600 font-semibold':'text-slate-400'}`}>ED: {invFmtDateShort(e.ed)}</span>}
-                    </div>
-                    <div className="flex items-center justify-between pt-0.5">
-                      <p className="text-[10px] text-slate-400">Dicatat: {invFmtDate(e.updatedAt)}</p>
-                      <div className="flex gap-1">
-                        <button onClick={() => { setEditEntry({namaBarang:e.namaBarang,itemKey:e.itemKey||'',lokasi:e.lokasi,jumlah:String(e.jumlah),satuan:e.satuan,ed:e.ed||'',entryId:e.id}); setShowForm(true); }}
-                          className="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-purple-50 hover:text-purple-700">
-                          <i data-lucide="pencil" className="w-3.5 h-3.5"></i>
-                        </button>
-                        <button onClick={() => setDelConfirm(e)} className="p-1.5 rounded-lg bg-slate-100 text-rose-500 hover:bg-rose-50">
-                          <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </React.Fragment>
-            )}
-            {!loading && !err && tab==='history' && (
-              <React.Fragment>
-                <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Riwayat — terbaru dulu</p>
-                {history.length===0 ? <p className="text-sm text-slate-400 text-center py-10">Belum ada riwayat.</p> : (
-                  history.filter(e => filterLoc==='Semua'||e.lokasi===filterLoc).map(e => (
-                    <div key={e.id} className="bg-white rounded-xl border border-slate-200 p-3 space-y-0.5 text-xs">
-                      <div className="flex items-center justify-between gap-2"><span className="font-bold text-slate-800">{e.namaBarang}</span><InvBadge entry={e} /></div>
-                      <div className="flex gap-3 text-slate-600"><span>{e.lokasi}</span><span>·</span><span className="font-semibold">{e.jumlah} {e.satuan}</span>{e.ed && <span className="ml-auto text-slate-400">ED: {invFmtDateShort(e.ed)}</span>}</div>
-                      <p className="text-[10px] text-slate-400">{invFmtDate(e.updatedAt)}</p>
-                    </div>
-                  ))
-                )}
-              </React.Fragment>
-            )}
-          </div>
-
-          <button onClick={() => { setEditEntry(null); setShowForm(true); }}
-            className="fixed bottom-6 right-4 z-30 bg-purple-800 text-white w-14 h-14 rounded-2xl shadow-lg flex items-center justify-center">
-            <i data-lucide="plus" className="w-6 h-6"></i>
-          </button>
-
-          {showForm && <InvForm initial={editEntry} storeId={storeId} onSaved={() => { setShowForm(false); setTick(x=>x+1); toast('Catatan tersimpan! ✅'); }} onCancel={() => setShowForm(false)} />}
-
-          {delConfirm && (
-            <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-5 animate-fadeIn">
-              <div className="bg-white rounded-2xl p-5 w-full max-w-xs space-y-3 animate-scaleIn">
-                <h3 className="font-bold text-slate-800">Hapus Catatan?</h3>
-                <p className="text-sm text-slate-500"><b>{delConfirm.namaBarang}</b> ({delConfirm.lokasi}, {delConfirm.jumlah} {delConfirm.satuan}) akan dihapus.</p>
-                <div className="flex gap-2">
-                  <button onClick={() => setDelConfirm(null)} className="flex-1 bg-slate-100 text-slate-600 font-bold py-2.5 rounded-xl text-sm">Batal</button>
-                  <button onClick={() => doDelete(delConfirm)} className="flex-1 bg-rose-600 text-white font-bold py-2.5 rounded-xl text-sm">Hapus</button>
-                </div>
-              </div>
-            </div>
-          )}
-          {toastMsg && (
-            <div className={`fixed bottom-20 left-1/2 -translate-x-1/2 z-50 ${toastMsg.type==='error'?'bg-rose-600':'bg-emerald-600'} text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg animate-fadeIn`}>
-              {toastMsg.msg}
-            </div>
-          )}
-        </React.Fragment>
-      );
-    }
-
-    // ── AdminPanel: Investory link management ──
-    function AdminInvestoryLinks({ stores }) {
-      const [tokens, setTokens] = useState({});
-      const [loading, setLoading] = useState({});
-      const [copied, setCopied] = useState({});
-      const [regen, setRegen] = useState({});
-      // Pakai PUBLIC_APP_BASE yang sama dengan psikotes — link selalu menunjuk ke domain produksi
-      const INVESTORY_URL = PUBLIC_APP_BASE;
-
-      async function loadToken(storeId) {
-        setLoading(l => ({...l,[storeId]:true}));
-        try {
-          const d = await apiFetch(`/api/investory/token?storeId=${storeId}`);
-          setTokens(t => ({...t,[storeId]:d.token}));
-        } catch(e) {}
-        finally { setLoading(l => ({...l,[storeId]:false})); }
-      }
-      async function regenToken(storeId) {
-        setRegen(r => ({...r,[storeId]:true}));
-        try {
-          const d = await apiFetch('/api/investory/token/regen', {method:'POST',body:JSON.stringify({storeId})});
-          setTokens(t => ({...t,[storeId]:d.token}));
-        } catch(e) {}
-        finally { setRegen(r => ({...r,[storeId]:false})); }
-      }
-      // Format link: ?investory=TOKEN&store=STOREID (konsisten dengan ?psikotes=TOKEN & ?ojt=TOKEN)
-      function getLink(storeId, token) { return `${INVESTORY_URL}?investory=${encodeURIComponent(token)}&store=${storeId}`; }
-      function copyLink(storeId, token) {
-        navigator.clipboard?.writeText(getLink(storeId, token));
-        setCopied(c => ({...c,[storeId]:true}));
-        setTimeout(() => setCopied(c => ({...c,[storeId]:false})), 2000);
-      }
-
-      return (
-        <div className="max-w-3xl mx-auto space-y-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-1">
-            <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-              <i data-lucide="thermometer-snowflake" className="w-4 h-4 text-purple-700"></i> Link Investory per Toko
-            </h3>
-            <p className="text-[11px] text-slate-500">
-              Setiap toko punya link Investory tersendiri yang bisa dibagikan. Link bersifat <b>baca saja</b> — hanya Store Leader yang bisa tambah/edit dari aplikasi.
-            </p>
-          </div>
-          {stores.length===0 && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center text-slate-400 text-sm">Belum ada toko terdaftar.</div>}
-          {stores.map(store => {
-            const token = tokens[store.id];
-            const link = token ? getLink(store.id, token) : null;
-            return (
-              <div key={store.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="font-bold text-slate-800 text-sm">{store.name}</p>
-                  <span className="text-[10px] text-slate-400 font-mono">{store.id}</span>
-                </div>
-                {!token ? (
-                  <button onClick={() => loadToken(store.id)} disabled={loading[store.id]}
-                    className="w-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-100 py-2 rounded-xl hover:bg-purple-100 disabled:opacity-50">
-                    {loading[store.id] ? 'Memuat...' : 'Tampilkan / Buat Link Investory'}
-                  </button>
-                ) : (
-                  <React.Fragment>
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-mono text-[10px] text-slate-600 break-all select-all">{link}</div>
-                    <div className="flex gap-2">
-                      <button onClick={() => copyLink(store.id, token)}
-                        className={`flex-1 text-xs font-bold py-2 rounded-xl border transition-all ${copied[store.id]?'bg-emerald-50 text-emerald-700 border-emerald-200':'bg-slate-100 text-slate-700 border-slate-200 hover:bg-purple-50 hover:text-purple-700'}`}>
-                        {copied[store.id] ? '✓ Tersalin!' : 'Salin Link'}
-                      </button>
-                      <a href={link} target="_blank" rel="noopener noreferrer"
-                        className="flex-1 text-center text-xs font-bold py-2 rounded-xl bg-purple-800 text-white hover:bg-purple-900">
-                        Buka Investory
-                      </a>
-                      <button onClick={() => regenToken(store.id)} disabled={regen[store.id]} title="Reset token"
-                        className="p-2 rounded-xl bg-slate-100 text-slate-500 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50">
-                        <i data-lucide={regen[store.id]?'loader':'refresh-cw'} className={`w-3.5 h-3.5 ${regen[store.id]?'animate-spin':''}`}></i>
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-slate-400">⚠ Klik ikon refresh untuk buat link baru (link lama otomatis tidak valid).</p>
-                  </React.Fragment>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      );
-    }
-
     function ChatPanel({ storeId, senderRole, senderLabel, title, allowEndSession }) {
       const [messages, setMessages] = useState([]);
       const [text, setText] = useState('');

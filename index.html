@@ -13079,8 +13079,9 @@ Daily inventory done✅
       const [loading, setLoading] = useState({});
       const [copied, setCopied] = useState({});
       const [regen, setRegen] = useState({});
-      // Pakai PUBLIC_APP_BASE yang sama dengan psikotes — link selalu menunjuk ke domain produksi
-      const INVESTORY_URL = PUBLIC_APP_BASE;
+      // Pakai PUBLIC_APP_BASE yang sama dengan psikotes, tapi arahkan ke investory.html
+      // (halaman publik Investory yang terpisah) — BUKAN ke root index.html.
+      const INVESTORY_URL = `${PUBLIC_APP_BASE}/investory.html`;
 
       async function loadToken(storeId) {
         setLoading(l => ({...l,[storeId]:true}));
@@ -13098,8 +13099,10 @@ Daily inventory done✅
         } catch(e) {}
         finally { setRegen(r => ({...r,[storeId]:false})); }
       }
-      // Format link: ?investory=TOKEN&store=STOREID (konsisten dengan ?psikotes=TOKEN & ?ojt=TOKEN)
-      function getLink(storeId, token) { return `${INVESTORY_URL}?investory=${encodeURIComponent(token)}&store=${storeId}`; }
+      // Format link: investory.html?token=TOKEN — HARUS pakai nama parameter "token" karena
+      // itu yang dibaca oleh script di investory.html. storeId tidak perlu dikirim di URL,
+      // karena backend sudah bisa menemukan toko dari token saja (lihat /api/investory/public/info).
+      function getLink(storeId, token) { return `${INVESTORY_URL}?token=${encodeURIComponent(token)}`; }
       function copyLink(storeId, token) {
         navigator.clipboard?.writeText(getLink(storeId, token));
         setCopied(c => ({...c,[storeId]:true}));
@@ -13113,7 +13116,7 @@ Daily inventory done✅
               <i data-lucide="thermometer-snowflake" className="w-4 h-4 text-purple-700"></i> Link Investory per Toko
             </h3>
             <p className="text-[11px] text-slate-500">
-              Setiap toko punya link Investory tersendiri yang bisa dibagikan. Link bersifat <b>baca saja</b> — hanya Store Leader yang bisa tambah/edit dari aplikasi.
+              Setiap toko punya link Investory tersendiri yang bisa dibagikan. Siapa pun yang membuka link ini bisa <b>mencatat stok baru</b> tanpa perlu login — cocok dibagikan ke staf toko lewat WhatsApp/Telegram.
             </p>
           </div>
           {stores.length===0 && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center text-slate-400 text-sm">Belum ada toko terdaftar.</div>}

@@ -6287,7 +6287,7 @@ const { useState, useEffect } = React;
       }, [storeId]);
 
       // ----- Best Seller -----
-      const BUN_FLAVOR_LABELS = { original: 'Original', coklat: 'Coklat', vanilla: 'Vanilla', peach: 'Peach', raspberry: 'Raspberry', nanas: 'Nanas', familyBox: 'Family Box' };
+      const BUN_FLAVOR_LABELS = { original: 'Original', coklat: 'Coklat', vanilla: 'Vanilla', peach: 'Peach', raspberry: 'Raspberry', nanas: 'Nanas', matcha: 'Matcha', familyBox: 'Family Box' };
       // Rincian channel pendapatan (2026-08) -- field ini SUDAH ADA & diisi toko lewat
       // Laporan Penjualan (salesData.financials), leader di sini cuma menampilkannya ulang.
       const FINANCIALS_BREAKDOWN_FIELDS = [
@@ -7339,7 +7339,7 @@ const { useState, useEffect } = React;
       // Dua sub-fitur cetak (thermal-friendly, lihat CSS #thermalPrintArea di <style> global):
       // 1) Premix: label per-item (Nama Toko, Nama Barang, Tanggal Buat, Tanggal Exp, Asal Bahan Produksi).
       // 2) Catatan Stok: daftar item (FD/Toping) + jumlah + satuan (Bag/Pcs), bisa tambah berkali-kali lalu dicetak sekaligus.
-      const PRINTING_ITEM_OPTIONS = ['FD', 'Toping Taro', 'Coklat', 'Vanila', 'Peach', 'Rasberi', 'Nanas'];
+      const PRINTING_ITEM_OPTIONS = ['FD', 'Toping Taro', 'Coklat', 'Vanila', 'Peach', 'Rasberi', 'Nanas', 'Matcha'];
       const [printingSubTab, setPrintingSubTab] = useState('premix');
 
       const [premixForm, setPremixForm] = useState({ namaToko: storeName || '', namaBarang: '', tanggalBuat: '', tanggalExp: '', asalBahan: '' });
@@ -7732,6 +7732,7 @@ const { useState, useEffect } = React;
           peach: '',
           raspberry: '',
           nanas: '',
+          matcha: '',
           familyBox: ''
         },
         soldBeverages: {
@@ -7772,6 +7773,7 @@ const { useState, useEffect } = React;
         fillingPeach: '',
         fillingRaspberry: '',
         fillingNanas: '',
+        fillingMatcha: '',
         
         // Ingredients
         uht: '',
@@ -7960,6 +7962,7 @@ const { useState, useEffect } = React;
         { key: 'fillingRaspberry', label: 'Filling Raspberry', unit: 'kg' },
         { key: 'fillingPeach', label: 'Filling Peach', unit: 'kg' },
         { key: 'fillingNanas', label: 'Filling Nanas', unit: 'kg' },
+        { key: 'fillingMatcha', label: 'Filling Matcha', unit: 'kg' },
       ];
 
       // Daftar barang umum (non kop khusus)
@@ -8299,7 +8302,8 @@ const { useState, useEffect } = React;
           numVal(buns.vanilla) + 
           numVal(buns.peach) + 
           numVal(buns.raspberry) +
-          numVal(buns.nanas);
+          numVal(buns.nanas) +
+          numVal(buns.matcha);
         const boxTotal = numVal(buns.familyBox) * 6;
         return individual + boxTotal;
       };
@@ -8353,6 +8357,7 @@ const { useState, useEffect } = React;
       const fillingPeachUsedKg = (numVal(salesData.soldBuns.peach) * 25) / 1000;
       const fillingRaspberryUsedKg = (numVal(salesData.soldBuns.raspberry) * 25) / 1000;
       const fillingNanasUsedKg = (numVal(salesData.soldBuns.nanas) * 25) / 1000;
+      const fillingMatchaUsedKg = (numVal(salesData.soldBuns.matcha) * 25) / 1000;
 
       // --- KULKULASI BAHAN BAKU BEVERAGES ---
       const taroLatteSales = numVal(salesData.soldBeverages.taroLatte);
@@ -8479,6 +8484,7 @@ const { useState, useEffect } = React;
             peach: 22,
             raspberry: 21,
             nanas: 18,
+            matcha: 15,
             familyBox: 60
           },
           soldBeverages: {
@@ -8515,6 +8521,7 @@ const { useState, useEffect } = React;
           fillingPeach: 28,
           fillingRaspberry: 24,
           fillingNanas: 20,
+          fillingMatcha: 18,
           
           uht: 6,
           taroPowder: 4.8,
@@ -8578,6 +8585,7 @@ Vanilla : ${sales.soldBuns.vanilla || 0} pcs
 Peach : ${sales.soldBuns.peach || 0} pcs
 Raspberry : ${sales.soldBuns.raspberry || 0} pcs
 Nanas : ${sales.soldBuns.nanas || 0} pcs
+Matcha : ${sales.soldBuns.matcha || 0} pcs
 Family box : ${sales.soldBuns.familyBox || 0} box (${numVal(sales.soldBuns.familyBox) * 6} pcs)
 *Total : ${totalBuns} pcs*
 
@@ -8621,7 +8629,8 @@ Filling Coklat : ${inv.fillingCoklat || 0} pcs (${(numVal(inv.fillingCoklat) * 0
 Filling Vanilla : ${inv.fillingVanilla || 0} pcs (${(numVal(inv.fillingVanilla) * 0.5).toFixed(1)} kg)
 Filling Peach : ${inv.fillingPeach || 0} pcs (${(numVal(inv.fillingPeach) * 0.5).toFixed(1)} kg)
 Filling Raspberry : ${inv.fillingRaspberry || 0} pcs (${(numVal(inv.fillingRaspberry) * 0.5).toFixed(1)} kg)
-Filling Nanas : ${inv.fillingNanas || 0} pcs (${(numVal(inv.fillingNanas) * 0.5).toFixed(1)} kg)${customDoughLines ? '\n' + customDoughLines : ''}
+Filling Nanas : ${inv.fillingNanas || 0} pcs (${(numVal(inv.fillingNanas) * 0.5).toFixed(1)} kg)
+Filling Matcha : ${inv.fillingMatcha || 0} pcs (${(numVal(inv.fillingMatcha) * 0.5).toFixed(1)} kg)${customDoughLines ? '\n' + customDoughLines : ''}
 
 *Ingredients & Powder* :
 UHT : ${inv.uht || 0} pcs
@@ -10419,6 +10428,10 @@ Daily inventory done✅
                         <span className="text-xs font-bold text-slate-700">Filling Nanas</span>
                         <span className="text-xs font-bold bg-yellow-100 text-yellow-800 px-2.5 py-0.5 rounded-md">{fillingNanasUsedKg.toFixed(3)} kg</span>
                       </div>
+                      <div className="flex justify-between items-center bg-green-50 p-2 rounded-lg">
+                        <span className="text-xs font-bold text-slate-700">Filling Matcha</span>
+                        <span className="text-xs font-bold bg-green-100 text-green-900 px-2.5 py-0.5 rounded-md">{fillingMatchaUsedKg.toFixed(3)} kg</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -10581,6 +10594,10 @@ Daily inventory done✅
                     <div>
                       <label htmlFor="salesData_soldBuns_nanas" className="block text-xs font-semibold text-slate-600 mb-1">Nanas</label>
                       <input id="salesData_soldBuns_nanas" type="number" value={salesData.soldBuns.nanas} onChange={(e) => setSalesData({ ...salesData, soldBuns: { ...salesData.soldBuns, nanas: e.target.value } })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg" placeholder="0" />
+                    </div>
+                    <div>
+                      <label htmlFor="salesData_soldBuns_matcha" className="block text-xs font-semibold text-slate-600 mb-1">Matcha</label>
+                      <input id="salesData_soldBuns_matcha" type="number" value={salesData.soldBuns.matcha} onChange={(e) => setSalesData({ ...salesData, soldBuns: { ...salesData.soldBuns, matcha: e.target.value } })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg" placeholder="0" />
                     </div>
                     <div>
                       <label htmlFor="salesData_soldBuns_familyBox" className="block text-xs font-semibold text-slate-600 mb-1">Family Box (box)</label>
@@ -10800,6 +10817,10 @@ Daily inventory done✅
                     <div>
                       <label htmlFor="inventoryData_fillingNanas" className="block text-xs font-semibold text-slate-600 mb-1">Filling Nanas (pcs)</label>
                       <input id="inventoryData_fillingNanas" type="number" value={inventoryData.fillingNanas} onChange={(e) => setInventoryData({ ...inventoryData, fillingNanas: e.target.value })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm" placeholder="0" />
+                    </div>
+                    <div>
+                      <label htmlFor="inventoryData_fillingMatcha" className="block text-xs font-semibold text-slate-600 mb-1">Filling Matcha (pcs)</label>
+                      <input id="inventoryData_fillingMatcha" type="number" value={inventoryData.fillingMatcha} onChange={(e) => setInventoryData({ ...inventoryData, fillingMatcha: e.target.value })} className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm" placeholder="0" />
                     </div>
                     {/* Field Tambahan dari Admin khusus bagian Frozen Dough & Fillings */}
                     {customInventoryFields.filter(f => f.section === 'dough').map(f => (

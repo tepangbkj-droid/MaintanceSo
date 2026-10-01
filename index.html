@@ -1860,6 +1860,8 @@ const { useState, useEffect } = React;
       { icon: 'calendar-clock', title: 'PO (Pre Order)', desc: 'Catat pesanan pre order pelanggan (bukti bayar, isi pesanan, jadwal pickup) dan kirim ke grup Telegram — otomatis diingatkan 1 jam sebelum waktu pickup.', target: '[data-tour="menu-preorder"]' },
       { icon: 'clipboard-check', title: 'BAP (Berita Acara Penyesuaian)', desc: 'Laporkan selisih nominal antara POS dengan channel pembayaran (EDC/QRIS/Gofood/GrabFood/ShopeeFood) dan kirim ke Telegram.', target: '[data-tour="menu-bap"]' },
       { icon: 'truck', title: 'Datang Barang', desc: 'Catat barang yang baru datang dari gudang pusat, termasuk barang yang tidak sesuai.', target: '[data-tour="menu-kedatangan"]' },
+      { icon: 'users', title: 'Pengunjung', desc: 'Ketuk +1 setiap ada pengunjung masuk. Data per jam dipakai AI untuk menentukan jam ramai dan apa yang perlu disiapkan.', target: '[data-tour="menu-pengunjung"]' },
+      { icon: 'croissant', title: 'Informasi Roti', desc: 'Isi jumlah roti matang & roti yang masih proses baking, total dihitung otomatis lalu langsung dikirim ke grup Telegram tanpa disimpan.', target: '[data-tour="menu-infoRoti"]' },
       { icon: 'camera', title: 'Foto Rijek', desc: 'Unggah foto bun rijek, barang rijek, atau waste sebagai bukti dan dikirim ke Telegram.', target: '[data-tour="menu-wasteFoto"]' },
       { icon: 'printer', title: 'Printing', desc: 'Cetak label Premix (nama barang, tanggal buat/exp, asal bahan) dan Catatan Stok (FD/toping + jumlah). Cocok untuk printer biasa maupun thermal.', target: '[data-tour="menu-printing"]' },
       { icon: 'history', title: 'Riwayat Laporan', desc: 'Lihat & unduh riwayat laporan harian yang tersimpan di Cloud.', target: '[data-tour="menu-history"]' },
@@ -5829,6 +5831,8 @@ const { useState, useEffect } = React;
                         {savingTelegram ? 'Menyimpan...' : (telegramSaved ? '✓ Tersimpan' : 'Simpan Integrasi Telegram')}
                       </button>
                     </div>
+
+                    <StoreTrafficPanel storeId={detailStore.id} storeName={detailStore.name} role="admin" showToast={showAdminToast} />
 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="bg-purple-50 rounded-xl p-4">
@@ -10178,6 +10182,14 @@ Daily inventory done✅
                     <span>Foto Rijek</span>
                     <span className="ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md">{wasteFotoList.length}</span>
                   </button>
+                  <button data-tour="menu-pengunjung" onClick={() => { setActiveTab('pengunjung'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'pengunjung' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="users" className="w-4 h-4"></i>
+                    <span>Pengunjung</span>
+                  </button>
+                  <button data-tour="menu-infoRoti" onClick={() => { setActiveTab('infoRoti'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'infoRoti' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="croissant" className="w-4 h-4"></i>
+                    <span>Informasi Roti</span>
+                  </button>
                   <button data-tour="menu-printing" onClick={() => { setActiveTab('printing'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'printing' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="printer" className="w-4 h-4"></i>
                     <span>Printing</span>
@@ -12417,6 +12429,14 @@ Daily inventory done✅
               <ChatPanel storeId={storeId} senderRole="store" senderLabel={storeName} title="Chat dengan Admin" />
             )}
 
+            {activeTab === 'pengunjung' && (
+              <StoreTrafficPanel storeId={storeId} storeName={storeName} role="store" showToast={showToast} />
+            )}
+
+            {activeTab === 'infoRoti' && (
+              <InformasiRotiTab storeName={storeName} config={config} showToast={showToast} onOpenConfig={() => setShowConfig(true)} historyList={historyList} />
+            )}
+
             {activeTab === 'psikotesOjt' && (
               <StorePsikotesTab />
             )}
@@ -12427,6 +12447,695 @@ Daily inventory done✅
 
           </main>
 
+        </div>
+      );
+    }
+
+    // ==========================================
+    // PENGUNJUNG TOKO + ANALISIS AI (2026-10)
+    // ==========================================
+    // Dipakai di 2 tempat: (1) menu "Pengunjung" aplikasi toko (role='store': tombol hitung +
+    // grafik hari ini + analisis), (2) modal detail toko di Admin (role='admin': atur lokasi
+    // store + lihat analisis). Data pengunjung disimpan Worker (/api/visitors/*), jam & tanggal
+    // ditentukan server (WIB). Analisis ditulis AI (Workers AI) lewat /api/ai/store-traffic.
+    const TRAFFIC_LOCATION_TYPES = ['Mall', 'Ruko / Jalan Raya', 'Kampus / Sekolah', 'Perkantoran', 'Wisata / Pasar', 'Lainnya'];
+    const trafficWibHour = () => new Date(Date.now() + 7 * 3600 * 1000).getUTCHours();
+
+    function StoreTrafficPanel({ storeId, storeName, role, showToast }) {
+      const isAdmin = role === 'admin';
+      const emptyLoc = { name: '', address: '', type: '', lat: '', lng: '', openHour: '10', closeHour: '22', notes: '' };
+      const [loc, setLoc] = useState(emptyLoc);
+      const [savingLoc, setSavingLoc] = useState(false);
+      const [hours, setHours] = useState({});
+      const [pending, setPending] = useState(0);
+      const [result, setResult] = useState(null);
+      const [analyzing, setAnalyzing] = useState(false);
+      const [analysisError, setAnalysisError] = useState('');
+      const pendingRef = React.useRef(0);
+      const flushingRef = React.useRef(false);
+      const timerRef = React.useRef(null);
+      const mountedRef = React.useRef(true);
+      const toast = (m) => { if (showToast) showToast(m); };
+
+      useEffect(() => { scheduleLucideIcons(); });
+
+      // Lokasi store (diatur admin) — dibaca live; toko hanya membaca.
+      useEffect(() => {
+        setResult(null);
+        setAnalysisError('');
+        const ref = db.ref(`stores/${storeId}/location`);
+        return bindLiveValue(ref, (snap) => {
+          const v = snap.val() || {};
+          setLoc({
+            name: v.name || '', address: v.address || '', type: v.type || '',
+            lat: v.lat !== undefined && v.lat !== null ? String(v.lat) : '',
+            lng: v.lng !== undefined && v.lng !== null ? String(v.lng) : '',
+            openHour: String(v.openHour !== undefined && v.openHour !== null ? v.openHour : 10),
+            closeHour: String(v.closeHour !== undefined && v.closeHour !== null ? v.closeHour : 22),
+            notes: v.notes || '',
+          });
+        });
+      }, [storeId]);
+
+      const loadToday = async () => {
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/visitors/today?storeId=${encodeURIComponent(storeId)}`, { headers: __authHeaders() });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok && mountedRef.current) setHours(data.hours || {});
+        } catch (e) { /* diam: akan dicoba lagi pada refresh berikutnya */ }
+      };
+      useEffect(() => {
+        mountedRef.current = true;
+        loadToday();
+        const t = setInterval(() => { if (!pendingRef.current && !flushingRef.current) loadToday(); }, 60000);
+        return () => {
+          mountedRef.current = false;
+          clearInterval(t);
+          clearTimeout(timerRef.current);
+          if (pendingRef.current) flush(); // jangan buang hitungan yang belum terkirim
+        };
+      }, [storeId]);
+
+      // Ketukan dikumpulkan lalu dikirim berkelompok (1 request dalam 1 waktu) supaya tidak ada
+      // hitungan yang hilang saat diketuk cepat.
+      const flush = async () => {
+        if (flushingRef.current) return;
+        const raw = pendingRef.current;
+        if (!raw) return;
+        const d = Math.max(-50, Math.min(50, raw));
+        flushingRef.current = true;
+        pendingRef.current -= d;
+        if (mountedRef.current) setPending(pendingRef.current);
+        let ok = false;
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/visitors/record`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ delta: d }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) throw new Error(data.error || `status ${res.status}`);
+          ok = true;
+          if (mountedRef.current) setHours(data.hours || {});
+        } catch (err) {
+          pendingRef.current += d;
+          if (mountedRef.current) {
+            setPending(pendingRef.current);
+            toast(`Gagal menyimpan hitungan pengunjung: ${(err && err.message) || 'periksa koneksi'}. Ketuk tombol lagi untuk mengirim ulang.`);
+          }
+        } finally {
+          flushingRef.current = false;
+          if (ok && pendingRef.current && mountedRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(flush, 400);
+          }
+        }
+      };
+      const tap = (delta) => {
+        pendingRef.current += delta;
+        setPending(pendingRef.current);
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(flush, 600);
+      };
+
+      const openHour = Math.min(23, Math.max(0, parseInt(loc.openHour, 10) || 10));
+      const closeHour = Math.min(24, Math.max(openHour + 1, parseInt(loc.closeHour, 10) || 22));
+      const curHour = trafficWibHour();
+      const hh = (h) => String(h).padStart(2, '0');
+      const hourCount = (h) => Number(hours[hh(h)]) || 0;
+      const shownNow = Math.max(0, hourCount(curHour) + pending);
+      const todayTotal = Object.keys(hours).reduce((a, k) => a + (Number(hours[k]) || 0), 0) + pending;
+
+      const handleSaveLocation = async () => {
+        const lat = loc.lat.trim() === '' ? null : Number(loc.lat);
+        const lng = loc.lng.trim() === '' ? null : Number(loc.lng);
+        if ((lat !== null && (isNaN(lat) || lat < -90 || lat > 90)) || (lng !== null && (isNaN(lng) || lng < -180 || lng > 180))) {
+          toast('⚠️ Koordinat tidak valid. Contoh: -6.2088 dan 106.8456.');
+          return;
+        }
+        if ((lat === null) !== (lng === null)) { toast('⚠️ Isi latitude DAN longitude, atau kosongkan keduanya.'); return; }
+        const o = parseInt(loc.openHour, 10), c = parseInt(loc.closeHour, 10);
+        if (isNaN(o) || isNaN(c) || o >= c) { toast('⚠️ Jam buka harus lebih awal dari jam tutup.'); return; }
+        setSavingLoc(true);
+        try {
+          await restSet(db.ref(`stores/${storeId}/location`), {
+            name: loc.name.trim(), address: loc.address.trim(), type: loc.type,
+            lat, lng, openHour: o, closeHour: c, notes: loc.notes.trim(), updatedAt: Date.now(),
+          });
+          setResult(null);
+          toast('Lokasi store tersimpan 📍');
+        } catch (err) {
+          toast(`Gagal menyimpan lokasi: ${(err && err.message) || 'periksa koneksi'}`);
+        } finally {
+          setSavingLoc(false);
+        }
+      };
+
+      const runAnalysis = async (refresh) => {
+        setAnalyzing(true);
+        setAnalysisError('');
+        try {
+          if (pendingRef.current) await flush();
+          const res = await __apiFetch(`${WORKER_BASE}/api/ai/store-traffic`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ storeId, refresh: !!refresh }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) throw new Error(data.error || `status ${res.status}`);
+          setResult(data);
+        } catch (err) {
+          setAnalysisError((err && err.message) || 'Gagal menghubungi server.');
+        } finally {
+          setAnalyzing(false);
+        }
+      };
+
+      // Grafik batang sederhana (tanpa library). items: [{ label, value, hl }]
+      const renderBars = (items) => {
+        const max = Math.max(1, ...items.map(i => i.value));
+        return (
+          <div className="flex items-end gap-1 h-28">
+            {items.map((it) => (
+              <div key={it.label} className="flex-1 min-w-0 flex flex-col items-center justify-end h-full">
+                <span className="text-[9px] text-slate-500 leading-none mb-0.5">{it.value > 0 ? (Number.isInteger(it.value) ? it.value : it.value.toFixed(1)) : ''}</span>
+                <div className={`w-full rounded-t ${it.hl ? 'bg-purple-700' : 'bg-purple-300'}`} style={{ height: `${Math.max(it.value > 0 ? 4 : 0, Math.round((it.value / max) * 80))}%` }}></div>
+                <span className="text-[9px] text-slate-500 leading-none mt-1">{it.label}</span>
+              </div>
+            ))}
+          </div>
+        );
+      };
+      const opHours = [];
+      for (let h = openHour; h < closeHour; h++) opHours.push(h);
+      const todayBars = opHours.map(h => ({ label: hh(h), value: hourCount(h) + (h === curHour ? pending : 0), hl: h === curHour }));
+
+      const st = result && result.stats;
+      const peakSet = st ? new Set((st.jamRamai || []).map(p => parseInt(p.jam, 10))) : new Set();
+      const avgBars = st ? (st.rataPerJam || []).map(x => ({ label: hh(x.jam), value: x.rata, hl: peakSet.has(x.jam) })) : [];
+      const mapsLink = loc.lat.trim() && loc.lng.trim() ? `https://www.google.com/maps?q=${encodeURIComponent(loc.lat.trim())},${encodeURIComponent(loc.lng.trim())}` : '';
+
+      return (
+        <div className="space-y-4">
+          {/* LOKASI STORE */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+            <div>
+              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2"><i data-lucide="map-pin" className="w-4 h-4 text-purple-700"></i><span>Lokasi Store</span></h3>
+              <p className="text-xs text-slate-500">{isAdmin ? 'Lokasi dan jam operasional dipakai AI sebagai konteks analisis pengunjung.' : 'Diatur oleh admin. Dipakai AI sebagai konteks analisis.'}</p>
+            </div>
+            {isAdmin ? (
+              <div className="space-y-3">
+                <div>
+                  <label htmlFor="trf-name" className="block text-[10px] font-semibold text-slate-600 mb-1">Nama Lokasi</label>
+                  <input id="trf-name" type="text" value={loc.name} onChange={(e) => setLoc({ ...loc, name: e.target.value })} placeholder="Contoh: Mall Kota, Lt. 1 dekat pintu utama" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs" />
+                </div>
+                <div>
+                  <label htmlFor="trf-address" className="block text-[10px] font-semibold text-slate-600 mb-1">Alamat</label>
+                  <input id="trf-address" type="text" value={loc.address} onChange={(e) => setLoc({ ...loc, address: e.target.value })} placeholder="Jl. ..." className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs" />
+                </div>
+                <div>
+                  <label htmlFor="trf-type" className="block text-[10px] font-semibold text-slate-600 mb-1">Tipe Lokasi</label>
+                  <select id="trf-type" value={loc.type} onChange={(e) => setLoc({ ...loc, type: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white">
+                    <option value="">Pilih tipe lokasi</option>
+                    {TRAFFIC_LOCATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="trf-lat" className="block text-[10px] font-semibold text-slate-600 mb-1">Latitude (opsional)</label>
+                    <input id="trf-lat" type="text" inputMode="decimal" value={loc.lat} onChange={(e) => setLoc({ ...loc, lat: e.target.value })} placeholder="-6.2088" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono" />
+                  </div>
+                  <div>
+                    <label htmlFor="trf-lng" className="block text-[10px] font-semibold text-slate-600 mb-1">Longitude (opsional)</label>
+                    <input id="trf-lng" type="text" inputMode="decimal" value={loc.lng} onChange={(e) => setLoc({ ...loc, lng: e.target.value })} placeholder="106.8456" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono" />
+                  </div>
+                </div>
+                {mapsLink && <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="inline-block text-[11px] font-semibold text-sky-700 underline">Buka titik ini di Google Maps</a>}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="trf-open" className="block text-[10px] font-semibold text-slate-600 mb-1">Jam Buka</label>
+                    <select id="trf-open" value={loc.openHour} onChange={(e) => setLoc({ ...loc, openHour: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white">
+                      {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hh(h)}:00</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="trf-close" className="block text-[10px] font-semibold text-slate-600 mb-1">Jam Tutup</label>
+                    <select id="trf-close" value={loc.closeHour} onChange={(e) => setLoc({ ...loc, closeHour: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white">
+                      {Array.from({ length: 24 }, (_, i) => i + 1).map(h => <option key={h} value={h}>{hh(h)}:00</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="trf-notes" className="block text-[10px] font-semibold text-slate-600 mb-1">Catatan Lokasi (opsional)</label>
+                  <textarea id="trf-notes" rows={2} value={loc.notes} onChange={(e) => setLoc({ ...loc, notes: e.target.value })} placeholder="Contoh: dekat bioskop & food court, ramai saat akhir pekan" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"></textarea>
+                </div>
+                <button onClick={handleSaveLocation} disabled={savingLoc} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl text-xs">
+                  {savingLoc ? 'Menyimpan...' : 'Simpan Lokasi Store'}
+                </button>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-600 space-y-1">
+                {loc.name || loc.address ? (
+                  <React.Fragment>
+                    <p className="font-semibold text-slate-800">{loc.name || storeName}</p>
+                    {loc.address && <p>{loc.address}</p>}
+                    <p className="text-slate-500">{loc.type ? `${loc.type} • ` : ''}Buka {hh(openHour)}:00 - {hh(closeHour)}:00</p>
+                    {mapsLink && <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="inline-block text-[11px] font-semibold text-sky-700 underline">Lihat di Google Maps</a>}
+                  </React.Fragment>
+                ) : (
+                  <p className="text-slate-500">Lokasi store belum diatur admin.</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* HITUNG PENGUNJUNG HARI INI */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+            <div>
+              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2"><i data-lucide="users" className="w-4 h-4 text-purple-700"></i><span>Pengunjung Hari Ini</span></h3>
+              <p className="text-xs text-slate-500">{isAdmin ? 'Hitungan yang dicatat staf toko hari ini (WIB).' : 'Ketuk +1 setiap ada pengunjung yang masuk. Dicatat per jam, tanpa data pribadi.'}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-center">
+              <div className="rounded-2xl bg-purple-50 py-3">
+                <p className="text-[10px] text-purple-600 font-semibold">Jam {hh(curHour)}:00</p>
+                <p className="font-display font-extrabold text-3xl text-purple-800">{shownNow}</p>
+              </div>
+              <div className="rounded-2xl bg-slate-50 py-3">
+                <p className="text-[10px] text-slate-500 font-semibold">Total hari ini</p>
+                <p className="font-display font-extrabold text-3xl text-slate-800">{Math.max(0, todayTotal)}</p>
+              </div>
+            </div>
+            {!isAdmin && (
+              <div className="flex items-stretch gap-2">
+                <button type="button" aria-label="Kurangi 1 pengunjung" onClick={() => tap(-1)} disabled={shownNow <= 0} className="w-16 shrink-0 rounded-xl bg-white border border-slate-200 text-slate-600 text-2xl font-bold active:scale-95 disabled:opacity-40">−</button>
+                <button type="button" onClick={() => tap(1)} className="flex-1 bg-purple-800 hover:bg-purple-900 text-white font-extrabold text-xl py-5 rounded-xl active:scale-95">+1 Pengunjung</button>
+              </div>
+            )}
+            {pending !== 0 && <p className="text-[10px] text-amber-600 text-center">Menyinkronkan {pending > 0 ? '+' : ''}{pending} ketukan...</p>}
+            {renderBars(todayBars)}
+            <p className="text-[10px] text-slate-400 text-center">Grafik jumlah pengunjung per jam hari ini</p>
+          </div>
+
+          {/* ANALISIS AI */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+            <div>
+              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2"><span>🤖</span><span>Analisis AI Pengunjung</span></h3>
+              <p className="text-xs text-slate-500">AI membaca pola 4 minggu terakhir untuk menentukan jam ramai dan apa yang perlu disiapkan.</p>
+            </div>
+            <button onClick={() => runAnalysis(!!result)} disabled={analyzing} className="w-full bg-sky-700 hover:bg-sky-800 disabled:opacity-60 text-white font-bold py-3 rounded-xl text-sm">
+              {analyzing ? 'Menganalisis...' : (result ? 'Perbarui Analisis' : 'Analisis Sekarang')}
+            </button>
+            {analysisError && <p className="text-xs text-rose-600 font-semibold">Gagal menganalisis: {analysisError}</p>}
+            {result && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${result.source === 'ai' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                    {result.source === 'ai' ? 'Ditulis AI' : 'Analisis aturan baku'}
+                  </span>
+                  {st && <span className="text-[10px] text-slate-500">{st.hariDianalisis} hari data • rata-rata {st.rataPengunjungPerHari}/hari</span>}
+                </div>
+                {st && st.hariDianalisis > 0 && (
+                  <div>
+                    {renderBars(avgBars)}
+                    <p className="text-[10px] text-slate-400 text-center mt-1">Rata-rata pengunjung per jam (batang tua = jam ramai)</p>
+                  </div>
+                )}
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-700 whitespace-pre-line leading-relaxed">{result.analysis}</div>
+                {isAdmin && result.source !== 'ai' && (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg p-2">Analisis memakai aturan baku karena Workers AI belum aktif. Tambahkan binding <b>Workers AI</b> bernama <b>AI</b> di pengaturan Worker agar ditulis AI.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // ANALISIS AI ROTI (mesin analisis lokal)
+    // ==========================================
+    // Bukan LLM/chatbot: ini mesin analisis berbasis data riwayat penjualan toko sendiri
+    // (totalSales harian di Riwayat Laporan) + pola penjualan per jam + jam tutup toko, sehingga
+    // jalan tanpa API key dan tidak ada data yang dikirim ke pihak luar. Semua angka asumsi ada
+    // di INFO_ROTI_CFG supaya gampang disesuaikan.
+    const INFO_ROTI_CFG = {
+      openHour: 10,       // ASUMSI jam buka (jam penjualan dihitung dari sini)
+      closeHour: 22,      // toko tutup 22:00
+      lastBakeHour: 20,   // batch baking baru sebaiknya tidak dimulai lewat jam ini
+      promoHour: 20,      // mulai promo/bundling kalau stok masih berlebih
+      // Bobot porsi penjualan per jam (total 100). ASUMSI pola umum toko roti: ramai sore-malam.
+      hourWeights: { 10: 4, 11: 5, 12: 8, 13: 7, 14: 6, 15: 7, 16: 9, 17: 11, 18: 12, 19: 12, 20: 11, 21: 8 },
+    };
+
+    const infoRotiLocalKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const infoRotiHHMM = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const INFO_ROTI_HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+    const analyzeInfoRoti = ({ matang, baking, now, history, profile }) => {
+      const C = INFO_ROTI_CFG;
+      const stock = matang + baking;
+      const h = now.getHours() + now.getMinutes() / 60;
+
+      // Profil pengunjung ASLI (dari menu Pengunjung) menggantikan pola jam asumsi kalau datanya
+      // sudah >= 3 hari. Jam buka/tutup juga mengikuti lokasi yang diatur admin.
+      const prof = profile && Array.isArray(profile.rataPerJam) ? profile : null;
+      const openHour = prof && Number.isFinite(prof.openHour) ? prof.openHour : C.openHour;
+      const closeHour = prof && Number.isFinite(prof.closeHour) ? prof.closeHour : C.closeHour;
+      const lastBakeHour = Math.min(C.lastBakeHour, closeHour - 2);
+      const promoHour = Math.min(C.promoHour, closeHour - 2);
+      const hasVisitorPattern = !!(prof && prof.hariDianalisis >= 3 && prof.rataPerJam.some(x => Number(x.rata) > 0));
+
+      const weights = {};
+      if (hasVisitorPattern) {
+        prof.rataPerJam.forEach(x => { if (x.jam >= openHour && x.jam < closeHour) weights[x.jam] = Number(x.rata) || 0; });
+      } else {
+        for (let hr = openHour; hr < closeHour; hr++) weights[hr] = C.hourWeights[hr] !== undefined ? C.hourWeights[hr] : 6;
+      }
+      const sumW = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
+      const sisaMenit = Math.max(0, Math.round((closeHour - h) * 60));
+
+      // Porsi penjualan harian yang MASIH tersisa dari sekarang sampai tutup (+ porsi yang sudah lewat).
+      let remaining = 0, elapsedExpected = 0;
+      if (h < openHour) {
+        remaining = sumW;
+      } else {
+        Object.entries(weights).forEach(([hr, wt]) => {
+          const start = Number(hr), end = start + 1;
+          if (h >= end) { elapsedExpected += wt; return; }
+          if (h <= start) { remaining += wt; return; }
+          remaining += wt * (end - h);
+          elapsedExpected += wt * (h - start);
+        });
+      }
+      const share = remaining / sumW;
+
+      // Rata-rata roti terjual per hari: utamakan hari yang sama (mis. Jumat) maks. 4 minggu terakhir.
+      const todayKey = infoRotiLocalKey(now);
+      const valid = (Array.isArray(history) ? history : [])
+        .filter(r => r && r.tanggal && r.tanggal !== todayKey && Number(r.totalSales) > 0)
+        .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+      const sameDay = valid.filter(r => new Date(r.tanggal + 'T00:00:00').getDay() === now.getDay()).slice(0, 4);
+      let basis = null, sample = [];
+      if (sameDay.length >= 1) { sample = sameDay; basis = `rata-rata ${sameDay.length} hari ${INFO_ROTI_HARI[now.getDay()]} terakhir`; }
+      else if (valid.length >= 1) { sample = valid.slice(0, 7); basis = `rata-rata ${Math.min(7, valid.length)} hari laporan terakhir`; }
+      let avgDaily = sample.length ? sample.reduce((a, r) => a + Number(r.totalSales), 0) / sample.length : null;
+      let confidence = sample.length >= 3 ? 'baik' : (sample.length === 2 ? 'cukup' : 'rendah');
+      // Belum ada riwayat penjualan tapi ada data pengunjung + rasio roti/pengunjung: pakai itu.
+      if (avgDaily == null && hasVisitorPattern && Number(prof.rotiPerPengunjung) > 0 && Number(prof.rataPengunjungPerHari) > 0) {
+        avgDaily = Number(prof.rotiPerPengunjung) * Number(prof.rataPengunjungPerHari);
+        basis = `${prof.rotiPerPengunjung} roti per pengunjung x rata-rata ${prof.rataPengunjungPerHari} pengunjung/hari`;
+        confidence = 'cukup';
+      }
+
+      // Penyesuaian hari ini: kalau pengunjung sejauh ini lebih ramai/sepi dari biasanya di jam yang sama.
+      let ratio = 1;
+      if (hasVisitorPattern && prof.todayHours && elapsedExpected >= 15) {
+        const soFar = Object.values(prof.todayHours).reduce((a, v) => a + (Number(v) || 0), 0);
+        if (soFar > 0) ratio = Math.max(0.6, Math.min(1.6, soFar / elapsedExpected));
+      }
+
+      const result = { stock, sisaMenit, basis, avgDaily, confidence, closeHour, usedVisitorData: hasVisitorPattern, ratio, demand: null, diff: null, buffer: null, status: 'tanpaData', tips: [] };
+      const bakeOpen = h < lastBakeHour;
+      const tips = [];
+
+      if (h >= closeHour) {
+        result.status = 'tutup';
+        tips.push(stock > 0
+          ? `Toko sudah tutup. Sisa ${stock} pcs berpotensi terbuang, tinjau ulang jumlah produksi untuk besok.`
+          : 'Toko sudah tutup dan tidak ada sisa roti. Pertahankan takaran produksi ini.');
+        result.tips = tips;
+        return result;
+      }
+
+      if (avgDaily == null) {
+        // Tidak ada riwayat: hanya bisa memberi aturan berbasis jam.
+        tips.push('Belum ada riwayat Laporan Penjualan, jadi perkiraan jumlah belum bisa dihitung. Simpan laporan penjualan harian dulu agar analisis akurat.');
+        tips.push(bakeOpen
+          ? `Batch baking baru masih aman sampai pukul ${lastBakeHour}:00.`
+          : `Sudah lewat pukul ${lastBakeHour}:00, hindari baking batch baru.`);
+        result.tips = tips;
+        return result;
+      }
+
+      const demand = Math.round(avgDaily * share * ratio);
+      const diff = stock - demand;
+      const buffer = Math.max(2, Math.ceil(demand * 0.1));
+      const status = diff > buffer ? 'lebih' : (diff < -buffer ? 'kurang' : 'pas');
+      Object.assign(result, { demand, diff, buffer, status });
+
+      if (status === 'kurang') {
+        const need = Math.abs(diff);
+        tips.push(bakeOpen
+          ? `Stok diperkirakan kurang ± ${need} pcs. Tambah baking ± ${need} pcs sekarang (batch terakhir sebelum pukul ${lastBakeHour}:00).`
+          : `Stok diperkirakan kurang ± ${need} pcs, tetapi sudah lewat pukul ${lastBakeHour}:00. Jangan baking batch baru agar tidak jadi sisa; layani dari stok yang ada.`);
+      } else if (status === 'lebih') {
+        tips.push(`Stok diperkirakan sisa ± ${diff} pcs saat tutup. Jangan tambah baking lagi.`);
+        if (matang >= demand + buffer && baking > 0) {
+          tips.push(`Roti matang saja (${matang} pcs) sudah cukup sampai tutup. ${baking} pcs yang masih baking berisiko jadi sisa.`);
+        }
+        tips.push(h >= promoHour
+          ? `Mulai promo atau bundling sekarang untuk ± ${diff} pcs sesuai kebijakan toko.`
+          : `Pantau penjualan. Bila pukul ${promoHour}:00 stok masih berlebih, mulai promo atau bundling.`);
+      } else {
+        tips.push('Stok sudah pas dengan perkiraan penjualan hingga tutup. Tidak perlu baking tambahan.');
+        if (bakeOpen) tips.push('Cek ulang jumlah roti setiap 1-2 jam karena ramai pembeli bisa berubah.');
+      }
+
+      if (hasVisitorPattern) {
+        // Jam ramai berikutnya dari pola pengunjung asli.
+        const maxW = Math.max(...Object.values(weights));
+        const nextPeak = Object.entries(weights).map(([hr, wt]) => ({ hr: Number(hr), wt }))
+          .filter(x => x.hr + 1 > h && x.wt >= maxW * 0.7).sort((a, b) => a.hr - b.hr)[0];
+        if (nextPeak && nextPeak.hr >= Math.floor(h)) {
+          tips.push(nextPeak.hr <= h
+            ? `Sekarang termasuk jam ramai (±${Math.round(nextPeak.wt)} pengunjung per jam). Jaga stok matang tetap tersedia.`
+            : `Jam ramai berikutnya sekitar pukul ${nextPeak.hr}:00 (±${Math.round(nextPeak.wt)} pengunjung). Pastikan roti matang siap sebelum itu.`);
+        }
+        if (Math.abs(ratio - 1) >= 0.1) {
+          tips.push(`Pengunjung hari ini ${ratio > 1 ? 'lebih ramai' : 'lebih sepi'} ±${Math.round(Math.abs(ratio - 1) * 100)}% dari biasanya, perkiraan penjualan sudah disesuaikan.`);
+        }
+      }
+      if (!bakeOpen && status !== 'kurang') tips.push(`Sudah lewat pukul ${lastBakeHour}:00, hindari baking batch baru.`);
+      if (confidence === 'rendah') tips.push('Catatan: data riwayat masih sedikit, anggap perkiraan ini kasar.');
+
+      result.tips = tips;
+      return result;
+    }
+
+    // ==========================================
+    // TOKO: Tab "Informasi Roti" -- kirim jumlah Roti Matang & Roti Masih Baking langsung ke grup
+    // Telegram. SENGAJA tidak menyimpan apa pun (tidak ke database, tidak ke localStorage): data
+    // hanya hidup di state komponen ini, dikirim, lalu form dikosongkan lagi untuk laporan berikutnya.
+    // ==========================================
+    function InformasiRotiTab({ storeName, config, showToast, onOpenConfig, historyList }) {
+      const [matang, setMatang] = useState('');
+      const [baking, setBaking] = useState('');
+      const [isSending, setIsSending] = useState(false);
+      const [lastSent, setLastSent] = useState(null); // hanya info "terakhir terkirim" di layar, tidak disimpan
+
+      useEffect(() => { scheduleLucideIcons(); });
+
+      // Jam sekarang diperbarui tiap menit supaya analisis mengikuti sisa waktu menuju tutup.
+      const [nowTick, setNowTick] = useState(() => new Date());
+      useEffect(() => {
+        const t = setInterval(() => setNowTick(new Date()), 60000);
+        return () => clearInterval(t);
+      }, []);
+
+      const toInt = (v) => {
+        const n = parseInt(v, 10);
+        return isNaN(n) || n < 0 ? 0 : n;
+      };
+      const jumlahMatang = toInt(matang);
+      const jumlahBaking = toInt(baking);
+      const total = jumlahMatang + jumlahBaking;
+
+      // Profil pengunjung asli (jam ramai, jam buka/tutup lokasi, hitungan hari ini) dari Worker.
+      const [visitorProfile, setVisitorProfile] = useState(null);
+      useEffect(() => {
+        let alive = true;
+        const load = async () => {
+          try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/visitors/profile`, { headers: __authHeaders() });
+            const d = await res.json().catch(() => ({}));
+            if (alive && res.ok && d.ok) setVisitorProfile(d);
+          } catch (e) { /* diam: analisis otomatis memakai pola asumsi */ }
+        };
+        load();
+        const t = setInterval(load, 5 * 60 * 1000);
+        return () => { alive = false; clearInterval(t); };
+      }, []);
+
+      const analysis = React.useMemo(
+        () => analyzeInfoRoti({ matang: jumlahMatang, baking: jumlahBaking, now: nowTick, history: historyList, profile: visitorProfile }),
+        [jumlahMatang, jumlahBaking, nowTick, historyList, visitorProfile]
+      );
+      const STATUS_UI = {
+        pas:       { label: 'Stok Pas',        emoji: '✅', box: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
+        lebih:     { label: 'Berpotensi Sisa', emoji: '⚠️', box: 'bg-amber-50 border-amber-200 text-amber-800' },
+        kurang:    { label: 'Berpotensi Kurang', emoji: '🔻', box: 'bg-rose-50 border-rose-200 text-rose-800' },
+        tutup:     { label: 'Toko Tutup',      emoji: '🌙', box: 'bg-slate-100 border-slate-200 text-slate-700' },
+        tanpaData: { label: 'Data Belum Cukup', emoji: 'ℹ️', box: 'bg-slate-100 border-slate-200 text-slate-700' },
+      };
+      const statusUi = STATUS_UI[analysis.status] || STATUS_UI.tanpaData;
+      const sisaWaktuText = `${Math.floor(analysis.sisaMenit / 60)} jam ${analysis.sisaMenit % 60} mnt`;
+
+      const cleanInput = (v) => String(v).replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '');
+      const step = (current, setter, delta) => setter(String(Math.max(0, toInt(current) + delta)));
+
+      const escapeMd = (text) => String(text === null || text === undefined ? '' : text).replace(/([_*`\[])/g, '\\$1');
+
+      const buildMessage = () => {
+        const now = new Date();
+        const tanggal = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+        const jam = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
+        const fmt = (n) => n.toLocaleString('id-ID');
+        return [
+          '*🥐 INFORMASI ROTI*',
+          `🏪 Toko: *${escapeMd(storeName || '-')}*`,
+          `📅 ${tanggal} • ${jam}`,
+          '',
+          `✅ Roti Matang: *${fmt(jumlahMatang)}*`,
+          `🔥 Masih Proses Baking: *${fmt(jumlahBaking)}*`,
+          '━━━━━━━━━━━━━━',
+          `📦 Total Keseluruhan: *${fmt(total)}*`,
+          '',
+          `🤖 *ANALISIS AI* - ${statusUi.emoji} ${statusUi.label}`,
+          ...(analysis.demand != null ? [
+            `Perkiraan terjual sampai ${analysis.closeHour}:00: *${fmt(analysis.demand)}* pcs`,
+            `Proyeksi ${analysis.diff >= 0 ? 'sisa' : 'kurang'}: *${fmt(Math.abs(analysis.diff))}* pcs`,
+          ] : []),
+          'Saran:',
+          ...analysis.tips.map(t => `• ${escapeMd(t)}`),
+        ].join('\n');
+      };
+
+      const handleSend = async () => {
+        if (isSending) return;
+        if (!config.telegramBotToken || !config.telegramChatId) {
+          showToast('⚠️ Isi Bot Token & Chat ID Telegram di menu pengaturan (Roda Gigi) dahulu!');
+          if (onOpenConfig) onOpenConfig();
+          return;
+        }
+        if (total <= 0) {
+          showToast('⚠️ Isi jumlah Roti Matang atau Roti Baking dulu.');
+          return;
+        }
+        setIsSending(true);
+        showToast('Mengirim ke Telegram... ✈️');
+        const res = await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, buildMessage());
+        setIsSending(false);
+        if (res.ok) {
+          showToast('Informasi roti terkirim ke grup Telegram! 🚀');
+          setLastSent({ matang: jumlahMatang, baking: jumlahBaking, total, jam: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':') });
+          // Tanpa simpan data: langsung kosongkan form untuk laporan berikutnya.
+          setMatang('');
+          setBaking('');
+        } else {
+          // Jika gagal, isian dibiarkan supaya bisa langsung dicoba kirim ulang.
+          showToast(`Gagal mengirim: ${res.error}`);
+        }
+      };
+
+      const Stepper = ({ id, label, hint, value, setValue, tone }) => (
+        <div className={`rounded-2xl border p-4 ${tone.box}`}>
+          <label htmlFor={id} className={`block text-sm font-bold ${tone.label}`}>{label}</label>
+          <p className="text-[11px] text-slate-500 mb-3">{hint}</p>
+          <div className="flex items-stretch gap-2">
+            <button type="button" aria-label={`Kurangi ${label}`} onClick={() => step(value, setValue, -1)} className="w-12 shrink-0 rounded-xl bg-white border border-slate-200 text-slate-600 text-xl font-bold active:scale-95">−</button>
+            <input
+              id={id}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={value}
+              onChange={(e) => setValue(cleanInput(e.target.value))}
+              placeholder="0"
+              className="flex-1 min-w-0 px-3 py-3 border border-slate-300 rounded-xl text-center text-2xl font-extrabold text-slate-800 bg-white"
+            />
+            <button type="button" aria-label={`Tambah ${label}`} onClick={() => step(value, setValue, 1)} className="w-12 shrink-0 rounded-xl bg-white border border-slate-200 text-slate-600 text-xl font-bold active:scale-95">+</button>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+            <div>
+              <h3 className="font-bold text-slate-800 text-lg">Informasi Roti</h3>
+              <p className="text-xs text-slate-500">Isi jumlah roti, lalu kirim. Data langsung masuk ke grup Telegram dan tidak disimpan di aplikasi.</p>
+            </div>
+
+            {Stepper({
+              id: 'info-roti-matang', label: 'Roti Matang', hint: 'Sudah matang & siap dijual',
+              value: matang, setValue: setMatang,
+              tone: { box: 'bg-emerald-50/60 border-emerald-100', label: 'text-emerald-800' },
+            })}
+            {Stepper({
+              id: 'info-roti-baking', label: 'Roti Masih Proses Baking', hint: 'Masih di oven / belum matang',
+              value: baking, setValue: setBaking,
+              tone: { box: 'bg-amber-50/70 border-amber-100', label: 'text-wheat-600' },
+            })}
+
+            <div className="rounded-2xl bg-gradient-to-r from-purple-800 to-indigo-900 text-white px-5 py-4 flex items-center justify-between">
+              <span className="text-sm font-semibold text-purple-100">Total Keseluruhan</span>
+              <span className="font-display font-extrabold text-3xl">{total.toLocaleString('id-ID')}</span>
+            </div>
+
+            {total > 0 ? (
+              <div className={`rounded-2xl border p-4 space-y-3 ${statusUi.box}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold text-sm flex items-center gap-1.5"><span>🤖</span><span>Analisis AI</span></h4>
+                  <span className="text-[11px] font-bold">{statusUi.emoji} {statusUi.label}</span>
+                </div>
+                {analysis.demand != null && (
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-white/70 rounded-xl py-2 px-1">
+                      <p className="text-[10px] text-slate-500">Perkiraan terjual s.d. {analysis.closeHour}:00</p>
+                      <p className="font-extrabold text-lg text-slate-800">{analysis.demand}</p>
+                    </div>
+                    <div className="bg-white/70 rounded-xl py-2 px-1">
+                      <p className="text-[10px] text-slate-500">Stok sekarang</p>
+                      <p className="font-extrabold text-lg text-slate-800">{analysis.stock}</p>
+                    </div>
+                    <div className="bg-white/70 rounded-xl py-2 px-1">
+                      <p className="text-[10px] text-slate-500">Proyeksi {analysis.diff >= 0 ? 'sisa' : 'kurang'}</p>
+                      <p className="font-extrabold text-lg text-slate-800">{Math.abs(analysis.diff)}</p>
+                    </div>
+                  </div>
+                )}
+                <ul className="space-y-1.5 text-xs text-slate-700">
+                  {analysis.tips.map((t, i) => (
+                    <li key={i} className="flex gap-2"><span>•</span><span>{t}</span></li>
+                  ))}
+                </ul>
+                <p className="text-[10px] text-slate-500">
+                  {analysis.status === 'tutup' ? '' : `Sisa waktu ke tutup ${sisaWaktuText}. `}
+                  {analysis.basis ? `Dasar: ${analysis.basis} (${Math.round(analysis.avgDaily)} pcs/hari), keyakinan ${analysis.confidence}.` : ''}
+                  {analysis.status !== 'tutup' ? (analysis.usedVisitorData ? ' Pola jam memakai data pengunjung asli toko.' : ' Pola jam masih asumsi umum (data pengunjung belum cukup, minimal 3 hari).') : ''}
+                </p>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-500 text-center">Isi jumlah roti untuk melihat analisis AI dan saran agar roti pas sampai tutup.</p>
+            )}
+
+            <button
+              onClick={handleSend}
+              disabled={isSending}
+              className="w-full flex items-center justify-center gap-2 bg-sky-700 hover:bg-sky-800 disabled:opacity-60 text-white font-bold py-3.5 rounded-xl text-sm"
+            >
+              <i data-lucide="send" className="w-4 h-4"></i>
+              <span>{isSending ? 'Mengirim...' : 'Kirim ke Grup Telegram'}</span>
+            </button>
+          </div>
+
+          {lastSent && (
+            <div className="bg-white rounded-2xl p-4 border border-slate-200 text-xs text-slate-600">
+              <p className="font-bold text-slate-700 mb-1">Terkirim terakhir pukul {lastSent.jam}</p>
+              <p>Matang <b>{lastSent.matang}</b> • Baking <b>{lastSent.baking}</b> • Total <b>{lastSent.total}</b></p>
+              <p className="text-[10px] text-slate-400 mt-1">Info ini hanya tampil sementara dan hilang saat halaman dimuat ulang.</p>
+            </div>
+          )}
         </div>
       );
     }

@@ -12467,11 +12467,14 @@ Daily inventory done✅
       const [loc, setLoc] = useState(emptyLoc);
       const [savingLoc, setSavingLoc] = useState(false);
       const [hours, setHours] = useState({});
+      const [buyers, setBuyers] = useState({});
       const [pending, setPending] = useState(0);
+      const [pendingB, setPendingB] = useState(0);
       const [result, setResult] = useState(null);
       const [analyzing, setAnalyzing] = useState(false);
       const [analysisError, setAnalysisError] = useState('');
       const pendingRef = React.useRef(0);
+      const pendingBRef = React.useRef(0);
       const flushingRef = React.useRef(false);
       const timerRef = React.useRef(null);
       const mountedRef = React.useRef(true);
@@ -12501,18 +12504,18 @@ Daily inventory done✅
         try {
           const res = await __apiFetch(`${WORKER_BASE}/api/visitors/today?storeId=${encodeURIComponent(storeId)}`, { headers: __authHeaders() });
           const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok && mountedRef.current) setHours(data.hours || {});
+          if (res.ok && data.ok && mountedRef.current) { setHours(data.hours || {}); setBuyers(data.buyers || {}); }
         } catch (e) { /* diam: akan dicoba lagi pada refresh berikutnya */ }
       };
       useEffect(() => {
         mountedRef.current = true;
         loadToday();
-        const t = setInterval(() => { if (!pendingRef.current && !flushingRef.current) loadToday(); }, 60000);
+        const t = setInterval(() => { if (!pendingRef.current && !pendingBRef.current && !flushingRef.current) loadToday(); }, 60000);
         return () => {
           mountedRef.current = false;
           clearInterval(t);
           clearTimeout(timerRef.current);
-          if (pendingRef.current) flush(); // jangan buang hitungan yang belum terkirim
+          if (pendingRef.current || pendingBRef.current) flush(); // jangan buang hitungan yang belum terkirim
         };
       }, [storeId]);
 
@@ -12520,40 +12523,47 @@ Daily inventory done✅
       // hitungan yang hilang saat diketuk cepat.
       const flush = async () => {
         if (flushingRef.current) return;
-        const raw = pendingRef.current;
-        if (!raw) return;
-        const d = Math.max(-50, Math.min(50, raw));
         flushingRef.current = true;
-        pendingRef.current -= d;
-        if (mountedRef.current) setPending(pendingRef.current);
-        let ok = false;
+        let anyFail = false;
         try {
-          const res = await __apiFetch(`${WORKER_BASE}/api/visitors/record`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
-            body: JSON.stringify({ delta: d }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || !data.ok) throw new Error(data.error || `status ${res.status}`);
-          ok = true;
-          if (mountedRef.current) setHours(data.hours || {});
-        } catch (err) {
-          pendingRef.current += d;
-          if (mountedRef.current) {
-            setPending(pendingRef.current);
-            toast(`Gagal menyimpan hitungan pengunjung: ${(err && err.message) || 'periksa koneksi'}. Ketuk tombol lagi untuk mengirim ulang.`);
+          // Pengunjung dan pembeli dikirim bergantian (satu request dalam satu waktu).
+          for (const kind of ['visitor', 'buyer']) {
+            const ref = kind === 'visitor' ? pendingRef : pendingBRef;
+            const setP = kind === 'visitor' ? setPending : setPendingB;
+            const raw = ref.current;
+            if (!raw) continue;
+            const d = Math.max(-50, Math.min(50, raw));
+            ref.current -= d;
+            if (mountedRef.current) setP(ref.current);
+            try {
+              const res = await __apiFetch(`${WORKER_BASE}/api/visitors/record`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+                body: JSON.stringify({ delta: d, kind }),
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok || !data.ok) throw new Error(data.error || `status ${res.status}`);
+              if (mountedRef.current) { setHours(data.hours || {}); setBuyers(data.buyers || {}); }
+            } catch (err) {
+              anyFail = true;
+              ref.current += d;
+              if (mountedRef.current) {
+                setP(ref.current);
+                toast(`Gagal menyimpan hitungan ${kind === 'buyer' ? 'pembeli' : 'pengunjung'}: ${(err && err.message) || 'periksa koneksi'}. Ketuk tombol lagi untuk mengirim ulang.`);
+              }
+            }
           }
         } finally {
           flushingRef.current = false;
-          if (ok && pendingRef.current && mountedRef.current) {
+          if (!anyFail && (pendingRef.current || pendingBRef.current) && mountedRef.current) {
             clearTimeout(timerRef.current);
             timerRef.current = setTimeout(flush, 400);
           }
         }
       };
-      const tap = (delta) => {
-        pendingRef.current += delta;
-        setPending(pendingRef.current);
+      const tap = (delta, kind) => {
+        if (kind === 'buyer') { pendingBRef.current += delta; setPendingB(pendingBRef.current); }
+        else { pendingRef.current += delta; setPending(pendingRef.current); }
         clearTimeout(timerRef.current);
         timerRef.current = setTimeout(flush, 600);
       };
@@ -12565,6 +12575,9 @@ Daily inventory done✅
       const hourCount = (h) => Number(hours[hh(h)]) || 0;
       const shownNow = Math.max(0, hourCount(curHour) + pending);
       const todayTotal = Object.keys(hours).reduce((a, k) => a + (Number(hours[k]) || 0), 0) + pending;
+      const buyerNow = Math.max(0, (Number(buyers[hh(curHour)]) || 0) + pendingB);
+      const buyerTotal = Math.max(0, Object.keys(buyers).reduce((a, k) => a + (Number(buyers[k]) || 0), 0) + pendingB);
+      const conversionToday = todayTotal > 0 && buyerTotal > 0 ? Math.min(100, Math.round((buyerTotal / todayTotal) * 100)) : null;
 
       const handleSaveLocation = async () => {
         const lat = loc.lat.trim() === '' ? null : Number(loc.lat);
@@ -12595,7 +12608,7 @@ Daily inventory done✅
         setAnalyzing(true);
         setAnalysisError('');
         try {
-          if (pendingRef.current) await flush();
+          if (pendingRef.current || pendingBRef.current) await flush();
           const res = await __apiFetch(`${WORKER_BASE}/api/ai/store-traffic`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...__authHeaders() },
@@ -12713,7 +12726,7 @@ Daily inventory done✅
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
             <div>
               <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2"><i data-lucide="users" className="w-4 h-4 text-purple-700"></i><span>Pengunjung Hari Ini</span></h3>
-              <p className="text-xs text-slate-500">{isAdmin ? 'Hitungan yang dicatat staf toko hari ini (WIB).' : 'Ketuk +1 setiap ada pengunjung yang masuk. Dicatat per jam, tanpa data pribadi.'}</p>
+              <p className="text-xs text-slate-500">{isAdmin ? 'Hitungan yang dicatat staf toko hari ini (WIB).' : 'Ketuk +1 Pengunjung saat ada yang masuk, dan +1 Pembeli saat ada yang membayar di kasir. Dicatat per jam, tanpa data pribadi.'}</p>
             </div>
             <div className="grid grid-cols-2 gap-3 text-center">
               <div className="rounded-2xl bg-purple-50 py-3">
@@ -12724,14 +12737,29 @@ Daily inventory done✅
                 <p className="text-[10px] text-slate-500 font-semibold">Total hari ini</p>
                 <p className="font-display font-extrabold text-3xl text-slate-800">{Math.max(0, todayTotal)}</p>
               </div>
+              <div className="rounded-2xl bg-emerald-50 py-3">
+                <p className="text-[10px] text-emerald-700 font-semibold">Pembeli hari ini</p>
+                <p className="font-display font-extrabold text-3xl text-emerald-800">{buyerTotal}</p>
+              </div>
+              <div className="rounded-2xl bg-sky-50 py-3">
+                <p className="text-[10px] text-sky-700 font-semibold">Konversi hari ini</p>
+                <p className="font-display font-extrabold text-3xl text-sky-800">{conversionToday !== null ? `${conversionToday}%` : '-'}</p>
+              </div>
             </div>
             {!isAdmin && (
               <div className="flex items-stretch gap-2">
                 <button type="button" aria-label="Kurangi 1 pengunjung" onClick={() => tap(-1)} disabled={shownNow <= 0} className="w-16 shrink-0 rounded-xl bg-white border border-slate-200 text-slate-600 text-2xl font-bold active:scale-95 disabled:opacity-40">−</button>
-                <button type="button" onClick={() => tap(1)} className="flex-1 bg-purple-800 hover:bg-purple-900 text-white font-extrabold text-xl py-5 rounded-xl active:scale-95">+1 Pengunjung</button>
+                <button type="button" onClick={() => tap(1, 'visitor')} className="flex-1 bg-purple-800 hover:bg-purple-900 text-white font-extrabold text-xl py-5 rounded-xl active:scale-95">+1 Pengunjung</button>
               </div>
             )}
-            {pending !== 0 && <p className="text-[10px] text-amber-600 text-center">Menyinkronkan {pending > 0 ? '+' : ''}{pending} ketukan...</p>}
+            {!isAdmin && (
+              <div className="flex items-stretch gap-2">
+                <button type="button" aria-label="Kurangi 1 pembeli" onClick={() => tap(-1, 'buyer')} disabled={buyerNow <= 0} className="w-16 shrink-0 rounded-xl bg-white border border-slate-200 text-slate-600 text-2xl font-bold active:scale-95 disabled:opacity-40">−</button>
+                <button type="button" onClick={() => tap(1, 'buyer')} className="flex-1 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xl py-5 rounded-xl active:scale-95">+1 Pembeli</button>
+              </div>
+            )}
+            {buyerTotal > todayTotal && todayTotal >= 0 && <p className="text-[10px] text-rose-600 text-center">Pembeli lebih banyak dari pengunjung. Cek lagi hitungan pengunjung.</p>}
+            {(pending !== 0 || pendingB !== 0) && <p className="text-[10px] text-amber-600 text-center">Menyinkronkan ketukan...</p>}
             {renderBars(todayBars)}
             <p className="text-[10px] text-slate-400 text-center">Grafik jumlah pengunjung per jam hari ini</p>
           </div>
@@ -12758,6 +12786,21 @@ Daily inventory done✅
                   <div>
                     {renderBars(avgBars)}
                     <p className="text-[10px] text-slate-400 text-center mt-1">Rata-rata pengunjung per jam (batang tua = jam ramai)</p>
+                  </div>
+                )}
+                {st && st.konversi && st.konversi.persenRata !== null ? (
+                  <div className="rounded-xl bg-sky-50 border border-sky-100 p-3 text-xs text-slate-700 space-y-1">
+                    <p className="font-bold text-sky-800">Konversi pengunjung ke pembeli: {st.konversi.persenRata}% <span className="font-normal text-slate-500">({st.konversi.hariData} hari data)</span></p>
+                    {st.konversi.jamTerendah.length > 0 && <p>Terendah: {st.konversi.jamTerendah.map(x => `${x.jam} (${x.persen}%)`).join(', ')}</p>}
+                    {st.konversi.jamTertinggi.length > 0 && <p>Tertinggi: {st.konversi.jamTertinggi.map(x => `${x.jam} (${x.persen}%)`).join(', ')}</p>}
+                  </div>
+                ) : (
+                  st && st.hariDianalisis > 0 && <p className="text-[10px] text-slate-400 text-center">Konversi akan tampil setelah minimal 2 hari data pembeli dicatat.</p>
+                )}
+                {st && (st.rotiPerPembeli || st.sisaTutup) && (
+                  <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-xs text-slate-700 space-y-1">
+                    {st.rotiPerPembeli && <p>Rata-rata <b>±{st.rotiPerPembeli} roti</b> per pembeli (per transaksi).</p>}
+                    {st.sisaTutup && <p>Sisa saat tutup rata-rata <b>±{st.sisaTutup.rataSisa} pcs</b>{st.sisaTutup.persenSisaDariProduksi !== null ? ` (±${st.sisaTutup.persenSisaDariProduksi}% dari produksi)` : ''}, habis sebelum tutup di {st.sisaTutup.persenHariHabis}% hari • {st.sisaTutup.hariData} hari data.</p>}
                   </div>
                 )}
                 <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-700 whitespace-pre-line leading-relaxed">{result.analysis}</div>
@@ -12803,11 +12846,18 @@ Daily inventory done✅
       const closeHour = prof && Number.isFinite(prof.closeHour) ? prof.closeHour : C.closeHour;
       const lastBakeHour = Math.min(C.lastBakeHour, closeHour - 2);
       const promoHour = Math.min(C.promoHour, closeHour - 2);
-      const hasVisitorPattern = !!(prof && prof.hariDianalisis >= 3 && prof.rataPerJam.some(x => Number(x.rata) > 0));
+      // Urutan sumber pola jam: (1) PEMBELI asli = penjualan sebenarnya, (2) pengunjung asli, (3) asumsi umum.
+      // Pembeli lebih akurat karena pengunjung yang hanya lihat-lihat tidak ikut terhitung.
+      const hasBuyerPattern = !!(prof && prof.hariDataPembeli >= 3 && Array.isArray(prof.rataPembeliPerJam) && prof.rataPembeliPerJam.some(x => Number(x.rata) > 0));
+      const hasVisitorOnly = !!(prof && prof.hariDianalisis >= 3 && prof.rataPerJam.some(x => Number(x.rata) > 0));
+      const patternSource = hasBuyerPattern ? 'pembeli' : (hasVisitorOnly ? 'pengunjung' : 'asumsi');
+      const hasVisitorPattern = patternSource !== 'asumsi';
+      const patternRows = hasBuyerPattern ? prof.rataPembeliPerJam : (hasVisitorOnly ? prof.rataPerJam : null);
+      const crowdWord = hasBuyerPattern ? 'pembeli' : 'pengunjung';
 
       const weights = {};
-      if (hasVisitorPattern) {
-        prof.rataPerJam.forEach(x => { if (x.jam >= openHour && x.jam < closeHour) weights[x.jam] = Number(x.rata) || 0; });
+      if (patternRows) {
+        patternRows.forEach(x => { if (x.jam >= openHour && x.jam < closeHour) weights[x.jam] = Number(x.rata) || 0; });
       } else {
         for (let hr = openHour; hr < closeHour; hr++) weights[hr] = C.hourWeights[hr] !== undefined ? C.hourWeights[hr] : 6;
       }
@@ -12840,7 +12890,12 @@ Daily inventory done✅
       else if (valid.length >= 1) { sample = valid.slice(0, 7); basis = `rata-rata ${Math.min(7, valid.length)} hari laporan terakhir`; }
       let avgDaily = sample.length ? sample.reduce((a, r) => a + Number(r.totalSales), 0) / sample.length : null;
       let confidence = sample.length >= 3 ? 'baik' : (sample.length === 2 ? 'cukup' : 'rendah');
-      // Belum ada riwayat penjualan tapi ada data pengunjung + rasio roti/pengunjung: pakai itu.
+      // Belum ada riwayat penjualan: pakai roti per pembeli (paling akurat), lalu roti per pengunjung.
+      if (avgDaily == null && hasBuyerPattern && Number(prof.rotiPerPembeli) > 0 && Number(prof.rataPembeliPerHari) > 0) {
+        avgDaily = Number(prof.rotiPerPembeli) * Number(prof.rataPembeliPerHari);
+        basis = `${prof.rotiPerPembeli} roti per pembeli x rata-rata ${prof.rataPembeliPerHari} pembeli/hari`;
+        confidence = 'cukup';
+      }
       if (avgDaily == null && hasVisitorPattern && Number(prof.rotiPerPengunjung) > 0 && Number(prof.rataPengunjungPerHari) > 0) {
         avgDaily = Number(prof.rotiPerPengunjung) * Number(prof.rataPengunjungPerHari);
         basis = `${prof.rotiPerPengunjung} roti per pengunjung x rata-rata ${prof.rataPengunjungPerHari} pengunjung/hari`;
@@ -12849,12 +12904,18 @@ Daily inventory done✅
 
       // Penyesuaian hari ini: kalau pengunjung sejauh ini lebih ramai/sepi dari biasanya di jam yang sama.
       let ratio = 1;
-      if (hasVisitorPattern && prof.todayHours && elapsedExpected >= 15) {
-        const soFar = Object.values(prof.todayHours).reduce((a, v) => a + (Number(v) || 0), 0);
+      const todaySrc = hasBuyerPattern ? prof.todayBuyers : prof.todayHours;
+      if (hasVisitorPattern && todaySrc && elapsedExpected >= (hasBuyerPattern ? 8 : 15)) {
+        const soFar = Object.values(todaySrc).reduce((a, v) => a + (Number(v) || 0), 0);
         if (soFar > 0) ratio = Math.max(0.6, Math.min(1.6, soFar / elapsedExpected));
       }
 
-      const result = { stock, sisaMenit, basis, avgDaily, confidence, closeHour, usedVisitorData: hasVisitorPattern, ratio, demand: null, diff: null, buffer: null, status: 'tanpaData', tips: [] };
+      // Kalibrasi dari catatan sisa roti saat tutup: kalau roti sering habis sebelum tutup, penjualan
+      // yang tercatat lebih kecil dari permintaan sebenarnya, jadi perkiraan dinaikkan 10%.
+      const lo = prof && prof.sisaTutup && prof.sisaTutup.hariData >= 3 ? prof.sisaTutup : null;
+      const uplift = lo && lo.persenHariHabis >= 50 ? 1.1 : 1;
+
+      const result = { stock, sisaMenit, basis, avgDaily, confidence, closeHour, usedVisitorData: hasVisitorPattern, patternSource, uplift, ratio, demand: null, diff: null, buffer: null, status: 'tanpaData', tips: [] };
       const bakeOpen = h < lastBakeHour;
       const tips = [];
 
@@ -12877,7 +12938,7 @@ Daily inventory done✅
         return result;
       }
 
-      const demand = Math.round(avgDaily * share * ratio);
+      const demand = Math.round(avgDaily * share * ratio * uplift);
       const diff = stock - demand;
       const buffer = Math.max(2, Math.ceil(demand * 0.1));
       const status = diff > buffer ? 'lebih' : (diff < -buffer ? 'kurang' : 'pas');
@@ -12908,12 +12969,16 @@ Daily inventory done✅
           .filter(x => x.hr + 1 > h && x.wt >= maxW * 0.7).sort((a, b) => a.hr - b.hr)[0];
         if (nextPeak && nextPeak.hr >= Math.floor(h)) {
           tips.push(nextPeak.hr <= h
-            ? `Sekarang termasuk jam ramai (±${Math.round(nextPeak.wt)} pengunjung per jam). Jaga stok matang tetap tersedia.`
-            : `Jam ramai berikutnya sekitar pukul ${nextPeak.hr}:00 (±${Math.round(nextPeak.wt)} pengunjung). Pastikan roti matang siap sebelum itu.`);
+            ? `Sekarang termasuk jam ramai (±${Math.round(nextPeak.wt)} ${crowdWord} per jam). Jaga stok matang tetap tersedia.`
+            : `Jam ramai berikutnya sekitar pukul ${nextPeak.hr}:00 (±${Math.round(nextPeak.wt)} ${crowdWord}). Pastikan roti matang siap sebelum itu.`);
         }
         if (Math.abs(ratio - 1) >= 0.1) {
-          tips.push(`Pengunjung hari ini ${ratio > 1 ? 'lebih ramai' : 'lebih sepi'} ±${Math.round(Math.abs(ratio - 1) * 100)}% dari biasanya, perkiraan penjualan sudah disesuaikan.`);
+          tips.push(`${hasBuyerPattern ? 'Pembeli' : 'Pengunjung'} hari ini ${ratio > 1 ? 'lebih ramai' : 'lebih sepi'} ±${Math.round(Math.abs(ratio - 1) * 100)}% dari biasanya, perkiraan penjualan sudah disesuaikan.`);
         }
+      }
+      if (uplift > 1) tips.push(`Roti sering habis sebelum tutup (${lo.persenHariHabis}% hari terakhir), jadi perkiraan permintaan dinaikkan 10%.`);
+      if (lo && lo.persenHariHabis < 50 && lo.rataSisa >= 5 && status !== 'kurang') {
+        tips.push(`Rata-rata sisa saat tutup ±${lo.rataSisa} pcs${lo.persenSisaDariProduksi !== null ? ` (±${lo.persenSisaDariProduksi}% dari produksi)` : ''}. Pertimbangkan kurangi produksi sore ±${lo.rataSisa} pcs.`);
       }
       if (!bakeOpen && status !== 'kurang') tips.push(`Sudah lewat pukul ${lastBakeHour}:00, hindari baking batch baru.`);
       if (confidence === 'rendah') tips.push('Catatan: data riwayat masih sedikit, anggap perkiraan ini kasar.');
@@ -12932,6 +12997,8 @@ Daily inventory done✅
       const [baking, setBaking] = useState('');
       const [isSending, setIsSending] = useState(false);
       const [lastSent, setLastSent] = useState(null); // hanya info "terakhir terkirim" di layar, tidak disimpan
+      const [sisaInput, setSisaInput] = useState('');
+      const [savingSisa, setSavingSisa] = useState(false);
 
       useEffect(() => { scheduleLucideIcons(); });
 
@@ -13007,7 +13074,35 @@ Daily inventory done✅
           ] : []),
           'Saran:',
           ...analysis.tips.map(t => `• ${escapeMd(t)}`),
+          '',
+          'CC @RahmaCRuby',
         ].join('\n');
+      };
+
+      // Sisa roti saat tutup: SATU-SATUNYA data di menu ini yang disimpan (ke Worker), supaya akurasi
+      // prediksi bisa diukur dan dikalibrasi. Laporan Telegram di atas tetap tidak menyimpan apa pun.
+      const handleSaveSisa = async () => {
+        if (savingSisa) return;
+        if (sisaInput === '') { showToast('⚠️ Isi jumlah sisa roti dulu (0 jika habis).'); return; }
+        const sisa = parseInt(sisaInput, 10);
+        if (isNaN(sisa) || sisa < 0 || sisa > 5000) { showToast('⚠️ Jumlah sisa roti harus 0 - 5000.'); return; }
+        setSavingSisa(true);
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/bread/leftover`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ sisa }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) throw new Error(data.error || `status ${res.status}`);
+          setVisitorProfile(prev => ({ ...(prev || {}), todayLeftover: data.sisa }));
+          setSisaInput('');
+          showToast(`Sisa roti ${data.sisa} pcs tercatat 📝`);
+        } catch (err) {
+          showToast(`Gagal menyimpan sisa roti: ${(err && err.message) || 'periksa koneksi'}`);
+        } finally {
+          setSavingSisa(false);
+        }
       };
 
       const handleSend = async () => {
@@ -13112,7 +13207,7 @@ Daily inventory done✅
                 <p className="text-[10px] text-slate-500">
                   {analysis.status === 'tutup' ? '' : `Sisa waktu ke tutup ${sisaWaktuText}. `}
                   {analysis.basis ? `Dasar: ${analysis.basis} (${Math.round(analysis.avgDaily)} pcs/hari), keyakinan ${analysis.confidence}.` : ''}
-                  {analysis.status !== 'tutup' ? (analysis.usedVisitorData ? ' Pola jam memakai data pengunjung asli toko.' : ' Pola jam masih asumsi umum (data pengunjung belum cukup, minimal 3 hari).') : ''}
+                  {analysis.status !== 'tutup' ? (analysis.patternSource === 'pembeli' ? ' Pola jam memakai data pembeli asli toko.' : (analysis.patternSource === 'pengunjung' ? ' Pola jam memakai data pengunjung asli toko.' : ' Pola jam masih asumsi umum (data pembeli/pengunjung belum cukup, minimal 3 hari).')) : ''}
                 </p>
               </div>
             ) : (
@@ -13127,6 +13222,33 @@ Daily inventory done✅
               <i data-lucide="send" className="w-4 h-4"></i>
               <span>{isSending ? 'Mengirim...' : 'Kirim ke Grup Telegram'}</span>
             </button>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+            <div>
+              <h3 className="font-bold text-slate-800 text-base">Catat Sisa Roti Saat Tutup</h3>
+              <p className="text-xs text-slate-500">Isi setelah toko tutup: jumlah roti yang tidak terjual (0 jika habis). Dipakai AI untuk mengukur dan memperbaiki akurasi prediksi.</p>
+            </div>
+            {visitorProfile && visitorProfile.todayLeftover !== null && visitorProfile.todayLeftover !== undefined && (
+              <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">Tercatat hari ini: {visitorProfile.todayLeftover} pcs. Isi lagi untuk memperbarui.</p>
+            )}
+            <div className="flex items-stretch gap-2">
+              <input
+                id="info-roti-sisa"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={sisaInput}
+                onChange={(e) => setSisaInput(cleanInput(e.target.value))}
+                placeholder="Sisa roti (pcs)"
+                aria-label="Sisa roti saat tutup"
+                className="flex-1 min-w-0 px-3 py-3 border border-slate-300 rounded-xl text-center text-lg font-bold text-slate-800 bg-white"
+              />
+              <button onClick={handleSaveSisa} disabled={savingSisa} className="px-5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-bold text-sm">
+                {savingSisa ? 'Menyimpan...' : 'Simpan'}
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-400">Data ini disimpan di server (berbeda dengan laporan Telegram di atas yang tidak menyimpan apa pun).</p>
           </div>
 
           {lastSent && (

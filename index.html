@@ -12904,7 +12904,7 @@ Daily inventory done✅
 
       // Penyesuaian hari ini: kalau pengunjung sejauh ini lebih ramai/sepi dari biasanya di jam yang sama.
       let ratio = 1;
-      const todaySrc = hasBuyerPattern ? prof.todayBuyers : prof.todayHours;
+      const todaySrc = prof ? (hasBuyerPattern ? prof.todayBuyers : prof.todayHours) : null;
       if (hasVisitorPattern && todaySrc && elapsedExpected >= (hasBuyerPattern ? 8 : 15)) {
         const soFar = Object.values(todaySrc).reduce((a, v) => a + (Number(v) || 0), 0);
         if (soFar > 0) ratio = Math.max(0.6, Math.min(1.6, soFar / elapsedExpected));

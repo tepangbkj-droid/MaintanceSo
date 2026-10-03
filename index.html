@@ -1331,6 +1331,18 @@ const { useState, useEffect } = React;
     // pemanggilnya (tidak akan membuat aplikasi crash / unhandled promise rejection) — semua
     // kegagalan dikembalikan sebagai `{ ok: false, error }` sekaligus dicatat detailnya ke
     // console.error, supaya penyebab sebenarnya selalu bisa ditelusuri.
+    // Username Telegram untuk tag "CC" di laporan. Diatur admin per toko (stores/{id}/telegramConfig/ccUsername).
+    // Menerima banyak username dipisah koma/spasi, dengan atau tanpa "@". Hanya username valid
+    // Telegram (5-32 karakter huruf/angka/underscore) yang dipakai; hasilnya array tanpa "@".
+    const parseCcUsernames = (raw) => {
+      const seen = new Set();
+      return String(raw || '')
+        .split(/[\s,;]+/)
+        .map(u => u.replace(/^@+/, '').trim())
+        .filter(u => /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(u))
+        .filter(u => { const k = u.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+    };
+
     const sendTelegramMessage = async (token, chatId, text, options = {}) => {
       const cleanToken = String(token || '').trim();
       const cleanChatId = String(chatId || '').trim();
@@ -3796,7 +3808,7 @@ const { useState, useEffect } = React;
       const [detailStore, setDetailStore] = useState(null);
       const [detailData, setDetailData] = useState(null);
       const [showToken, setShowToken] = useState(false);
-      const [telegramForm, setTelegramForm] = useState({ botToken: '', chatId: '' });
+      const [telegramForm, setTelegramForm] = useState({ botToken: '', chatId: '', ccUsername: '' });
       const [savingTelegram, setSavingTelegram] = useState(false);
       const [telegramSaved, setTelegramSaved] = useState(false);
       const [regeneratingToken, setRegeneratingToken] = useState(false);
@@ -4326,7 +4338,7 @@ const { useState, useEffect } = React;
         };
         const tgHandler = (snap) => {
           const tg = snap.val() || {};
-          setTelegramForm({ botToken: tg.botToken || '', chatId: tg.chatId || '' });
+          setTelegramForm({ botToken: tg.botToken || '', chatId: tg.chatId || '', ccUsername: tg.ccUsername || '' });
         };
         const preOrderHandler = (snap) => {
           const data = snap.val() || {};
@@ -4561,6 +4573,7 @@ const { useState, useEffect } = React;
           await restSet(db.ref(`stores/${detailStore.id}/telegramConfig`), {
             botToken: telegramForm.botToken.trim(),
             chatId: telegramForm.chatId.trim(),
+            ccUsername: parseCcUsernames(telegramForm.ccUsername).join(', '),
           });
           setTelegramSaved(true);
           setTimeout(() => setTelegramSaved(false), 3000);
@@ -5827,6 +5840,11 @@ const { useState, useEffect } = React;
                         <label htmlFor="telegramForm_chatId" className="block text-[10px] font-semibold text-slate-600 mb-1">Chat ID</label>
                         <input id="telegramForm_chatId" type="text" value={telegramForm.chatId} onChange={(e) => setTelegramForm({ ...telegramForm, chatId: e.target.value })} placeholder="-100..." className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono" />
                       </div>
+                      <div>
+                        <label htmlFor="telegramForm_ccUsername" className="block text-[10px] font-semibold text-slate-600 mb-1">Username Telegram untuk CC (SL toko ini)</label>
+                        <input id="telegramForm_ccUsername" type="text" value={telegramForm.ccUsername} onChange={(e) => setTelegramForm({ ...telegramForm, ccUsername: e.target.value })} placeholder="@username_sl, @username_lain" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono" />
+                        <p className="text-[10px] text-slate-500 mt-1">Opsional. Boleh lebih dari satu, pisahkan dengan koma. Akan di-tag di bagian "CC" laporan Informasi Roti. Kosongkan kalau tidak perlu.</p>
+                      </div>
                       <button onClick={handleSaveTelegramConfig} disabled={savingTelegram} className="w-full bg-sky-700 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">
                         {savingTelegram ? 'Menyimpan...' : (telegramSaved ? '✓ Tersimpan' : 'Simpan Integrasi Telegram')}
                       </button>
@@ -6025,7 +6043,7 @@ const { useState, useEffect } = React;
       const [checking, setChecking] = useState(true);
       // Splash screen animasi masuk: tampil sebentar di awal, lalu otomatis hilang
       // (lihat SplashScreen -> onFinish). Hanya ditampilkan sekali per kunjungan tab ini.
-      const [showSplash, setShowSplash] = useState(true);
+      const [showSplash, setShowSplash] = useState(!IS_MINI_MODE);
 
       useEffect(() => {
         const unsub = auth.onAuthStateChanged(async (user) => {
@@ -6142,6 +6160,10 @@ const { useState, useEffect } = React;
 
       if (session.role === 'leader') {
         return <LeaderApp storeId={session.storeId} storeName={session.storeName} onLogout={handleLogout} />;
+      }
+
+      if (IS_MINI_MODE) {
+        return <MiniTrafficCounter storeId={session.storeId} storeName={session.storeName} />;
       }
 
       return <StoreApp storeId={session.storeId} storeName={session.storeName} onLogout={handleLogout} />;
@@ -8158,6 +8180,7 @@ const { useState, useEffect } = React;
             const parsed = JSON.parse(savedConfig);
             delete parsed.telegramBotToken;
             delete parsed.telegramChatId;
+            delete parsed.telegramCc;
             setConfig(prev => ({ ...prev, ...parsed }));
           } catch (e) { /* abaikan config lama yang rusak */ }
         }
@@ -8167,7 +8190,7 @@ const { useState, useEffect } = React;
         const tgRef = db.ref(`${storeBase}/telegramConfig`);
         const unbindTg = bindLiveValue(tgRef, (snap) => {
           const tg = snap.val() || {};
-          setConfig(prev => ({ ...prev, telegramBotToken: tg.botToken || '', telegramChatId: tg.chatId || '' }));
+          setConfig(prev => ({ ...prev, telegramBotToken: tg.botToken || '', telegramChatId: tg.chatId || '', telegramCc: tg.ccUsername || '' }));
         });
 
         // 3. Tarik Data Foto Waste/Rijek secara Real-time dari Node 'wasteFotos'
@@ -8412,7 +8435,7 @@ const { useState, useEffect } = React;
 
       const handleSaveConfig = (e) => {
         e.preventDefault();
-        const { telegramBotToken, telegramChatId, ...persistable } = config;
+        const { telegramBotToken, telegramChatId, telegramCc, ...persistable } = config;
         localStorage.setItem('tarobun_config_web', JSON.stringify(persistable));
         showToast('Konfigurasi disimpan! ⚙️');
         setShowConfig(false);
@@ -10243,6 +10266,9 @@ Daily inventory done✅
 
           {/* Main Container */}
           <main className="max-w-4xl w-full mx-auto p-4">
+
+            {/* Jendela ngambang hitung pengunjung/pembeli: tampil di semua menu (kecuali menu Pengunjung sendiri) */}
+            <FloatingTrafficCounter storeId={storeId} hidden={activeTab === 'pengunjung'} showToast={showToast} />
             
             {/* Connection Config Panel */}
             {showConfig && (
@@ -12461,6 +12487,352 @@ Daily inventory done✅
     const TRAFFIC_LOCATION_TYPES = ['Mall', 'Ruko / Jalan Raya', 'Kampus / Sekolah', 'Perkantoran', 'Wisata / Pasar', 'Lainnya'];
     const trafficWibHour = () => new Date(Date.now() + 7 * 3600 * 1000).getUTCHours();
 
+
+    // ==========================================================================================
+    // JENDELA NGAMBANG: hitung Pengunjung & Pembeli dari menu mana pun, tanpa pindah-pindah menu.
+    // Hanya untuk akun toko. Bisa digeser (drag), diperkecil jadi gelembung, dan disembunyikan.
+    // Memakai endpoint Worker yang sama dengan menu "Pengunjung" (/api/visitors/record), dan
+    // saling sinkron dengan menu itu lewat event 'tarobun-traffic-sync'.
+    // ==========================================================================================
+    const TRAFFIC_FLOAT_LS = { pos: 'tarobun_float_traffic_pos', min: 'tarobun_float_traffic_min', vis: 'tarobun_float_traffic_visible' };
+    const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+    const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* abaikan */ } };
+
+    // Mode mini: aplikasi dibuka dengan ?mini=1 -> hanya layar penghitung (untuk dijalankan di
+    // jendela mengambang bawaan HP, di atas aplikasi lain).
+    const IS_MINI_MODE = (() => { try { return new URLSearchParams(window.location.search).get('mini') === '1'; } catch (e) { return false; } })();
+
+    // Logika hitung bersama (dipakai jendela ngambang di dalam aplikasi DAN layar Mode Mini):
+    // ketukan dikumpulkan lalu dikirim berkelompok ke Worker, saling sinkron lewat event.
+    function useTrafficCounter(storeId, toast) {
+      const [hours, setHours] = useState({});
+      const [buyers, setBuyers] = useState({});
+      const [pending, setPending] = useState(0);
+      const [pendingB, setPendingB] = useState(0);
+      const pendingRef = React.useRef(0);
+      const pendingBRef = React.useRef(0);
+      const flushingRef = React.useRef(false);
+      const timerRef = React.useRef(null);
+      const mountedRef = React.useRef(true);
+      const srcRef = React.useRef('hook-' + Math.random().toString(36).slice(2));
+
+      const loadToday = async () => {
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/visitors/today?storeId=${encodeURIComponent(storeId)}`, { headers: __authHeaders() });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok && mountedRef.current) { setHours(data.hours || {}); setBuyers(data.buyers || {}); }
+        } catch (e) { /* diam: dicoba lagi pada refresh berikutnya */ }
+      };
+
+      const flush = async () => {
+        if (flushingRef.current) return;
+        flushingRef.current = true;
+        let anyFail = false;
+        try {
+          for (const kind of ['visitor', 'buyer']) {
+            const ref = kind === 'visitor' ? pendingRef : pendingBRef;
+            const setP = kind === 'visitor' ? setPending : setPendingB;
+            const raw = ref.current;
+            if (!raw) continue;
+            const d = Math.max(-50, Math.min(50, raw));
+            ref.current -= d;
+            if (mountedRef.current) setP(ref.current);
+            try {
+              const res = await __apiFetch(`${WORKER_BASE}/api/visitors/record`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+                body: JSON.stringify({ delta: d, kind }),
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok || !data.ok) throw new Error(data.error || `status ${res.status}`);
+              if (mountedRef.current) {
+                setHours(data.hours || {}); setBuyers(data.buyers || {});
+                window.dispatchEvent(new CustomEvent('tarobun-traffic-sync', { detail: { src: srcRef.current, storeId, hours: data.hours || {}, buyers: data.buyers || {} } }));
+              }
+            } catch (err) {
+              anyFail = true;
+              ref.current += d;
+              if (mountedRef.current) {
+                setP(ref.current);
+                if (toast) toast(`Gagal menyimpan hitungan ${kind === 'buyer' ? 'pembeli' : 'pengunjung'}: ${(err && err.message) || 'periksa koneksi'}. Ketuk tombol lagi untuk mengirim ulang.`);
+              }
+            }
+          }
+        } finally {
+          flushingRef.current = false;
+          if (!anyFail && (pendingRef.current || pendingBRef.current) && mountedRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(flush, 400);
+          }
+        }
+      };
+      const tap = (delta, kind) => {
+        if (kind === 'buyer') { pendingBRef.current += delta; setPendingB(pendingBRef.current); }
+        else { pendingRef.current += delta; setPending(pendingRef.current); }
+        try { if (navigator.vibrate) navigator.vibrate(delta > 0 ? 18 : [12, 40, 12]); } catch (e) { /* abaikan */ }
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(flush, 600);
+      };
+
+      useEffect(() => {
+        mountedRef.current = true;
+        loadToday();
+        const t = setInterval(() => { if (!pendingRef.current && !pendingBRef.current && !flushingRef.current) loadToday(); }, 60000);
+        const onVis = () => {
+          if (document.visibilityState === 'visible') { if (!pendingRef.current && !pendingBRef.current) loadToday(); }
+          else if (pendingRef.current || pendingBRef.current) flush();
+        };
+        const onSync = (e) => {
+          const d = e.detail || {};
+          if (d.src === srcRef.current || d.storeId !== storeId) return;
+          if (pendingRef.current || pendingBRef.current) return;
+          setHours(d.hours || {}); setBuyers(d.buyers || {});
+        };
+        document.addEventListener('visibilitychange', onVis);
+        window.addEventListener('pagehide', onVis);
+        window.addEventListener('tarobun-traffic-sync', onSync);
+        return () => {
+          mountedRef.current = false;
+          clearInterval(t);
+          clearTimeout(timerRef.current);
+          document.removeEventListener('visibilitychange', onVis);
+          window.removeEventListener('pagehide', onVis);
+          window.removeEventListener('tarobun-traffic-sync', onSync);
+          if (pendingRef.current || pendingBRef.current) flush(); // jangan buang hitungan yang belum terkirim
+        };
+      }, [storeId]);
+
+      const hh = (h) => String(h).padStart(2, '0');
+      const curHour = trafficWibHour();
+      return {
+        tap,
+        hasPending: pending !== 0 || pendingB !== 0,
+        visitorNow: Math.max(0, (Number(hours[hh(curHour)]) || 0) + pending),
+        visitorTotal: Math.max(0, Object.keys(hours).reduce((a, k) => a + (Number(hours[k]) || 0), 0) + pending),
+        buyerNow: Math.max(0, (Number(buyers[hh(curHour)]) || 0) + pendingB),
+        buyerTotal: Math.max(0, Object.keys(buyers).reduce((a, k) => a + (Number(buyers[k]) || 0), 0) + pendingB),
+      };
+    }
+
+    function FloatingTrafficCounter({ storeId, hidden, showToast }) {
+      const [visible, setVisible] = useState(() => lsGet(TRAFFIC_FLOAT_LS.vis) !== '0');
+      const [minimized, setMinimized] = useState(() => lsGet(TRAFFIC_FLOAT_LS.min) === '1');
+      const [pos, setPos] = useState(() => {
+        try { const p = JSON.parse(lsGet(TRAFFIC_FLOAT_LS.pos) || 'null'); if (p && isFinite(p.x) && isFinite(p.y)) return p; } catch (e) { /* abaikan */ }
+        return null;
+      });
+      const boxRef = React.useRef(null);
+      const dragRef = React.useRef(null);
+      const toast = (m) => { if (showToast) showToast(m); };
+      const { tap, hasPending, visitorNow, visitorTotal, buyerNow, buyerTotal } = useTrafficCounter(storeId, toast);
+
+      const clampPos = (x, y) => {
+        const el = boxRef.current;
+        const w = el ? el.offsetWidth : 220, h = el ? el.offsetHeight : 220;
+        return {
+          x: Math.min(Math.max(4, x), Math.max(4, window.innerWidth - w - 4)),
+          y: Math.min(Math.max(4, y), Math.max(4, window.innerHeight - h - 4)),
+        };
+      };
+      useEffect(() => {
+        const onToggle = (e) => setVisible(!!(e.detail && e.detail.visible));
+        const onResize = () => setPos(prev => prev ? clampPos(prev.x, prev.y) : prev);
+        window.addEventListener('tarobun-float-toggle', onToggle);
+        window.addEventListener('resize', onResize);
+        return () => {
+          window.removeEventListener('tarobun-float-toggle', onToggle);
+          window.removeEventListener('resize', onResize);
+        };
+      }, []);
+      // Setelah diperkecil/diperbesar atau ditampilkan lagi, pastikan jendela tidak keluar layar.
+      useEffect(() => {
+        if (!pos) return;
+        const c = clampPos(pos.x, pos.y);
+        if (c.x !== pos.x || c.y !== pos.y) setPos(c);
+      }, [minimized, visible, hidden]);
+
+      const onDragStart = (e) => {
+        const el = boxRef.current;
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        dragRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false, sx: e.clientX, sy: e.clientY };
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* abaikan */ }
+      };
+      const onDragMove = (e) => {
+        const d = dragRef.current;
+        if (!d) return;
+        if (!d.moved && Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) < 6) return;
+        d.moved = true;
+        setPos(clampPos(e.clientX - d.dx, e.clientY - d.dy));
+      };
+      const onDragEnd = () => {
+        const d = dragRef.current;
+        dragRef.current = null;
+        if (d && d.moved) setPos(prev => { if (prev) lsSet(TRAFFIC_FLOAT_LS.pos, JSON.stringify(prev)); return prev; });
+        return !!(d && d.moved);
+      };
+      const setMin = (v) => { setMinimized(v); lsSet(TRAFFIC_FLOAT_LS.min, v ? '1' : '0'); };
+      const hide = () => {
+        lsSet(TRAFFIC_FLOAT_LS.vis, '0');
+        setVisible(false);
+        toast('Jendela ngambang disembunyikan. Aktifkan lagi lewat menu Pengunjung.');
+      };
+
+      if (!visible || hidden) return null;
+
+      const style = pos ? { left: pos.x, top: pos.y } : { right: 12, bottom: 96 };
+
+      if (minimized) {
+        return (
+          <div ref={boxRef} style={{ ...style, touchAction: 'none' }} className="fixed z-[90] select-none">
+            <div
+              onPointerDown={onDragStart}
+              onPointerMove={onDragMove}
+              onPointerUp={() => { if (!onDragEnd()) setMin(false); }}
+              onPointerCancel={onDragEnd}
+              className="flex items-center gap-2 bg-purple-800 text-white rounded-full shadow-lg px-3.5 py-2 cursor-pointer"
+              aria-label="Buka penghitung pengunjung"
+              role="button"
+            >
+              <span className="text-sm">👥</span>
+              <span className="font-display font-extrabold text-sm">{visitorTotal}</span>
+              <span className="opacity-60">•</span>
+              <span className="text-sm">🛒</span>
+              <span className="font-display font-extrabold text-sm">{buyerTotal}</span>
+              {hasPending && <span className="w-1.5 h-1.5 rounded-full bg-amber-300 animate-pulse"></span>}
+            </div>
+          </div>
+        );
+      }
+
+      const renderRow = ({ emoji, label, now, total, kind, tone }) => (
+        <div key={kind} className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => tap(-1, kind)}
+            disabled={now <= 0}
+            aria-label={`Kurangi ${label}`}
+            className="w-11 h-11 rounded-xl bg-slate-100 text-slate-700 text-2xl font-bold leading-none disabled:opacity-30 active:scale-95 transition-transform"
+          >−</button>
+          <div className="flex-1 min-w-0 text-center">
+            <p className="text-[10px] font-semibold text-slate-500 leading-tight">{emoji} {label}</p>
+            <p className={`font-display font-extrabold text-2xl leading-none ${tone.text}`}>{total}</p>
+            <p className="text-[9px] text-slate-400 leading-tight mt-0.5">jam ini {now}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => tap(1, kind)}
+            aria-label={`Tambah ${label}`}
+            className={`w-14 h-14 rounded-2xl ${tone.btn} text-white text-3xl font-bold leading-none shadow active:scale-95 transition-transform`}
+          >+</button>
+        </div>
+      );
+
+      return (
+        <div ref={boxRef} style={{ ...style, touchAction: 'none', width: 236 }} className="fixed z-[90] select-none bg-white rounded-2xl shadow-2xl border border-purple-200">
+          <div
+            onPointerDown={onDragStart}
+            onPointerMove={onDragMove}
+            onPointerUp={onDragEnd}
+            onPointerCancel={onDragEnd}
+            className="flex items-center justify-between px-3 py-1.5 bg-purple-800 text-white rounded-t-2xl cursor-grab active:cursor-grabbing"
+          >
+            <span className="text-[11px] font-bold flex items-center gap-1.5">
+              <span>⠿</span> Hitung Pengunjung
+              {hasPending && <span className="w-1.5 h-1.5 rounded-full bg-amber-300 animate-pulse" title="Mengirim..."></span>}
+            </span>
+            <span className="flex items-center gap-1">
+              <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => setMin(true)} aria-label="Perkecil" className="w-6 h-6 rounded-md hover:bg-white/20 text-base leading-none">–</button>
+              <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={hide} aria-label="Sembunyikan" className="w-6 h-6 rounded-md hover:bg-white/20 text-sm leading-none">✕</button>
+            </span>
+          </div>
+          <div className="p-3 space-y-3">
+            {renderRow({ emoji: '👥', label: 'Pengunjung', now: visitorNow, total: visitorTotal, kind: 'visitor', tone: { text: 'text-purple-800', btn: 'bg-purple-700' } })}
+            {renderRow({ emoji: '🛒', label: 'Pembeli', now: buyerNow, total: buyerTotal, kind: 'buyer', tone: { text: 'text-emerald-700', btn: 'bg-emerald-600' } })}
+          </div>
+        </div>
+      );
+    }
+
+    // Layar MODE MINI: dirancang muat di jendela mengambang kecil (bahkan ~300x350 px).
+    // Layar dijaga tetap menyala (Wake Lock) selama dibuka.
+    function MiniTrafficCounter({ storeId, storeName }) {
+      const [msg, setMsg] = useState('');
+      const [clock, setClock] = useState(() => new Date());
+      const [keepAwake, setKeepAwake] = useState(false);
+      const msgTimer = React.useRef(null);
+      const wakeRef = React.useRef(null);
+      const toast = (m) => { setMsg(m); clearTimeout(msgTimer.current); msgTimer.current = setTimeout(() => setMsg(''), 4000); };
+      const { tap, hasPending, visitorNow, visitorTotal, buyerNow, buyerTotal } = useTrafficCounter(storeId, toast);
+
+      useEffect(() => { const t = setInterval(() => setClock(new Date()), 15000); return () => clearInterval(t); }, []);
+      useEffect(() => {
+        let cancelled = false;
+        const acquire = async () => {
+          try {
+            if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+            const lock = await navigator.wakeLock.request('screen');
+            if (cancelled) { lock.release(); return; }
+            wakeRef.current = lock;
+            setKeepAwake(true);
+            lock.addEventListener('release', () => setKeepAwake(false));
+          } catch (e) { setKeepAwake(false); }
+        };
+        acquire();
+        const onVis = () => { if (document.visibilityState === 'visible') acquire(); };
+        document.addEventListener('visibilitychange', onVis);
+        return () => {
+          cancelled = true;
+          document.removeEventListener('visibilitychange', onVis);
+          try { if (wakeRef.current) wakeRef.current.release(); } catch (e) { /* abaikan */ }
+        };
+      }, []);
+
+      const fullAppHref = (() => { try { const u = new URL(window.location.href); u.searchParams.delete('mini'); return u.pathname + (u.search || ''); } catch (e) { return '/'; } })();
+      const jam = clock.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
+
+      const card = ({ emoji, label, now, total, kind, tone }) => (
+        <div key={kind} className={`flex-1 min-h-0 rounded-2xl ${tone.bg} p-2 flex flex-col`}>
+          <div className="flex items-baseline justify-between px-1">
+            <p className={`text-[11px] font-bold ${tone.text}`}>{emoji} {label}</p>
+            <p className="text-[10px] text-slate-500">jam ini {now}</p>
+          </div>
+          <p className={`font-display font-extrabold ${tone.text} text-center leading-none`} style={{ fontSize: 'clamp(28px, 11vh, 64px)' }}>{total}</p>
+          <div className="flex gap-2 flex-1 min-h-[44px] mt-1.5">
+            <button
+              type="button"
+              onClick={() => tap(-1, kind)}
+              disabled={now <= 0}
+              aria-label={`Kurangi ${label}`}
+              className="w-1/4 rounded-xl bg-white text-slate-700 text-2xl font-bold disabled:opacity-30 active:scale-95 transition-transform"
+            >−</button>
+            <button
+              type="button"
+              onClick={() => tap(1, kind)}
+              aria-label={`Tambah ${label}`}
+              className={`flex-1 rounded-xl ${tone.btn} text-white text-4xl font-bold shadow active:scale-95 transition-transform`}
+            >+</button>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="bg-slate-50 flex flex-col p-2 gap-2 select-none" style={{ height: '100dvh', touchAction: 'manipulation' }}>
+          <div className="flex items-center justify-between px-1">
+            <p className="text-[11px] font-bold text-slate-700 truncate">{storeName || 'Toko'} • {jam}</p>
+            <p className="text-[10px] text-slate-500 flex items-center gap-1">
+              {hasPending && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>}
+              {keepAwake ? '🔆 layar menyala' : ''}
+            </p>
+          </div>
+          {card({ emoji: '👥', label: 'Pengunjung', now: visitorNow, total: visitorTotal, kind: 'visitor', tone: { bg: 'bg-purple-50', text: 'text-purple-800', btn: 'bg-purple-700' } })}
+          {card({ emoji: '🛒', label: 'Pembeli', now: buyerNow, total: buyerTotal, kind: 'buyer', tone: { bg: 'bg-emerald-50', text: 'text-emerald-700', btn: 'bg-emerald-600' } })}
+          {msg && <p className="text-[10px] text-rose-600 px-1 leading-tight">{msg}</p>}
+          <a href={fullAppHref} className="text-center text-[10px] text-slate-500 underline">Buka aplikasi lengkap</a>
+        </div>
+      );
+    }
+
     function StoreTrafficPanel({ storeId, storeName, role, showToast }) {
       const isAdmin = role === 'admin';
       const emptyLoc = { name: '', address: '', type: '', lat: '', lng: '', openHour: '10', closeHour: '22', notes: '' };
@@ -12478,9 +12850,29 @@ Daily inventory done✅
       const flushingRef = React.useRef(false);
       const timerRef = React.useRef(null);
       const mountedRef = React.useRef(true);
+      const panelSrcRef = React.useRef('panel-' + Math.random().toString(36).slice(2));
+      const [floatOn, setFloatOn] = useState(() => lsGet(TRAFFIC_FLOAT_LS.vis) !== '0');
       const toast = (m) => { if (showToast) showToast(m); };
 
       useEffect(() => { scheduleLucideIcons(); });
+
+      // Sinkron dengan jendela ngambang (hitungan dari sana langsung muncul di sini).
+      useEffect(() => {
+        const onSync = (e) => {
+          const d = e.detail || {};
+          if (d.src === panelSrcRef.current || d.storeId !== storeId) return;
+          if (pendingRef.current || pendingBRef.current) return;
+          setHours(d.hours || {}); setBuyers(d.buyers || {});
+        };
+        window.addEventListener('tarobun-traffic-sync', onSync);
+        return () => window.removeEventListener('tarobun-traffic-sync', onSync);
+      }, [storeId]);
+      const toggleFloat = () => {
+        const next = !floatOn;
+        setFloatOn(next);
+        lsSet(TRAFFIC_FLOAT_LS.vis, next ? '1' : '0');
+        window.dispatchEvent(new CustomEvent('tarobun-float-toggle', { detail: { visible: next } }));
+      };
 
       // Lokasi store (diatur admin) — dibaca live; toko hanya membaca.
       useEffect(() => {
@@ -12543,7 +12935,10 @@ Daily inventory done✅
               });
               const data = await res.json().catch(() => ({}));
               if (!res.ok || !data.ok) throw new Error(data.error || `status ${res.status}`);
-              if (mountedRef.current) { setHours(data.hours || {}); setBuyers(data.buyers || {}); }
+              if (mountedRef.current) {
+                setHours(data.hours || {}); setBuyers(data.buyers || {});
+                window.dispatchEvent(new CustomEvent('tarobun-traffic-sync', { detail: { src: panelSrcRef.current, storeId, hours: data.hours || {}, buyers: data.buyers || {} } }));
+              }
             } catch (err) {
               anyFail = true;
               ref.current += d;
@@ -12727,6 +13122,14 @@ Daily inventory done✅
             <div>
               <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2"><i data-lucide="users" className="w-4 h-4 text-purple-700"></i><span>Pengunjung Hari Ini</span></h3>
               <p className="text-xs text-slate-500">{isAdmin ? 'Hitungan yang dicatat staf toko hari ini (WIB).' : 'Ketuk +1 Pengunjung saat ada yang masuk, dan +1 Pembeli saat ada yang membayar di kasir. Dicatat per jam, tanpa data pribadi.'}</p>
+              {!isAdmin && (
+                <a href="?mini=1" className="mt-2 mr-2 inline-block text-[11px] font-bold px-3 py-1.5 rounded-lg bg-purple-800 text-white">📌 Buka Mode Mini (untuk jendela mengambang HP)</a>
+              )}
+              {!isAdmin && (
+                <button type="button" onClick={toggleFloat} className={`mt-2 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${floatOn ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-white border-slate-300 text-slate-600'}`}>
+                  {floatOn ? '🪟 Jendela ngambang: Aktif (ketuk untuk sembunyikan)' : '🪟 Jendela ngambang: Mati (ketuk untuk aktifkan)'}
+                </button>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3 text-center">
               <div className="rounded-2xl bg-purple-50 py-3">
@@ -13057,6 +13460,7 @@ Daily inventory done✅
         const tanggal = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
         const jam = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
         const fmt = (n) => n.toLocaleString('id-ID');
+        const ccList = parseCcUsernames(config.telegramCc);
         return [
           '*🥐 INFORMASI ROTI*',
           `🏪 Toko: *${escapeMd(storeName || '-')}*`,
@@ -13074,8 +13478,7 @@ Daily inventory done✅
           ] : []),
           'Saran:',
           ...analysis.tips.map(t => `• ${escapeMd(t)}`),
-          '',
-          'CC @RahmaCRuby',
+          ...(ccList.length ? ['', `CC ${ccList.map(u => '@' + escapeMd(u)).join(' ')}`] : []),
         ].join('\n');
       };
 

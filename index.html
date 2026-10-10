@@ -1873,7 +1873,7 @@ const { useState, useEffect } = React;
       { icon: 'clipboard-check', title: 'BAP (Berita Acara Penyesuaian)', desc: 'Laporkan selisih nominal antara POS dengan channel pembayaran (EDC/QRIS/Gofood/GrabFood/ShopeeFood) dan kirim ke Telegram.', target: '[data-tour="menu-bap"]' },
       { icon: 'truck', title: 'Datang Barang', desc: 'Catat barang yang baru datang dari gudang pusat, termasuk barang yang tidak sesuai.', target: '[data-tour="menu-kedatangan"]' },
       { icon: 'users', title: 'Pengunjung', desc: 'Ketuk +1 setiap ada pengunjung masuk. Data per jam dipakai AI untuk menentukan jam ramai dan apa yang perlu disiapkan.', target: '[data-tour="menu-pengunjung"]' },
-      { icon: 'croissant', title: 'Informasi Roti', desc: 'Isi jumlah roti matang & roti yang masih proses baking, total dihitung otomatis lalu langsung dikirim ke grup Telegram tanpa disimpan.', target: '[data-tour="menu-infoRoti"]' },
+      { icon: 'croissant', title: 'Informasi Roti', desc: 'Isi jumlah roti matang & roti yang masih proses baking, total dihitung otomatis lalu dikirim ke grup Telegram. Status juga dibagikan ke outlet lain untuk saran kasih/minta roti.', target: '[data-tour="menu-infoRoti"]' },
       { icon: 'camera', title: 'Foto Rijek', desc: 'Unggah foto bun rijek, barang rijek, atau waste sebagai bukti dan dikirim ke Telegram.', target: '[data-tour="menu-wasteFoto"]' },
       { icon: 'printer', title: 'Printing', desc: 'Cetak label Premix (nama barang, tanggal buat/exp, asal bahan) dan Catatan Stok (FD/toping + jumlah). Cocok untuk printer biasa maupun thermal.', target: '[data-tour="menu-printing"]' },
       { icon: 'history', title: 'Riwayat Laporan', desc: 'Lihat & unduh riwayat laporan harian yang tersimpan di Cloud.', target: '[data-tour="menu-history"]' },
@@ -7385,7 +7385,7 @@ const { useState, useEffect } = React;
           { label: 'Stroberi Sirup', opsi: ['PT Tirta Djaya Globalindo'] },
         ] },
         { id: 'blueberry_konsentrat', nama: 'Blueberry Konsentrat', hari: 14, bahan: [
-          { label: 'Blueberry Konsentrat', opsi: [], manual: true },
+          { label: 'Blueberry Konsentrat', opsi: ['PT Sonton Food Indonesia'] },
         ] },
         { id: 'whipping_cream', nama: 'Whipping Cream (Original)', hari: 5, bahan: [
           { label: 'Susu', opsi: SUSU_OPSI },
@@ -7409,6 +7409,23 @@ const { useState, useEffect } = React;
       const [premixForm, setPremixForm] = useState(emptyPremixForm);
       const [premixPrintData, setPremixPrintData] = useState(null);
       const [premixNow, setPremixNow] = useState(() => new Date());
+
+      // ---- CUSTOMER REQUEST (kartu kata-kata + QR Saluran WhatsApp, dicetak sebagai gambar) ----
+      const QR_WA_DATA_URL = 'data:image/png;base64,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';
+      const LOGO_DATA_URL = 'data:image/png;base64,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';
+      const REQ_FONTS = [
+        { id: 'fredoka',  label: 'Gaul ala Tarobun', css: 'Fredoka',        weight: 600, scale: 1,    note: 'Bulat gemoy, senada logo' },
+        { id: 'nunito',   label: 'Bulat Jelas',    css: 'Nunito',           weight: 800, scale: 1,    note: 'Paling mudah dibaca' },
+        { id: 'poppins',  label: 'Tegas Modern',   css: 'Poppins',          weight: 600, scale: 0.95, note: 'Rapi & tegas' },
+        { id: 'playfair', label: 'Elegan',         css: 'Playfair Display', weight: 700, scale: 0.95, note: 'Klasik & manis' },
+        { id: 'caveat',   label: 'Tulisan Tangan', css: 'Caveat',           weight: 700, scale: 1.3,  note: 'Santai & personal' },
+      ];
+      const REQ_FONTS_HREF = 'https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@600;800&family=Poppins:wght@600;800&family=Playfair+Display:wght@700&family=Caveat:wght@700&display=swap';
+      const [reqForm, setReqForm] = useState({ from: '', dear: '', message: '', font: 'fredoka', size: 'md', qr: true, copies: 1 });
+      const [reqPreview, setReqPreview] = useState(null); // { url, w, h }
+      const [reqBusy, setReqBusy] = useState(false);
+      const [reqPrintData, setReqPrintData] = useState(null);
+      const handleReqChange = (field, value) => setReqForm(prev => ({ ...prev, [field]: value }));
 
       // ---- PENGATURAN PRINTER (tersimpan lokal di perangkat) ----
       const PRINTER_CFG_KEY = 'tarobun_printer_cfg_v1';
@@ -7587,6 +7604,7 @@ const { useState, useEffect } = React;
         const out = [];
         doc.forEach(r => {
           if (r.sep) out.push({ text: (r.ch || '-').repeat(width) });
+          else if (r.logo) out.push({ logo: true, text: 'TAROBUN', align: 'center', bold: true });
           else if (r.feed) { for (let i = 0; i < r.feed; i++) out.push({ text: '' }); }
           else if (r.kv) { const pre = `${String(r.kv[0]).padEnd(r.w || 0)} : `; wrapText(r.kv[1], width, pre, ' '.repeat(pre.length)).forEach(t => out.push({ text: t })); }
           else if (r.item) { out.push({ text: `- ${r.item[0]}`, bold: true }); wrapText(r.item[1], width, '  ', '  ').forEach(t => out.push({ text: t })); }
@@ -7610,10 +7628,11 @@ const { useState, useEffect } = React;
         return l.text;
       }).join('\n') + '\n';
 
-      const docToEscpos = (doc, width, cut) => {
+      const docToEscpos = (doc, width, cut, logoBm) => {
         const bytes = [0x1B, 0x40];
         const enc = (str) => Array.from(str).map(c => { const n = c.charCodeAt(0); return n < 128 ? n : 63; });
         renderDoc(doc, width).forEach(l => {
+          if (l.logo && logoBm) { pushRaster(bytes, logoBm); return; }
           bytes.push(0x1B, 0x61, l.align === 'center' ? 1 : 0, 0x1B, 0x45, l.bold ? 1 : 0, 0x1D, 0x21, l.big ? 0x11 : 0x00);
           enc(l.text).forEach(b => bytes.push(b));
           bytes.push(0x0A);
@@ -7625,7 +7644,7 @@ const { useState, useEffect } = React;
 
       const buildPremixDoc = (d) => {
         const one = [
-          { text: 'TAROBUN', align: 'center', size: 'big', bold: true },
+          { logo: true },
           { text: d.namaToko, align: 'center', bold: true },
           { sep: true, ch: '=' },
           { kv: ['Nama Barang', d.namaBarang], w: 11 },
@@ -7731,12 +7750,18 @@ const { useState, useEffect } = React;
           if (!ch) return false;
         }
         try {
-          const CHUNK = 20;
-          for (let i = 0; i < bytes.length; i += CHUNK) {
-            const part = bytes.slice(i, i + CHUNK);
-            if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(part);
-            else await ch.writeValue(part);
-            await new Promise(r => setTimeout(r, 12));
+          let chunk = 100; // coba paket besar dulu; turun ke 20 byte jika printer menolak
+          for (let i = 0; i < bytes.length;) {
+            const part = bytes.slice(i, i + chunk);
+            try {
+              if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(part);
+              else await ch.writeValue(part);
+            } catch (werr) {
+              if (chunk > 20) { chunk = 20; continue; }
+              throw werr;
+            }
+            i += part.length;
+            await new Promise(r => setTimeout(r, chunk > 20 ? 8 : 14));
           }
           return true;
         } catch (err) {
@@ -7750,9 +7775,293 @@ const { useState, useEffect } = React;
       // Kirim dokumen ke printer sesuai mode & ukuran kertas yang dipilih.
       const printReceipt = async (doc) => {
         const width = printerCfg.paper === '80' ? 48 : 32;
-        if (printerCfg.mode === 'ble') return await writeBle(docToEscpos(doc, width, printerCfg.cut));
+        if (printerCfg.mode === 'ble') {
+          let logoBm = null;
+          if (doc.some(r => r.logo)) { try { logoBm = await makeLogoBitmap(printerCfg.paper === '80' ? 576 : 384); } catch (e) { logoBm = null; } }
+          return await writeBle(docToEscpos(doc, width, printerCfg.cut, logoBm));
+        }
         return printViaRawBT(docToText(doc, width));
       };
+
+      // ==========================================
+      // CUSTOMER REQUEST: gambar kartu -> bitmap 1-bit -> ESC/POS raster
+      // Dibuat sebagai gambar agar jenis huruf bebas (tidak terbatas font bawaan printer).
+      // Lebar: 58mm = 384 titik, 80mm = 576 titik.
+      // ==========================================
+      const qrImageRef = React.useRef(null);
+      const loadQrImage = () => new Promise((resolve, reject) => {
+        if (qrImageRef.current) return resolve(qrImageRef.current);
+        const img = new Image();
+        img.onload = () => { qrImageRef.current = img; resolve(img); };
+        img.onerror = () => reject(new Error('Gambar QR gagal dimuat'));
+        img.src = QR_WA_DATA_URL;
+      });
+
+      const ensureReqFonts = async () => {
+        if (!document.getElementById('req-fonts-link')) {
+          const l = document.createElement('link');
+          l.id = 'req-fonts-link'; l.rel = 'stylesheet'; l.href = REQ_FONTS_HREF;
+          document.head.appendChild(l);
+        }
+        try {
+          await Promise.race([
+            Promise.all(REQ_FONTS.map(f => document.fonts.load(`${f.weight} 32px "${f.css}"`, 'Abc'))),
+            new Promise(r => setTimeout(r, 4000)),
+          ]);
+        } catch (e) { /* tanpa internet: pakai font cadangan perangkat */ }
+      };
+
+      const logoImgRef = React.useRef(null);
+      const loadLogoImage = () => new Promise((resolve, reject) => {
+        if (logoImgRef.current) return resolve(logoImgRef.current);
+        const img = new Image();
+        img.onload = () => { logoImgRef.current = img; resolve(img); };
+        img.onerror = () => reject(new Error('Logo gagal dimuat'));
+        img.src = LOGO_DATA_URL;
+      });
+      // Logo "tarobun" jadi bitmap selebar kertas (logo di tengah) untuk dicetak ESC/POS.
+      const makeLogoBitmap = async (W, frac = 0.66) => {
+        const img = await loadLogoImage();
+        const lw = Math.round(W * frac);
+        const lh = Math.round(lw * img.height / img.width);
+        const H = Math.ceil((lh + 8) / 8) * 8;
+        const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        const c = cv.getContext('2d');
+        c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
+        c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
+        c.drawImage(img, Math.round((W - lw) / 2), 4, lw, lh);
+        const d = c.getImageData(0, 0, W, H);
+        const bpr = W / 8; const bits = new Uint8Array(bpr * H);
+        for (let r = 0; r < H; r++) for (let x = 0; x < W; x++) {
+          const i = (r * W + x) * 4;
+          if (0.299 * d.data[i] + 0.587 * d.data[i + 1] + 0.114 * d.data[i + 2] < 160) bits[r * bpr + (x >> 3)] |= (0x80 >> (x & 7));
+        }
+        return { w: W, h: H, bpr, bits };
+      };
+      const pushRaster = (bytes, bm) => {
+        const BAND = 96;
+        for (let r0 = 0; r0 < bm.h; r0 += BAND) {
+          const rows = Math.min(BAND, bm.h - r0);
+          bytes.push(0x1D, 0x76, 0x30, 0x00, bm.bpr & 255, (bm.bpr >> 8) & 255, rows & 255, (rows >> 8) & 255);
+          const slice = bm.bits.subarray(r0 * bm.bpr, (r0 + rows) * bm.bpr);
+          for (let i = 0; i < slice.length; i++) bytes.push(slice[i]);
+        }
+      };
+
+      const wrapCanvasText = (ctx, text, maxW) => {
+        const lines = [];
+        String(text).split(/\n/).forEach(par => {
+          let line = '';
+          const words = par.split(/\s+/).filter(Boolean);
+          if (words.length === 0) { lines.push(''); return; }
+          words.forEach(w => {
+            const t = line ? line + ' ' + w : w;
+            if (ctx.measureText(t).width <= maxW) { line = t; return; }
+            if (line) lines.push(line);
+            if (ctx.measureText(w).width > maxW) {
+              let chunk = '';
+              for (const ch of w) {
+                if (ctx.measureText(chunk + ch).width > maxW) { lines.push(chunk); chunk = ch; } else chunk += ch;
+              }
+              line = chunk;
+            } else line = w;
+          });
+          lines.push(line);
+        });
+        return lines;
+      };
+
+      const renderRequestBitmap = async (data, W) => {
+        await ensureReqFonts();
+        const qrImg = data.qr ? await loadQrImage() : null;
+        const logoImg = await loadLogoImage();
+        const font = REQ_FONTS.find(f => f.id === data.font) || REQ_FONTS[0];
+        const SS = 2; // supersampling agar huruf halus setelah jadi hitam-putih
+        const base = W / 384;
+        const pad = Math.round(16 * base);
+        const inner = W - pad * 2;
+        const big = document.createElement('canvas');
+        big.width = W * SS; big.height = 4000 * SS;
+        const ctx = big.getContext('2d');
+        ctx.scale(SS, SS);
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, 4000);
+        ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
+        const F = (wt, px, fam) => `${wt} ${Math.round(px * base)}px "${fam}", sans-serif`;
+        let y = pad;
+
+        const centerLines = (text, wt, px, fam, gap = 1.25) => {
+          ctx.font = F(wt, px, fam);
+          wrapCanvasText(ctx, text, inner).forEach(t => {
+            ctx.textAlign = 'center'; ctx.fillText(t, W / 2, y); y += Math.round(px * base * gap);
+          });
+        };
+        const rule = (thick, dashed) => {
+          ctx.save(); ctx.lineWidth = Math.round(thick * base);
+          if (dashed) ctx.setLineDash([Math.round(8 * base), Math.round(6 * base)]);
+          ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke(); ctx.restore();
+          y += Math.round(10 * base);
+        };
+
+        {
+          const lw = Math.round(W * 0.66); const lh = Math.round(lw * logoImg.height / logoImg.width);
+          ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(logoImg, Math.round((W - lw) / 2), y, lw, lh); y += lh + Math.round(6 * base);
+        }
+        centerLines(data.namaToko, font.weight, 24 * font.scale, font.css, 1.25);
+        y += Math.round(2 * base);
+        centerLines('CUSTOMER REQUEST', 600, 15, 'Poppins', 1.4);
+        rule(4, false);
+        y += Math.round(4 * base);
+
+        const labelRow = (label, value) => {
+          if (!value) return;
+          const px = 23 * font.scale;
+          ctx.font = F(800, px, font.css);
+          const lw = ctx.measureText(label + ' : ').width;
+          ctx.textAlign = 'left'; ctx.fillText(label + ' :', pad, y);
+          ctx.font = F(font.weight, px, font.css);
+          wrapCanvasText(ctx, value, inner - lw).forEach(t => {
+            ctx.fillText(t, pad + lw, y); y += Math.round(px * base * 1.3);
+          });
+        };
+        labelRow('From', data.from);
+        labelRow('Dear', data.dear);
+        y += Math.round(8 * base);
+
+        ctx.font = F(800, 19 * font.scale, font.css); ctx.textAlign = 'left';
+        ctx.fillText('Request kamu nih :', pad, y); y += Math.round(19 * font.scale * base * 1.5);
+        const msgPx = (data.size === 'lg' ? 36 : 28) * font.scale;
+        ctx.font = F(font.weight, msgPx, font.css);
+        wrapCanvasText(ctx, data.message, inner).forEach(t => {
+          ctx.textAlign = 'center'; ctx.fillText(t, W / 2, y); y += Math.round(msgPx * base * 1.3);
+        });
+        y += Math.round(10 * base);
+
+        if (qrImg) {
+          rule(2, true);
+          y += Math.round(6 * base);
+          centerLines('Yuk, join Saluran WhatsApp kita!', 800, 21, 'Nunito', 1.25);
+          y += Math.round(8 * base);
+          const qs = Math.min(inner, Math.round(270 * base));
+          ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(qrImg, Math.round((W - qs) / 2), y, qs, qs);
+          y += qs + Math.round(8 * base);
+          centerLines('Scan QR-nya, gratis kok!', 600, 14, 'Nunito', 1.3);
+        }
+        y += Math.round(6 * base);
+        rule(4, false);
+        centerLines('Makasih yaa, sampai ketemu lagi!', 700, 17 * font.scale, font.css, 1.3);
+        y += pad;
+
+        const H = Math.ceil(y / 8) * 8;
+        const out = document.createElement('canvas');
+        out.width = W; out.height = H;
+        const octx = out.getContext('2d');
+        octx.fillStyle = '#fff'; octx.fillRect(0, 0, W, H);
+        octx.imageSmoothingEnabled = true; octx.imageSmoothingQuality = 'high';
+        octx.drawImage(big, 0, 0, W * SS, H * SS, 0, 0, W, H);
+        const img = octx.getImageData(0, 0, W, H);
+        const bpr = W / 8;
+        const bits = new Uint8Array(bpr * H);
+        for (let r = 0; r < H; r++) {
+          for (let c = 0; c < W; c++) {
+            const i = (r * W + c) * 4;
+            const lum = 0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2];
+            const black = lum < 150;
+            if (black) bits[r * bpr + (c >> 3)] |= (0x80 >> (c & 7));
+            const v = black ? 0 : 255;
+            img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255;
+          }
+        }
+        octx.putImageData(img, 0, 0);
+        return { w: W, h: H, bpr, bits, url: out.toDataURL('image/png') };
+      };
+
+      const rasterToEscpos = (bm, copies, cut) => {
+        const bytes = [0x1B, 0x40, 0x1B, 0x61, 0x00];
+        for (let c = 0; c < copies; c++) {
+          pushRaster(bytes, bm);
+          bytes.push(0x0A, 0x0A, 0x0A, 0x0A);
+        }
+        if (cut) bytes.push(0x1D, 0x56, 0x42, 0x00);
+        return Uint8Array.from(bytes);
+      };
+
+      const printViaRawBTBytes = (u8) => {
+        try {
+          let binary = '';
+          for (let i = 0; i < u8.length; i += 8192) binary += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+          window.location.href = `intent:base64,${btoa(binary)}#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;`;
+          return true;
+        } catch (err) {
+          console.error('Gagal cetak gambar via RawBT:', err);
+          showToast('Gagal mengirim gambar ke RawBT. Coba mode Bluetooth Langsung atau Dialog Browser.');
+          return false;
+        }
+      };
+
+      const reqDots = () => (printerCfg.paper === '80' ? 576 : 384);
+      const buildReqData = () => ({
+        namaToko: (storeName || '').trim() || 'Tarobun',
+        from: reqForm.from.trim(), dear: reqForm.dear.trim(), message: reqForm.message.trim(),
+        font: reqForm.font, size: reqForm.size, qr: reqForm.qr,
+      });
+
+      // Pratinjau persis seperti hasil cetak (diperbarui otomatis saat isian berubah).
+      useEffect(() => {
+        if (activeTab !== 'printing' || printingSubTab !== 'request') return;
+        let alive = true;
+        const t = setTimeout(async () => {
+          try {
+            const d = buildReqData();
+            if (!d.message && !d.from && !d.dear) d.message = 'Tulis kata-kata request di sini';
+            const bm = await renderRequestBitmap(d, reqDots());
+            if (alive) setReqPreview({ url: bm.url, w: bm.w, h: bm.h });
+          } catch (err) { console.error('Pratinjau request gagal:', err); }
+        }, 350);
+        return () => { alive = false; clearTimeout(t); };
+      }, [activeTab, printingSubTab, reqForm, printerCfg.paper, storeName]);
+
+      const handleRequestPrint = async (e) => {
+        e.preventDefault();
+        if (reqBusy) return;
+        const d = buildReqData();
+        if (!d.message) { showToast('Isi kata-kata request terlebih dahulu.'); return; }
+        const copies = Math.min(10, Math.max(1, Number(reqForm.copies) || 1));
+        setReqBusy(true);
+        try {
+          const bm = await renderRequestBitmap(d, reqDots());
+          const bytes = rasterToEscpos(bm, copies, printerCfg.cut);
+          const ok = printerCfg.mode === 'ble' ? await writeBle(bytes) : printViaRawBTBytes(bytes);
+          if (ok) {
+            saveToPrintHistory('request', { namaToko: d.namaToko, from: d.from, dear: d.dear, message: d.message, font: d.font, copies });
+            showToast('Kartu request dicetak.');
+          }
+        } catch (err) {
+          console.error('Cetak request gagal:', err);
+          showToast('Gagal menyiapkan kartu request.');
+        } finally { setReqBusy(false); }
+      };
+
+      const handleRequestPrintDialog = async () => {
+        const d = buildReqData();
+        if (!d.message) { showToast('Isi kata-kata request terlebih dahulu.'); return; }
+        setReqBusy(true);
+        try {
+          const bm = await renderRequestBitmap(d, reqDots());
+          setPremixPrintData(null); setStockPrintData(null);
+          setReqPrintData({ url: bm.url });
+          saveToPrintHistory('request', { namaToko: d.namaToko, from: d.from, dear: d.dear, message: d.message, font: d.font, copies: 1 });
+        } catch (err) { showToast('Gagal menyiapkan kartu request.'); }
+        finally { setReqBusy(false); }
+      };
+
+      useEffect(() => {
+        if (reqPrintData) {
+          const t = setTimeout(() => window.print(), 250);
+          return () => clearTimeout(t);
+        }
+      }, [reqPrintData]);
 
       const handlePrinterTest = async () => {
         await printReceipt([
@@ -7863,6 +8172,7 @@ const { useState, useEffect } = React;
         const handleAfterPrint = () => {
           setPremixPrintData(null);
           setStockPrintData(null);
+          setReqPrintData(null);
         };
         window.addEventListener('afterprint', handleAfterPrint);
         return () => window.removeEventListener('afterprint', handleAfterPrint);
@@ -12319,11 +12629,12 @@ Daily inventory done✅
                     <i data-lucide="printer" className="w-4 h-4 text-purple-700"></i>
                     <span>Printing</span>
                   </h2>
-                  <p className="text-xs text-slate-500 mt-1">Cetak label Premix atau Catatan Stok ke printer thermal 58mm/80mm (atur di Pengaturan Printer).</p>
+                  <p className="text-xs text-slate-500 mt-1">Cetak label Premix, kartu Customer Request, atau Catatan Stok ke printer thermal 58mm/80mm (atur di Pengaturan Printer).</p>
                 </div>
 
                 <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
                   <button onClick={() => setPrintingSubTab('premix')} className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all ${printingSubTab === 'premix' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Premix</button>
+                  <button onClick={() => setPrintingSubTab('request')} className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all ${printingSubTab === 'request' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Request</button>
                   <button onClick={() => setPrintingSubTab('stock')} className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all ${printingSubTab === 'stock' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Catatan Stok</button>
                   <button onClick={() => setPrintingSubTab('history')} className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1 ${printingSubTab === 'history' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>
                     <i data-lucide="history" className="w-3.5 h-3.5"></i>
@@ -12462,7 +12773,9 @@ Daily inventory done✅
                           <label className="block text-xs font-semibold text-slate-600 mb-1">Pratinjau Label ({printerCfg.paper} mm)</label>
                           <div className="overflow-x-auto bg-slate-50 border border-slate-200 rounded-xl p-3">
                             <div style={{ fontFamily: "'Courier New', monospace", fontSize: '11px', lineHeight: 1.35, color: '#111', width: `${RECEIPT_WIDTH}ch`, minWidth: `${RECEIPT_WIDTH}ch`, margin: '0 auto' }}>
-                              {previewLines.map((l, i) => (
+                              {previewLines.map((l, i) => l.logo ? (
+                                <div key={i} style={{ textAlign: 'center', margin: '2px 0 4px' }}><img src={LOGO_DATA_URL} alt="tarobun" style={{ width: '66%', display: 'inline-block' }} /></div>
+                              ) : (
                                 <div key={i} style={{ whiteSpace: 'pre', textAlign: l.align === 'center' ? 'center' : 'left', fontWeight: l.bold ? 700 : 400, fontSize: l.big ? '22px' : undefined, lineHeight: l.big ? 1.2 : undefined }}>{l.text || '\u00A0'}</div>
                               ))}
                             </div>
@@ -12487,6 +12800,86 @@ Daily inventory done✅
                   </form>
                   );
                 })()}
+
+                {printingSubTab === 'request' && (
+                  <form onSubmit={handleRequestPrint} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-base">Customer Request</h3>
+                      <p className="text-xs text-slate-500">Kartu kata-kata gaul buat customer, lengkap dengan QR Saluran WhatsApp. Tap contoh di bawah kolom untuk isi cepat.</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Outlet (otomatis)</label>
+                      <input type="text" value={storeName || ''} readOnly className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-slate-50 text-slate-600" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">From</label>
+                        <input type="text" value={reqForm.from} onChange={(e) => handleReqChange('from', e.target.value)} maxLength={40} placeholder="Dari siapa" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Dear</label>
+                        <input type="text" value={reqForm.dear} onChange={(e) => handleReqChange('dear', e.target.value)} maxLength={40} placeholder="Untuk siapa" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Kata-kata Request Nya</label>
+                      <textarea value={reqForm.message} onChange={(e) => handleReqChange('message', e.target.value)} maxLength={300} rows={4} placeholder="Contoh: Gaskeun ngopi bareng, jangan lupa senyum ya!" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm resize-none"></textarea>
+                      <p className="text-[11px] text-slate-400 text-right">{reqForm.message.length}/300</p>
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {['Semoga harimu semanis Taro Latte, gaskeun!', 'Mood lagi drop? Sini, ngemil dulu biar happy!', 'Makasih udah mampir, jangan kapok ya!', 'Kamu keren banget hari ini, serius deh!'].map(t => (
+                          <button key={t} type="button" onClick={() => handleReqChange('message', t)} className="text-[10px] px-2 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-100 hover:bg-purple-100 text-left">{t}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Jenis Huruf</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {REQ_FONTS.map(f => (
+                          <button key={f.id} type="button" onClick={() => handleReqChange('font', f.id)} className={`px-3 py-2.5 rounded-xl border text-left transition-all ${reqForm.font === f.id ? 'bg-purple-800 text-white border-purple-800' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}>
+                            <span style={{ fontFamily: `'${f.css}', sans-serif`, fontWeight: f.weight, fontSize: `${16 * f.scale}px`, lineHeight: 1.2 }} className="block">{f.label}</span>
+                            <span className={`block text-[10px] mt-0.5 ${reqForm.font === f.id ? 'text-purple-200' : 'text-slate-400'}`}>{f.note}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-600">Ukuran</span>
+                        <div className="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
+                          <button type="button" onClick={() => handleReqChange('size', 'md')} className={`text-[11px] font-bold px-2.5 py-1 rounded-md ${reqForm.size === 'md' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Normal</button>
+                          <button type="button" onClick={() => handleReqChange('size', 'lg')} className={`text-[11px] font-bold px-2.5 py-1 rounded-md ${reqForm.size === 'lg' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Besar</button>
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <input type="checkbox" checked={reqForm.qr} onChange={(e) => handleReqChange('qr', e.target.checked)} />
+                        <span>Cetak QR</span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-600">Jumlah</span>
+                        <input type="number" min="1" max="10" value={reqForm.copies} onChange={(e) => handleReqChange('copies', e.target.value)} className="w-16 px-2 py-1.5 border border-slate-300 rounded-lg text-sm" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Pratinjau ({printerCfg.paper} mm)</label>
+                      <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 flex justify-center overflow-hidden">
+                        {reqPreview ? (
+                          <img src={reqPreview.url} alt="Pratinjau kartu request" style={{ width: '100%', maxWidth: printerCfg.paper === '80' ? '340px' : '260px', background: '#fff', boxShadow: '0 1px 6px rgba(0,0,0,.18)' }} />
+                        ) : (
+                          <p className="text-xs text-slate-400 py-8">Menyiapkan pratinjau...</p>
+                        )}
+                      </div>
+                    </div>
+                    <button type="submit" disabled={reqBusy || bleStatus === 'connecting'} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
+                      <i data-lucide="printer" className="w-4 h-4"></i>
+                      <span>{reqBusy ? 'Menyiapkan...' : (printerCfg.mode === 'ble' && bleStatus !== 'connected' ? 'Hubungkan & Cetak' : 'Cetak Kartu Request')}</span>
+                    </button>
+                    <button type="button" onClick={handleRequestPrintDialog} disabled={reqBusy} className="w-full bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2">
+                      <i data-lucide="monitor" className="w-3.5 h-3.5"></i>
+                      <span>Cetak via Dialog Browser (PDF/printer lain)</span>
+                    </button>
+                    <p className="text-[11px] text-slate-400">Kartu dicetak sebagai gambar, jadi proses cetak sedikit lebih lama dari label teks.</p>
+                  </form>
+                )}
 
                 {printingSubTab === 'stock' && (
                   <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
@@ -12553,6 +12946,7 @@ Daily inventory done✅
                         <div className="flex bg-slate-100 rounded-xl p-1 gap-1 flex-1">
                           <button onClick={() => setPrintHistoryFilter('all')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-all ${printHistoryFilter === 'all' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Semua</button>
                           <button onClick={() => setPrintHistoryFilter('premix')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-all ${printHistoryFilter === 'premix' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Premix</button>
+                          <button onClick={() => setPrintHistoryFilter('request')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-all ${printHistoryFilter === 'request' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Request</button>
                           <button onClick={() => setPrintHistoryFilter('stock')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-all ${printHistoryFilter === 'stock' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Catatan Stok</button>
                         </div>
                         {filteredHistory.length > 0 && (
@@ -12569,7 +12963,7 @@ Daily inventory done✅
                       {filteredHistory.length === 0 ? (
                         <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
                           <i data-lucide="inbox" className="w-8 h-8 text-slate-300 mx-auto mb-2"></i>
-                          <p className="text-xs text-slate-500">Belum ada riwayat cetak{printHistoryFilter !== 'all' ? (printHistoryFilter === 'premix' ? ' Premix' : ' Catatan Stok') : ''}.</p>
+                          <p className="text-xs text-slate-500">Belum ada riwayat cetak{printHistoryFilter !== 'all' ? (printHistoryFilter === 'premix' ? ' Premix' : (printHistoryFilter === 'request' ? ' Request' : ' Catatan Stok')) : ''}.</p>
                         </div>
                       ) : (
                         <div className="space-y-2">
@@ -12578,8 +12972,8 @@ Daily inventory done✅
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5 mb-1">
-                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${h.type === 'premix' ? 'bg-wheat-100 text-wheat-600' : 'bg-brand-100 text-brand-700'}`}>
-                                      {h.type === 'premix' ? 'PREMIX' : 'CATATAN STOK'}
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${h.type === 'premix' ? 'bg-wheat-100 text-wheat-600' : (h.type === 'request' ? 'bg-purple-100 text-purple-700' : 'bg-brand-100 text-brand-700')}`}>
+                                      {h.type === 'premix' ? 'PREMIX' : (h.type === 'request' ? 'REQUEST' : 'CATATAN STOK')}
                                     </span>
                                     <span className="text-[10px] text-slate-400">
                                       {new Date(h.savedAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -12601,6 +12995,12 @@ Daily inventory done✅
                                           {h.data.asalBahan && <p className="truncate">Asal: {h.data.asalBahan}</p>}
                                         </>
                                       )}
+                                    </div>
+                                  ) : h.type === 'request' ? (
+                                    <div className="text-xs text-slate-600 space-y-0.5">
+                                      <p className="font-semibold text-slate-800 truncate">{h.data.dear ? `Dear ${h.data.dear}` : 'Customer Request'}{h.data.from ? ` · From ${h.data.from}` : ''}</p>
+                                      <p className="truncate">Toko: {h.data.namaToko}</p>
+                                      <p className="text-slate-500 line-clamp-2">{h.data.message}</p>
                                     </div>
                                   ) : (
                                     <div className="text-xs text-slate-600 space-y-0.5">
@@ -12647,8 +13047,8 @@ Daily inventory done✅
                   <h3 className="font-bold text-slate-800 mb-2">Hapus Semua Riwayat?</h3>
                   <p className="text-xs text-slate-500 mb-4">
                     {confirmClearHistoryType === 'all'
-                      ? 'Seluruh riwayat cetak (Premix & Catatan Stok) di perangkat ini akan dihapus permanen.'
-                      : `Seluruh riwayat cetak ${confirmClearHistoryType === 'premix' ? 'Premix' : 'Catatan Stok'} di perangkat ini akan dihapus permanen.`}
+                      ? 'Seluruh riwayat cetak (Premix, Request & Catatan Stok) di perangkat ini akan dihapus permanen.'
+                      : `Seluruh riwayat cetak ${confirmClearHistoryType === 'premix' ? 'Premix' : (confirmClearHistoryType === 'request' ? 'Request' : 'Catatan Stok')} di perangkat ini akan dihapus permanen.`}
                     {' '}Tindakan ini tidak bisa dibatalkan.
                   </p>
                   <div className="flex gap-2">
@@ -12670,12 +13070,20 @@ Daily inventory done✅
                 return (
                   <div style={{ fontFamily: "'Courier New', monospace", fontSize: `${fs}mm`, lineHeight: 1.3, width: `${mmArea}mm`, color: '#000' }}>
                     <style>{`@media print { @page { size: ${printerCfg.paper}mm auto; margin: 2mm; } }`}</style>
-                    {lines.map((l, i) => (
+                    {lines.map((l, i) => l.logo ? (
+                      <div key={i} style={{ textAlign: 'center' }}><img src={LOGO_DATA_URL} alt="tarobun" style={{ width: '66%' }} /></div>
+                    ) : (
                       <div key={i} style={{ whiteSpace: 'pre', textAlign: l.align === 'center' ? 'center' : 'left', fontWeight: l.bold ? 700 : 400, fontSize: l.big ? `${(fs * 2).toFixed(2)}mm` : undefined }}>{l.text || '\u00A0'}</div>
                     ))}
                   </div>
                 );
               })()}
+              {reqPrintData && (
+                <div style={{ width: printerCfg.paper === '80' ? '72mm' : '48mm' }}>
+                  <style>{`@media print { @page { size: ${printerCfg.paper}mm auto; margin: 2mm; } }`}</style>
+                  <img src={reqPrintData.url} alt="Kartu request" style={{ width: '100%', display: 'block' }} />
+                </div>
+              )}
               {stockPrintData && (
                 <div style={{ fontFamily: "'Courier New', monospace", fontSize: '12px', width: '100%', color: '#000' }}>
                   <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '14px', marginBottom: '6px' }}>CATATAN STOK</div>
@@ -13784,7 +14192,71 @@ Daily inventory done✅
       const [sisaInput, setSisaInput] = useState('');
       const [savingSisa, setSavingSisa] = useState(false);
 
+      // ---- Roti antar-outlet: status semua outlet + saran kasih/minta roti (dari Worker) ----
+      const [network, setNetwork] = useState(null); // { outlets, suggestions, myStoreId, now, freshMs }
+      const [netLoading, setNetLoading] = useState(false);
+      const [execBusy, setExecBusy] = useState('');
+
       useEffect(() => { scheduleLucideIcons(); });
+
+      const loadNetwork = async (silent) => {
+        if (!silent) setNetLoading(true);
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/bread/network`, { headers: __authHeaders() });
+          const d = await res.json().catch(() => ({}));
+          if (res.ok && d.ok) setNetwork(d);
+          else if (!silent) showToast(d.error || 'Gagal memuat data roti antar-outlet.');
+        } catch (e) { if (!silent) showToast('Gagal memuat data roti antar-outlet. Periksa koneksi.'); }
+        finally { if (!silent) setNetLoading(false); }
+      };
+      useEffect(() => {
+        loadNetwork(true);
+        const t = setInterval(() => loadNetwork(true), 3 * 60 * 1000);
+        return () => clearInterval(t);
+      }, []);
+
+      // Simpan status roti outlet ini ke Worker agar terlihat outlet lain & dipakai untuk saran.
+      const postBreadStatus = async (payload) => {
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/bread/status`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: JSON.stringify(payload),
+          });
+          const d = await res.json().catch(() => ({}));
+          if (res.ok && d.ok) { setNetwork(d); return true; }
+          showToast(d.error || 'Laporan terkirim, tapi status roti belum tersimpan untuk outlet lain.');
+        } catch (e) { showToast('Laporan terkirim, tapi status roti belum tersimpan untuk outlet lain.'); }
+        return false;
+      };
+
+      const handleExecuteSuggestion = async (sg) => {
+        const key = `${sg.donorId}_${sg.receiverId}`;
+        if (execBusy) return;
+        setExecBusy(key);
+        try {
+          const res = await __apiFetch(`${WORKER_BASE}/api/bread/execute`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+            body: JSON.stringify({ donorId: sg.donorId, receiverId: sg.receiverId, qty: sg.qty }),
+          });
+          const d = await res.json().catch(() => ({}));
+          if (!res.ok || !d.ok) throw new Error(d.error || `status ${res.status}`);
+          if (d.sent && d.sent.donor && d.sent.receiver) showToast('Saran dijalankan. Bot sudah memberi tahu grup kedua outlet 🚀');
+          else {
+            const miss = [!d.sent.donor ? sg.donorName : null, !d.sent.receiver ? sg.receiverName : null].filter(Boolean).join(' & ');
+            showToast(`Saran dijalankan, tapi notifikasi ke grup ${miss} belum terkirim (Telegram belum diatur?).`);
+          }
+          loadNetwork(true);
+        } catch (err) {
+          showToast((err && err.message) || 'Gagal menjalankan saran.');
+        } finally { setExecBusy(''); }
+      };
+
+      const agoText = (ts, now) => {
+        if (!ts) return 'belum update';
+        const m = Math.max(0, Math.round(((now || Date.now()) - ts) / 60000));
+        if (m < 1) return 'baru saja';
+        if (m < 60) return `${m} mnt lalu`;
+        return `${Math.floor(m / 60)} jam ${m % 60} mnt lalu`;
+      };
 
       // Jam sekarang diperbarui tiap menit supaya analisis mengikuti sisa waktu menuju tutup.
       const [nowTick, setNowTick] = useState(() => new Date());
@@ -13907,7 +14379,9 @@ Daily inventory done✅
         if (res.ok) {
           showToast('Informasi roti terkirim ke grup Telegram! 🚀');
           setLastSent({ matang: jumlahMatang, baking: jumlahBaking, total, jam: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':') });
-          // Tanpa simpan data: langsung kosongkan form untuk laporan berikutnya.
+          // Bagikan status ke jaringan outlet (dipakai saran kasih/minta roti & pengingat 2 jam).
+          postBreadStatus({ matang: jumlahMatang, baking: jumlahBaking, diff: analysis.demand != null ? analysis.diff : null, status: analysis.status, closeHour: analysis.closeHour });
+          // Langsung kosongkan form untuk laporan berikutnya (status terakhir sudah dibagikan ke jaringan outlet).
           setMatang('');
           setBaking('');
         } else {
@@ -13942,7 +14416,7 @@ Daily inventory done✅
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
             <div>
               <h3 className="font-bold text-slate-800 text-lg">Informasi Roti</h3>
-              <p className="text-xs text-slate-500">Isi jumlah roti, lalu kirim. Data langsung masuk ke grup Telegram dan tidak disimpan di aplikasi.</p>
+              <p className="text-xs text-slate-500">Isi jumlah roti, lalu kirim. Laporan masuk ke grup Telegram, dan status terakhir outlet ini dibagikan ke outlet lain untuk saran kasih/minta roti.</p>
             </div>
 
             {Stepper({
@@ -14009,6 +14483,71 @@ Daily inventory done✅
           </div>
 
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="font-bold text-slate-800 text-base">Roti Antar-Outlet</h3>
+                <p className="text-xs text-slate-500">Semua outlet update roti di sini. Aplikasi menyarankan siapa kasih roti ke siapa, berdasarkan proyeksi sisa/kurang tiap outlet.</p>
+              </div>
+              <button type="button" onClick={() => loadNetwork(false)} disabled={netLoading} className="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-60">{netLoading ? 'Memuat...' : 'Muat ulang'}</button>
+            </div>
+
+            {!network ? (
+              <p className="text-xs text-slate-400 text-center py-3">{netLoading ? 'Memuat data outlet...' : 'Belum ada data. Tekan Muat ulang.'}</p>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <p className="text-[11px] font-bold text-slate-600">Saran Kasih / Minta Roti</p>
+                  {network.suggestions.length === 0 ? (
+                    <p className="text-[11px] text-slate-500 bg-slate-50 rounded-xl px-3 py-2.5">Belum ada saran. Muncul saat ada outlet yang berpotensi sisa dan outlet lain berpotensi kurang, dengan data yang di-update maksimal {Math.round((network.freshMs || 10800000) / 3600000)} jam terakhir.</p>
+                  ) : network.suggestions.map((sg) => {
+                    const key = `${sg.donorId}_${sg.receiverId}`;
+                    const mine = sg.donorId === network.myStoreId || sg.receiverId === network.myStoreId;
+                    const iGive = sg.donorId === network.myStoreId;
+                    return (
+                      <div key={key} className={`rounded-xl border p-3 space-y-2 ${mine ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                        <p className="text-sm font-bold text-slate-800">{sg.donorName} <span className="text-slate-400">➜</span> {sg.receiverName}</p>
+                        <p className="text-xs text-slate-700">Kasih <b>±{sg.qty} roti matang</b>. {sg.donorName} proyeksi sisa {sg.donorDiff} pcs, {sg.receiverName} proyeksi kurang {Math.abs(sg.receiverDiff)} pcs.</p>
+                        {mine ? (
+                          <button type="button" onClick={() => handleExecuteSuggestion(sg)} disabled={!!execBusy} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-60 text-white font-bold py-2 rounded-lg text-xs">
+                            {execBusy === key ? 'Mengirim notifikasi...' : (iGive ? 'Jalankan: Kami Kasih Roti' : 'Jalankan: Kami Minta Roti')}
+                          </button>
+                        ) : (
+                          <p className="text-[10px] text-slate-400">Hanya outlet terkait yang bisa menjalankan saran ini.</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <p className="text-[10px] text-slate-400">Menekan "Jalankan" membuat bot Telegram memberi tahu grup outlet pemberi dan penerima, lengkap dengan pertimbangannya. Saran dihitung dengan aturan otomatis dari data stok, bukan tebakan bebas.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-bold text-slate-600">Status Semua Outlet</p>
+                  {network.outlets.map((o) => (
+                    <div key={o.storeId} className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 ${o.storeId === network.myStoreId ? 'border-purple-200 bg-purple-50/50' : 'border-slate-200'}`}>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-800 truncate">{o.name}{o.storeId === network.myStoreId ? ' (Anda)' : ''}</p>
+                        <p className="text-[10px] text-slate-500">{o.updatedAt ? `Matang ${o.matang} · Baking ${o.baking} · ` : ''}{agoText(o.updatedAt, network.now)}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        {!o.fresh ? (
+                          <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-slate-100 text-slate-500">{o.updatedAt ? 'Data lama' : 'Belum update'}</span>
+                        ) : o.diff === null ? (
+                          <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-slate-100 text-slate-600">Tanpa proyeksi</span>
+                        ) : o.diff >= 0 ? (
+                          <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-amber-100 text-amber-700">Sisa {o.diff}</span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-rose-100 text-rose-700">Kurang {Math.abs(o.diff)}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-400">Bot Telegram juga mengingatkan tiap 2 jam (10:00–20:00 WIB) untuk update roti matang dan baking.</p>
+              </>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
             <div>
               <h3 className="font-bold text-slate-800 text-base">Catat Sisa Roti Saat Tutup</h3>
               <p className="text-xs text-slate-500">Isi setelah toko tutup: jumlah roti yang tidak terjual (0 jika habis). Dipakai AI untuk mengukur dan memperbaiki akurasi prediksi.</p>
@@ -14032,14 +14571,14 @@ Daily inventory done✅
                 {savingSisa ? 'Menyimpan...' : 'Simpan'}
               </button>
             </div>
-            <p className="text-[10px] text-slate-400">Data ini disimpan di server (berbeda dengan laporan Telegram di atas yang tidak menyimpan apa pun).</p>
+            <p className="text-[10px] text-slate-400">Data ini disimpan di server untuk mengukur akurasi prediksi.</p>
           </div>
 
           {lastSent && (
             <div className="bg-white rounded-2xl p-4 border border-slate-200 text-xs text-slate-600">
               <p className="font-bold text-slate-700 mb-1">Terkirim terakhir pukul {lastSent.jam}</p>
               <p>Matang <b>{lastSent.matang}</b> • Baking <b>{lastSent.baking}</b> • Total <b>{lastSent.total}</b></p>
-              <p className="text-[10px] text-slate-400 mt-1">Info ini hanya tampil sementara dan hilang saat halaman dimuat ulang.</p>
+              <p className="text-[10px] text-slate-400 mt-1">Status terakhir ini juga tampil ke outlet lain di panel Roti Antar-Outlet.</p>
             </div>
           )}
         </div>

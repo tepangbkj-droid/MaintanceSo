@@ -7368,8 +7368,66 @@ const { useState, useEffect } = React;
       const PRINTING_ITEM_OPTIONS = ['FD', 'Toping Taro', 'Coklat', 'Vanila', 'Peach', 'Rasberi', 'Nanas', 'Matcha'];
       const [printingSubTab, setPrintingSubTab] = useState('premix');
 
-      const [premixForm, setPremixForm] = useState({ namaToko: storeName || '', namaBarang: '', tanggalBuat: '', tanggalExp: '', asalBahan: '' });
+      // ---- KATALOG PREMIX (nama barang, masa tahan, bahan & asal pemasok) ----
+      // "opsi" berisi 1 pemasok = otomatis terisi; berisi >1 = operator wajib memilih;
+      // "manual: true" = pemasok belum ditetapkan, operator mengetik sendiri.
+      const SUSU_OPSI = ['PT Global Dairi Alami', 'PT Diamond Cold Storage'];
+      const PREMIX_CATALOG = [
+        { id: 'taro_latte', nama: 'Taro Latte', hari: 1, bahan: [
+          { label: 'Taro Powder', opsi: ['PT Agrinesia'] },
+          { label: 'NDC', opsi: ['PT Tirta Djaya Globalindo'] },
+          { label: 'Susu', opsi: SUSU_OPSI },
+        ] },
+        { id: 'stroberi_konsentrat', nama: 'Stroberi Konsentrat', hari: 14, bahan: [
+          { label: 'Stroberi Konsentrat', opsi: ['PT Tirta Djaya Globalindo'] },
+        ] },
+        { id: 'stroberi_sirup', nama: 'Stroberi Sirup', hari: 14, bahan: [
+          { label: 'Stroberi Sirup', opsi: ['PT Tirta Djaya Globalindo'] },
+        ] },
+        { id: 'blueberry_konsentrat', nama: 'Blueberry Konsentrat', hari: 14, bahan: [
+          { label: 'Blueberry Konsentrat', opsi: [], manual: true },
+        ] },
+        { id: 'whipping_cream', nama: 'Whipping Cream (Original)', hari: 5, bahan: [
+          { label: 'Susu', opsi: SUSU_OPSI },
+          { label: 'Whipping Cream', opsi: ['PT Rich Products Manufacturing'] },
+        ] },
+        { id: 'stroberi_foam', nama: 'Stroberi Foam', hari: 5, bahan: [
+          { label: 'Susu', opsi: SUSU_OPSI },
+          { label: 'Whipping Cream', opsi: ['PT Rich Products Manufacturing'] },
+          { label: 'Sirup Stroberi', opsi: ['PT Tirta Djaya Globalindo'] },
+        ] },
+        { id: 'cheese_foam', nama: 'Cheese Foam', hari: 5, bahan: [
+          { label: 'Susu', opsi: SUSU_OPSI },
+          { label: 'Whipping Cream', opsi: ['PT Rich Products Manufacturing'] },
+          { label: 'Cheese Powder', opsi: ['PT Delifry Utama Indonesia'] },
+        ] },
+        { id: 'susu', nama: 'Susu', hari: 1, bahan: [
+          { label: 'Susu', opsi: SUSU_OPSI },
+        ] },
+      ];
+      const emptyPremixForm = () => ({ namaToko: storeName || '', itemId: '', timeMode: 'auto', kpManual: '', edManual: '', choices: {}, copies: 1 });
+      const [premixForm, setPremixForm] = useState(emptyPremixForm);
       const [premixPrintData, setPremixPrintData] = useState(null);
+      const [premixNow, setPremixNow] = useState(() => new Date());
+
+      // ---- PENGATURAN PRINTER (tersimpan lokal di perangkat) ----
+      const PRINTER_CFG_KEY = 'tarobun_printer_cfg_v1';
+      const [printerCfg, setPrinterCfg] = useState(() => {
+        const def = { paper: '58', mode: (typeof navigator !== 'undefined' && navigator.bluetooth) ? 'ble' : 'rawbt', cut: false };
+        try {
+          const raw = localStorage.getItem(PRINTER_CFG_KEY);
+          return raw ? { ...def, ...JSON.parse(raw) } : def;
+        } catch (err) { return def; }
+      });
+      const updatePrinterCfg = (patch) => setPrinterCfg(prev => {
+        const next = { ...prev, ...patch };
+        try { localStorage.setItem(PRINTER_CFG_KEY, JSON.stringify(next)); } catch (err) {}
+        return next;
+      });
+      const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+      const [bleStatus, setBleStatus] = useState('idle'); // idle | connecting | connected
+      const [bleName, setBleName] = useState('');
+      const bleRef = React.useRef({ device: null, char: null });
 
       const [stockNoteStore, setStockNoteStore] = useState(storeName || '');
       const [stockNoteItems, setStockNoteItems] = useState([]); // [{ id, nama, jumlah, satuan }]
@@ -7435,110 +7493,301 @@ const { useState, useEffect } = React;
 
       const handlePremixFormChange = (field, value) => setPremixForm(prev => ({ ...prev, [field]: value }));
 
+      // Notifikasi: komponen ini memakai showToast(string).
       // ==========================================
-      // CETAK LANGSUNG VIA RawBT (2026-08) — printer thermal Bluetooth Classic/SPP
-      // (mayoritas printer thermal 58mm murah) TIDAK bisa diajak bicara langsung oleh
-      // JavaScript di browser (Web Bluetooth hanya mendukung BLE, bukan SPP klasik), dan
-      // browser SENGAJA selalu menampilkan dialog pilih tujuan cetak (PDF/printer) saat
-      // window.print() dipanggil — ini proteksi keamanan bawaan, tidak bisa dilewati dari kode.
-      //
-      // Solusi: kirim data cetak ke app "RawBT Print Service" (gratis, terpasang di HP kasir,
-      // sudah dikonfigurasi & di-pairing ke printer thermal). RawBT menerima teks lewat skema
-      // URL intent:, lalu langsung mencetak TANPA menampilkan dialog apa pun.
-      // Dokumentasi resmi: https://rawbt.ru/start.html
-      //
-      // Kalau RawBT belum terpasang di HP, Android/Chrome otomatis akan menawarkan buka
-      // Play Store untuk instal (fallback bawaan skema intent:), jadi aman dicoba kapan saja.
+      // FORMAT TANGGAL/JAM & HITUNG KP / ED
+      // ==========================================
+      const BULAN_SINGKAT = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const fmtDateTimeLabel = (d) => `${pad2(d.getDate())} ${BULAN_SINGKAT[d.getMonth()]} ${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+      const toLocalInput = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+      const addDays = (d, n) => { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; };
+
+      const premixItem = PREMIX_CATALOG.find(i => i.id === premixForm.itemId) || null;
+
+      // Ambil KP/ED sesuai mode. Mode otomatis: KP = jam sekarang, ED = KP + masa tahan barang.
+      const getPremixTimes = (nowDate) => {
+        if (!premixItem) return { kp: null, ed: null };
+        if (premixForm.timeMode === 'auto') {
+          return { kp: nowDate, ed: addDays(nowDate, premixItem.hari) };
+        }
+        const kp = premixForm.kpManual ? new Date(premixForm.kpManual) : null;
+        const ed = premixForm.edManual ? new Date(premixForm.edManual) : null;
+        return { kp: kp && !isNaN(kp) ? kp : null, ed: ed && !isNaN(ed) ? ed : null };
+      };
+
+      // Jam di layar ikut berjalan selama berada di tab Printing (mode otomatis).
+      useEffect(() => {
+        if (activeTab !== 'printing') return;
+        setPremixNow(new Date());
+        const t = setInterval(() => setPremixNow(new Date()), 15000);
+        return () => clearInterval(t);
+      }, [activeTab]);
+
+      const selectPremixItem = (id) => setPremixForm(prev => ({ ...prev, itemId: id, choices: {} }));
+      const setPremixChoice = (label, value) => setPremixForm(prev => ({ ...prev, choices: { ...prev.choices, [label]: value } }));
+      const setPremixTimeMode = (mode) => setPremixForm(prev => {
+        if (mode === 'manual' && premixItem) {
+          const kp = new Date();
+          return { ...prev, timeMode: 'manual', kpManual: toLocalInput(kp), edManual: toLocalInput(addDays(kp, premixItem.hari)) };
+        }
+        return { ...prev, timeMode: 'auto' };
+      });
+      const setPremixKpManual = (val) => setPremixForm(prev => {
+        const it = PREMIX_CATALOG.find(i => i.id === prev.itemId);
+        const kp = val ? new Date(val) : null;
+        const ed = kp && !isNaN(kp) && it ? toLocalInput(addDays(kp, it.hari)) : prev.edManual;
+        return { ...prev, kpManual: val, edManual: ed };
+      });
+
+      // Susun data label dari form. Mengembalikan { error } bila belum lengkap.
+      const resolvePremixData = (nowDate) => {
+        const outletName = (storeName || premixForm.namaToko || '').trim();
+        if (!outletName) return { error: 'Isi Nama Outlet terlebih dahulu.' };
+        if (!premixItem) return { error: 'Pilih Nama Barang terlebih dahulu.' };
+        const bahan = [];
+        for (const b of premixItem.bahan) {
+          let value = '';
+          if (b.manual) value = (premixForm.choices[b.label] || '').trim();
+          else if (b.opsi.length === 1) value = b.opsi[0];
+          else value = premixForm.choices[b.label] || '';
+          if (!value) return { error: `Pilih asal bahan untuk "${b.label}".` };
+          bahan.push({ label: b.label, value });
+        }
+        const { kp, ed } = getPremixTimes(nowDate);
+        if (!kp || !ed) return { error: 'Isi KP dan ED (tanggal & jam) terlebih dahulu.' };
+        if (ed.getTime() <= kp.getTime()) return { error: 'ED harus setelah KP.' };
+        return { data: { namaToko: outletName, namaBarang: premixItem.nama, kp: fmtDateTimeLabel(kp), ed: fmtDateTimeLabel(ed), bahan, copies: Math.min(10, Math.max(1, Number(premixForm.copies) || 1)) } };
+      };
+
+      // ==========================================
+      // DOKUMEN STRUK -> teks (RawBT/pratinjau) & ESC/POS (Bluetooth langsung)
+      // Satu definisi dokumen dipakai untuk semua mode, jadi hasilnya selalu sama.
+      // Lebar: 58mm = 32 karakter, 80mm = 48 karakter (font A ESC/POS standar).
+      // ==========================================
+      const RECEIPT_WIDTH = printerCfg.paper === '80' ? 48 : 32;
+
+      const wrapText = (str, width, first = '', rest = '') => {
+        const out = []; let line = first; let hasWord = false;
+        String(str).split(/\s+/).filter(Boolean).forEach(w => {
+          let word = w;
+          for (;;) {
+            if (line.length + (hasWord ? 1 : 0) + word.length <= width) { line += (hasWord ? ' ' : '') + word; hasWord = true; break; }
+            if (hasWord) { out.push(line); line = rest; hasWord = false; continue; }
+            const room = Math.max(1, width - line.length);
+            out.push(line + word.slice(0, room)); line = rest; word = word.slice(room);
+            if (!word) break;
+          }
+        });
+        if (hasWord || out.length === 0) out.push(line);
+        return out;
+      };
+
+      const renderDoc = (doc, width) => {
+        const out = [];
+        doc.forEach(r => {
+          if (r.sep) out.push({ text: (r.ch || '-').repeat(width) });
+          else if (r.feed) { for (let i = 0; i < r.feed; i++) out.push({ text: '' }); }
+          else if (r.kv) { const pre = `${String(r.kv[0]).padEnd(r.w || 0)} : `; wrapText(r.kv[1], width, pre, ' '.repeat(pre.length)).forEach(t => out.push({ text: t })); }
+          else if (r.item) { out.push({ text: `- ${r.item[0]}`, bold: true }); wrapText(r.item[1], width, '  ', '  ').forEach(t => out.push({ text: t })); }
+          else if (r.bullet) wrapText(r.bullet, width, '- ', '  ').forEach(t => out.push({ text: t }));
+          else if (r.row) {
+            const l = String(r.row[0]); const rt = String(r.row[1]);
+            if (l.length + rt.length + 1 > width) { out.push({ text: l }); out.push({ text: ' '.repeat(Math.max(0, width - rt.length)) + rt }); }
+            else out.push({ text: l + ' '.repeat(width - l.length - rt.length) + rt });
+          }
+          else if (r.text !== undefined) {
+            const w = r.size === 'big' ? Math.floor(width / 2) : width;
+            wrapText(r.text, w).forEach(t => out.push({ text: t, align: r.align, bold: r.bold, big: r.size === 'big' }));
+          }
+        });
+        return out;
+      };
+
+      const docToText = (doc, width) => renderDoc(doc, width).map(l => {
+        const w = l.big ? Math.floor(width / 2) : width;
+        if (l.align === 'center') return ' '.repeat(Math.max(0, Math.floor((width - l.text.length * (l.big ? 2 : 1)) / 2))) + l.text;
+        return l.text;
+      }).join('\n') + '\n';
+
+      const docToEscpos = (doc, width, cut) => {
+        const bytes = [0x1B, 0x40];
+        const enc = (str) => Array.from(str).map(c => { const n = c.charCodeAt(0); return n < 128 ? n : 63; });
+        renderDoc(doc, width).forEach(l => {
+          bytes.push(0x1B, 0x61, l.align === 'center' ? 1 : 0, 0x1B, 0x45, l.bold ? 1 : 0, 0x1D, 0x21, l.big ? 0x11 : 0x00);
+          enc(l.text).forEach(b => bytes.push(b));
+          bytes.push(0x0A);
+        });
+        bytes.push(0x1B, 0x61, 0, 0x1B, 0x45, 0, 0x1D, 0x21, 0);
+        if (cut) bytes.push(0x1D, 0x56, 0x42, 0x00);
+        return Uint8Array.from(bytes);
+      };
+
+      const buildPremixDoc = (d) => {
+        const one = [
+          { text: 'TAROBUN', align: 'center', size: 'big', bold: true },
+          { text: d.namaToko, align: 'center', bold: true },
+          { sep: true, ch: '=' },
+          { kv: ['Nama Barang', d.namaBarang], w: 11 },
+          { kv: ['KP / Jam', d.kp], w: 11 },
+          { kv: ['ED / Jam', d.ed], w: 11 },
+          { sep: true },
+          { text: 'Bahan yang digunakan:', bold: true },
+          ...d.bahan.map(b => ({ item: [b.label, b.value] })),
+          { sep: true, ch: '=' },
+          { feed: 3 },
+        ];
+        let all = [];
+        for (let i = 0; i < (d.copies || 1); i++) all = all.concat(one);
+        return all;
+      };
+
+      const buildStockDoc = (data) => [
+        { text: 'CATATAN STOK', align: 'center', size: 'big', bold: true },
+        { sep: true },
+        { kv: ['Nama Toko', data.namaToko] },
+        { kv: ['Tanggal', data.tanggalCetak.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })] },
+        { sep: true },
+        ...data.items.map((it, idx) => ({ row: [`${idx + 1}. ${it.nama}`, `${it.jumlah} ${it.satuan}`] })),
+        { sep: true },
+        { feed: 3 },
+      ];
+
+      // ==========================================
+      // RawBT (printer Bluetooth Classic / SPP) — cadangan
+      // ==========================================
       const printViaRawBT = (text) => {
         try {
-          // RawBT butuh teks di-encode UTF-8 lalu Base64 (bukan base64 dari string JS biasa,
-          // supaya karakter non-ASCII seperti tanda kutip pintar/emoji tidak rusak).
           const utf8Bytes = new TextEncoder().encode(text);
           let binary = '';
           utf8Bytes.forEach(b => { binary += String.fromCharCode(b); });
           const base64 = btoa(binary);
-          const intentUrl = `intent:data:text/plain;base64,${base64}#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;`;
-          window.location.href = intentUrl;
+          window.location.href = `intent:data:text/plain;base64,${base64}#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;`;
+          return true;
         } catch (err) {
           console.error('Gagal cetak via RawBT:', err);
-          setNotification({ type: 'error', message: 'Gagal mengirim cetakan ke RawBT. Pastikan aplikasi RawBT sudah terpasang, atau pakai tombol "Cetak via Dialog Browser".' });
+          showToast('Gagal mengirim cetakan ke RawBT. Pastikan RawBT terpasang, atau pakai "Cetak via Dialog Browser".');
+          return false;
         }
       };
 
-      // Lebar kertas thermal 58mm ~ 32 karakter huruf standar. Baris pemisah pakai strip.
-      const RECEIPT_WIDTH = 32;
-      const receiptLine = (ch = '-') => ch.repeat(RECEIPT_WIDTH);
-      const receiptRow = (label, value) => `${label}: ${value}`;
-      const receiptItemRow = (left, right) => {
-        const l = String(left);
-        const r = String(right);
-        const gap = Math.max(1, RECEIPT_WIDTH - l.length - r.length);
-        return l.length + r.length + 1 > RECEIPT_WIDTH ? `${l}\n${' '.repeat(Math.max(0, RECEIPT_WIDTH - r.length))}${r}` : `${l}${' '.repeat(gap)}${r}`;
+      // ==========================================
+      // BLUETOOTH LANGSUNG (Web Bluetooth, printer thermal BLE, perintah ESC/POS)
+      // Cukup pasangkan sekali lewat tombol "Hubungkan Printer"; setelah itu tombol Cetak
+      // langsung mengirim data tanpa dialog apa pun. Butuh Chrome/Edge (Android/desktop) + HTTPS.
+      // Printer Bluetooth "klasik" (tidak muncul di daftar) -> pakai mode RawBT.
+      // ==========================================
+      const BLE_SERVICES = [
+        '000018f0-0000-1000-8000-00805f9b34fb', '0000ffe0-0000-1000-8000-00805f9b34fb',
+        '0000fff0-0000-1000-8000-00805f9b34fb', '0000ff00-0000-1000-8000-00805f9b34fb',
+        '0000ae30-0000-1000-8000-00805f9b34fb', '0000af30-0000-1000-8000-00805f9b34fb',
+        'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+        '00001101-0000-1000-8000-00805f9b34fb', '0000fee7-0000-1000-8000-00805f9b34fb',
+      ];
+
+      const openBleChar = async (device) => {
+        const server = device.gatt.connected ? device.gatt : await device.gatt.connect();
+        const services = await server.getPrimaryServices();
+        for (const svc of services) {
+          const chars = await svc.getCharacteristics();
+          const c = chars.find(x => x.properties.writeWithoutResponse || x.properties.write);
+          if (c) return c;
+        }
+        throw new Error('Characteristic tulis tidak ditemukan');
       };
 
-      const buildPremixReceiptText = (data) => {
-        const lines = [
-          'LABEL PREMIX'.padStart(Math.floor((RECEIPT_WIDTH + 'LABEL PREMIX'.length) / 2)),
-          receiptLine(),
-          receiptRow('Nama Toko', data.namaToko),
-          receiptRow('Nama Barang', data.namaBarang),
-          receiptRow('Tgl Buat', formatIndonesianDate(data.tanggalBuat)),
-          receiptRow('Tgl Exp', formatIndonesianDate(data.tanggalExp)),
-          receiptRow('Asal Bahan', data.asalBahan || '-'),
-          receiptLine(),
-          '', '',
-        ];
-        return lines.join('\n');
+      const connectBlePrinter = async () => {
+        if (!navigator.bluetooth) {
+          showToast('Browser ini tidak mendukung Bluetooth langsung. Pakai Chrome Android, atau ganti mode ke RawBT.');
+          return null;
+        }
+        setBleStatus('connecting');
+        try {
+          const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BLE_SERVICES });
+          device.addEventListener('gattserverdisconnected', () => { bleRef.current.char = null; setBleStatus('idle'); });
+          const ch = await openBleChar(device);
+          bleRef.current = { device, char: ch };
+          setBleName(device.name || 'Printer');
+          setBleStatus('connected');
+          showToast(`Printer terhubung: ${device.name || 'Printer'}`);
+          return ch;
+        } catch (err) {
+          setBleStatus('idle');
+          if (err && err.name !== 'NotFoundError') {
+            console.error('Gagal konek printer BLE:', err);
+            showToast('Gagal terhubung ke printer. Pastikan printer menyala & belum tersambung ke HP lain. Jika tidak muncul di daftar, gunakan mode RawBT.');
+          }
+          return null;
+        }
       };
 
-      const buildStockReceiptText = (data) => {
-        const lines = [
-          'CATATAN STOK'.padStart(Math.floor((RECEIPT_WIDTH + 'CATATAN STOK'.length) / 2)),
-          receiptLine(),
-          receiptRow('Nama Toko', data.namaToko),
-          receiptRow('Tanggal', data.tanggalCetak.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })),
-          receiptLine(),
-          ...data.items.map((it, idx) => receiptItemRow(`${idx + 1}. ${it.nama}`, `${it.jumlah} ${it.satuan}`)),
-          receiptLine(),
-          '', '',
-        ];
-        return lines.join('\n');
+      const writeBle = async (bytes) => {
+        let ch = bleRef.current.char;
+        const dev = bleRef.current.device;
+        if (!ch || !dev || !dev.gatt.connected) {
+          ch = null;
+          if (dev) { try { ch = await openBleChar(dev); bleRef.current.char = ch; setBleStatus('connected'); } catch (e) { ch = null; } }
+          if (!ch) ch = await connectBlePrinter();
+          if (!ch) return false;
+        }
+        try {
+          const CHUNK = 20;
+          for (let i = 0; i < bytes.length; i += CHUNK) {
+            const part = bytes.slice(i, i + CHUNK);
+            if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(part);
+            else await ch.writeValue(part);
+            await new Promise(r => setTimeout(r, 12));
+          }
+          return true;
+        } catch (err) {
+          console.error('Gagal kirim data ke printer:', err);
+          bleRef.current.char = null; setBleStatus('idle');
+          showToast('Gagal mengirim ke printer. Coba cetak lagi (akan menyambung ulang).');
+          return false;
+        }
       };
 
-      // Tombol utama: cetak LANGSUNG ke printer thermal via RawBT, tanpa dialog apa pun.
-      const handlePremixPrint = (e) => {
+      // Kirim dokumen ke printer sesuai mode & ukuran kertas yang dipilih.
+      const printReceipt = async (doc) => {
+        const width = printerCfg.paper === '80' ? 48 : 32;
+        if (printerCfg.mode === 'ble') return await writeBle(docToEscpos(doc, width, printerCfg.cut));
+        return printViaRawBT(docToText(doc, width));
+      };
+
+      const handlePrinterTest = async () => {
+        await printReceipt([
+          { text: 'TAROBUN', align: 'center', size: 'big', bold: true },
+          { text: 'TES PRINTER', align: 'center', bold: true },
+          { sep: true },
+          { kv: ['Kertas', `${printerCfg.paper} mm (${printerCfg.paper === '80' ? 48 : 32} karakter)`] },
+          { text: '123456789012345678901234567890123456789012345678'.slice(0, printerCfg.paper === '80' ? 48 : 32) },
+          { sep: true },
+          { feed: 3 },
+        ]);
+      };
+
+      // Tombol utama: cetak langsung. Mode Bluetooth: otomatis menyambung bila belum terhubung.
+      const handlePremixPrint = async (e) => {
         e.preventDefault();
-        if (!premixForm.namaToko.trim() || !premixForm.namaBarang.trim() || !premixForm.tanggalBuat || !premixForm.tanggalExp) {
-          setNotification({ type: 'error', message: 'Lengkapi Nama Toko, Nama Barang, Tanggal Buat & Tanggal Exp terlebih dahulu.' });
-          return;
-        }
-        const dataToPrint = { ...premixForm };
-        printViaRawBT(buildPremixReceiptText(dataToPrint));
-        // Simpan ke riwayat lokal (fitur "simpan setelah klik print") & langsung kosongkan
-        // kembali form-nya supaya siap dipakai untuk cetak berikutnya.
-        saveToPrintHistory('premix', dataToPrint);
-        setPremixForm({ namaToko: storeName || '', namaBarang: '', tanggalBuat: '', tanggalExp: '', asalBahan: '' });
+        const r = resolvePremixData(new Date());
+        if (r.error) { showToast(r.error); return; }
+        const ok = await printReceipt(buildPremixDoc(r.data));
+        if (!ok) return;
+        saveToPrintHistory('premix', r.data);
+        showToast('Label premix dicetak.');
+        // Barang & pilihan bahan dibiarkan agar label berikutnya cepat; mode manual dikosongkan.
+        setPremixForm(prev => prev.timeMode === 'manual' ? { ...prev, kpManual: '', edManual: '', timeMode: 'auto' } : prev);
       };
 
-      // Tombol cadangan: cetak lewat dialog browser biasa (berguna kalau RawBT belum
-      // terpasang, atau untuk cetak ke printer A4/biasa/simpan sebagai PDF).
+      // Cadangan: cetak lewat dialog browser (PDF / printer lain).
       const handlePremixPrintDialog = () => {
-        if (!premixForm.namaToko.trim() || !premixForm.namaBarang.trim() || !premixForm.tanggalBuat || !premixForm.tanggalExp) {
-          setNotification({ type: 'error', message: 'Lengkapi Nama Toko, Nama Barang, Tanggal Buat & Tanggal Exp terlebih dahulu.' });
-          return;
-        }
-        const dataToPrint = { ...premixForm };
-        // PENTING: pastikan data Catatan Stok yang lama dikosongkan lebih dulu supaya TIDAK
-        // ikut tercetak bersamaan dengan Label Premix di area cetak (lihat #thermalPrintArea).
+        const r = resolvePremixData(new Date());
+        if (r.error) { showToast(r.error); return; }
         setStockPrintData(null);
-        setPremixPrintData(dataToPrint);
-        saveToPrintHistory('premix', dataToPrint);
-        setPremixForm({ namaToko: storeName || '', namaBarang: '', tanggalBuat: '', tanggalExp: '', asalBahan: '' });
+        setPremixPrintData(r.data);
+        saveToPrintHistory('premix', r.data);
       };
 
-      // Begitu data cetak premix siap, panggil dialog print browser. Dialog print bawaan
-      // browser inilah yang berkomunikasi dengan driver printer apa pun yang terpasang di
-      // perangkat (thermal 58mm/80mm via Bluetooth/USB, maupun printer biasa/A4).
       useEffect(() => {
         if (premixPrintData) {
           const t = setTimeout(() => window.print(), 150);
@@ -7549,7 +7798,7 @@ const { useState, useEffect } = React;
       const addStockNoteItem = () => {
         const jumlahNum = Number(stockItemDraft.jumlah);
         if (!stockItemDraft.jumlah || isNaN(jumlahNum) || jumlahNum <= 0) {
-          setNotification({ type: 'error', message: 'Isi jumlah yang valid (lebih dari 0) sebelum menambahkan item.' });
+          showToast('Isi jumlah yang valid (lebih dari 0) sebelum menambahkan item.');
           return;
         }
         setStockNoteItems(prev => [...prev, { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, nama: stockItemDraft.nama, jumlah: jumlahNum, satuan: stockItemDraft.satuan }]);
@@ -7559,18 +7808,19 @@ const { useState, useEffect } = React;
       const removeStockNoteItem = (id) => setStockNoteItems(prev => prev.filter(it => it.id !== id));
 
       // Tombol utama: cetak LANGSUNG ke printer thermal via RawBT, tanpa dialog apa pun.
-      const handleStockNotePrint = () => {
+      const handleStockNotePrint = async () => {
         if (!stockNoteStore.trim()) {
-          setNotification({ type: 'error', message: 'Isi Nama Toko terlebih dahulu.' });
+          showToast('Isi Nama Toko terlebih dahulu.');
           return;
         }
         if (stockNoteItems.length === 0) {
-          setNotification({ type: 'error', message: 'Tambahkan minimal 1 item sebelum mencetak.' });
+          showToast('Tambahkan minimal 1 item sebelum mencetak.');
           return;
         }
         const now = new Date();
         const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now };
-        printViaRawBT(buildStockReceiptText(dataToPrint));
+        const okPrint = await printReceipt(buildStockDoc(dataToPrint));
+        if (!okPrint) return;
         // Simpan ke riwayat lokal & kosongkan kembali daftar item + nama toko.
         saveToPrintHistory('stock', { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now.toISOString() });
         setStockNoteItems([]);
@@ -7581,11 +7831,11 @@ const { useState, useEffect } = React;
       // terpasang, atau untuk cetak ke printer A4/biasa/simpan sebagai PDF).
       const handleStockNotePrintDialog = () => {
         if (!stockNoteStore.trim()) {
-          setNotification({ type: 'error', message: 'Isi Nama Toko terlebih dahulu.' });
+          showToast('Isi Nama Toko terlebih dahulu.');
           return;
         }
         if (stockNoteItems.length === 0) {
-          setNotification({ type: 'error', message: 'Tambahkan minimal 1 item sebelum mencetak.' });
+          showToast('Tambahkan minimal 1 item sebelum mencetak.');
           return;
         }
         const now = new Date();
@@ -12069,7 +12319,7 @@ Daily inventory done✅
                     <i data-lucide="printer" className="w-4 h-4 text-purple-700"></i>
                     <span>Printing</span>
                   </h2>
-                  <p className="text-xs text-slate-500 mt-1">Cetak label Premix atau Catatan Stok. Kompatibel dengan printer biasa maupun printer thermal (58mm/80mm).</p>
+                  <p className="text-xs text-slate-500 mt-1">Cetak label Premix atau Catatan Stok ke printer thermal 58mm/80mm (atur di Pengaturan Printer).</p>
                 </div>
 
                 <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
@@ -12081,41 +12331,162 @@ Daily inventory done✅
                   </button>
                 </div>
 
-                {printingSubTab === 'premix' && (
+                {/* Pengaturan printer (berlaku untuk Premix & Catatan Stok) */}
+                {printingSubTab !== 'history' && (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <button type="button" onClick={() => setShowPrinterSettings(v => !v)} className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-700">Pengaturan Printer</p>
+                        <p className="text-[11px] text-slate-500 truncate">
+                          Kertas {printerCfg.paper} mm &middot; {printerCfg.mode === 'ble' ? 'Bluetooth langsung' : 'RawBT'}
+                          {printerCfg.mode === 'ble' && (bleStatus === 'connected' ? ` · Terhubung: ${bleName}` : ' · Belum terhubung')}
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold text-purple-700 shrink-0">{showPrinterSettings ? 'Tutup' : 'Atur'}</span>
+                    </button>
+                    {showPrinterSettings && (
+                      <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
+                        <div>
+                          <p className="text-[11px] font-semibold text-slate-600 mb-1">Ukuran Kertas Struk</p>
+                          <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
+                            {['58', '80'].map(sz => (
+                              <button key={sz} type="button" onClick={() => updatePrinterCfg({ paper: sz })} className={`flex-1 text-xs font-bold py-2 rounded-lg ${printerCfg.paper === sz ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>{sz} mm</button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-semibold text-slate-600 mb-1">Cara Cetak</p>
+                          <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
+                            <button type="button" onClick={() => updatePrinterCfg({ mode: 'ble' })} className={`flex-1 text-xs font-bold py-2 rounded-lg ${printerCfg.mode === 'ble' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Bluetooth Langsung</button>
+                            <button type="button" onClick={() => updatePrinterCfg({ mode: 'rawbt' })} className={`flex-1 text-xs font-bold py-2 rounded-lg ${printerCfg.mode === 'rawbt' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>RawBT</button>
+                          </div>
+                        </div>
+                        {printerCfg.mode === 'ble' && (
+                          <div className="space-y-2">
+                            <button type="button" onClick={connectBlePrinter} disabled={bleStatus === 'connecting'} className="w-full bg-purple-50 hover:bg-purple-100 disabled:opacity-60 text-purple-800 border border-purple-100 font-bold py-2.5 rounded-xl text-xs">
+                              {bleStatus === 'connecting' ? 'Menghubungkan...' : bleStatus === 'connected' ? `Terhubung: ${bleName} (ganti printer)` : 'Hubungkan Printer Bluetooth'}
+                            </button>
+                            <p className="text-[11px] text-slate-400">Cukup sekali. Setelah terhubung, tombol Cetak langsung mencetak tanpa dialog. Butuh Chrome/Edge + printer thermal BLE. Jika printer tidak muncul di daftar, pakai RawBT.</p>
+                          </div>
+                        )}
+                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                          <input type="checkbox" checked={!!printerCfg.cut} onChange={(e) => updatePrinterCfg({ cut: e.target.checked })} />
+                          <span>Potong kertas otomatis (jika printer punya auto-cutter)</span>
+                        </label>
+                        <button type="button" onClick={handlePrinterTest} className="w-full bg-white hover:bg-slate-50 text-slate-600 border border-slate-300 font-semibold py-2 rounded-xl text-xs">Tes Cetak</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {printingSubTab === 'premix' && (() => {
+                  const chip = (active) => `px-3 py-2 rounded-xl text-xs font-bold border transition-all ${active ? 'bg-purple-800 text-white border-purple-800' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`;
+                  const times = getPremixTimes(premixNow);
+                  const prevRes = resolvePremixData(premixNow);
+                  const previewData = (() => {
+                    if (!premixItem) return null;
+                    const bahan = premixItem.bahan.map(b => ({ label: b.label, value: (b.opsi.length === 1 ? b.opsi[0] : (premixForm.choices[b.label] || '').trim()) || '...' }));
+                    return { namaToko: storeName || premixForm.namaToko || '[Nama Outlet]', namaBarang: premixItem.nama, kp: times.kp ? fmtDateTimeLabel(times.kp) : '-', ed: times.ed ? fmtDateTimeLabel(times.ed) : '-', bahan, copies: 1 };
+                  })();
+                  const previewLines = previewData ? renderDoc(buildPremixDoc(previewData), RECEIPT_WIDTH).slice(0, -3) : [];
+                  return (
                   <form onSubmit={handlePremixPrint} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Toko</label>
-                      <input type="text" value={premixForm.namaToko} onChange={(e) => handlePremixFormChange('namaToko', e.target.value)} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" required />
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Outlet{storeName ? ' (otomatis sesuai outlet Anda)' : ''}</label>
+                      <input type="text" value={storeName || premixForm.namaToko} readOnly={!!storeName} onChange={(e) => handlePremixFormChange('namaToko', e.target.value)} className={`w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm ${storeName ? 'bg-slate-50 text-slate-600' : ''}`} required />
                     </div>
+
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Barang</label>
-                      <input type="text" value={premixForm.namaBarang} onChange={(e) => handlePremixFormChange('namaBarang', e.target.value)} placeholder="Contoh: Premix Coklat" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" required />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Tanggal Buat</label>
-                        <input type="date" value={premixForm.tanggalBuat} onChange={(e) => handlePremixFormChange('tanggalBuat', e.target.value)} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" required />
+                      <div className="flex flex-wrap gap-2">
+                        {PREMIX_CATALOG.map(it => (
+                          <button key={it.id} type="button" onClick={() => selectPremixItem(it.id)} className={chip(premixForm.itemId === it.id)}>{it.nama}</button>
+                        ))}
                       </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Tanggal Exp</label>
-                        <input type="date" value={premixForm.tanggalExp} onChange={(e) => handlePremixFormChange('tanggalExp', e.target.value)} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" required />
-                      </div>
+                      {premixItem && <p className="text-[11px] text-slate-500 mt-1.5">Tahan {premixItem.hari} hari.</p>}
                     </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Asal Bahan Produksi</label>
-                      <input type="text" value={premixForm.asalBahan} onChange={(e) => handlePremixFormChange('asalBahan', e.target.value)} placeholder="Contoh: Gudang Pusat / Dapur Toko" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
-                    </div>
-                    <button type="submit" className="w-full bg-purple-800 hover:bg-purple-900 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
+
+                    {premixItem && (
+                      <>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-xs font-semibold text-slate-600">KP / Jam &amp; ED / Jam</label>
+                            <div className="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
+                              <button type="button" onClick={() => setPremixTimeMode('auto')} className={`text-[11px] font-bold px-2.5 py-1 rounded-md ${premixForm.timeMode === 'auto' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Otomatis</button>
+                              <button type="button" onClick={() => setPremixTimeMode('manual')} className={`text-[11px] font-bold px-2.5 py-1 rounded-md ${premixForm.timeMode === 'manual' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Manual</button>
+                            </div>
+                          </div>
+                          {premixForm.timeMode === 'auto' ? (
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-700 space-y-0.5">
+                              <p><b>KP:</b> {times.kp ? fmtDateTimeLabel(times.kp) : '-'}</p>
+                              <p><b>ED:</b> {times.ed ? fmtDateTimeLabel(times.ed) : '-'}</p>
+                              <p className="text-[11px] text-slate-400 pt-0.5">Jam diambil saat tombol Cetak ditekan.</p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 gap-2">
+                              <div>
+                                <label className="block text-[11px] text-slate-500 mb-0.5">KP (tanggal &amp; jam)</label>
+                                <input type="datetime-local" value={premixForm.kpManual} onChange={(e) => setPremixKpManual(e.target.value)} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] text-slate-500 mb-0.5">ED (tanggal &amp; jam) &middot; otomatis terisi +{premixItem.hari} hari, boleh diubah</label>
+                                <input type="datetime-local" value={premixForm.edManual} onChange={(e) => handlePremixFormChange('edManual', e.target.value)} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 mb-1">Bahan yang Digunakan</label>
+                          <div className="space-y-3">
+                            {premixItem.bahan.map(b => (
+                              <div key={b.label}>
+                                <p className="text-[11px] font-semibold text-slate-500 mb-1">{b.label}</p>
+                                {b.manual ? (
+                                  <input type="text" value={premixForm.choices[b.label] || ''} onChange={(e) => setPremixChoice(b.label, e.target.value)} placeholder="Ketik nama pemasok" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                                ) : b.opsi.length === 1 ? (
+                                  <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700">{b.opsi[0]}</div>
+                                ) : (
+                                  <div className="flex flex-wrap gap-2">
+                                    {b.opsi.map(o => (
+                                      <button key={o} type="button" onClick={() => setPremixChoice(b.label, o)} className={chip(premixForm.choices[b.label] === o)}>{o}</button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 mb-1">Pratinjau Label ({printerCfg.paper} mm)</label>
+                          <div className="overflow-x-auto bg-slate-50 border border-slate-200 rounded-xl p-3">
+                            <div style={{ fontFamily: "'Courier New', monospace", fontSize: '11px', lineHeight: 1.35, color: '#111', width: `${RECEIPT_WIDTH}ch`, minWidth: `${RECEIPT_WIDTH}ch`, margin: '0 auto' }}>
+                              {previewLines.map((l, i) => (
+                                <div key={i} style={{ whiteSpace: 'pre', textAlign: l.align === 'center' ? 'center' : 'left', fontWeight: l.bold ? 700 : 400, fontSize: l.big ? '22px' : undefined, lineHeight: l.big ? 1.2 : undefined }}>{l.text || '\u00A0'}</div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <label className="text-xs font-semibold text-slate-600">Jumlah label</label>
+                          <input type="number" min="1" max="10" value={premixForm.copies} onChange={(e) => handlePremixFormChange('copies', e.target.value)} className="w-20 px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+                        </div>
+                      </>
+                    )}
+
+                    <button type="submit" disabled={!premixItem || bleStatus === 'connecting'} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
                       <i data-lucide="printer" className="w-4 h-4"></i>
-                      <span>Cetak Langsung (RawBT)</span>
+                      <span>{printerCfg.mode === 'ble' && bleStatus !== 'connected' ? 'Hubungkan & Cetak' : 'Cetak Label'}</span>
                     </button>
-                    <button type="button" onClick={handlePremixPrintDialog} className="w-full bg-white hover:bg-slate-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2">
+                    <button type="button" onClick={handlePremixPrintDialog} disabled={!premixItem} className="w-full bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2">
                       <i data-lucide="monitor" className="w-3.5 h-3.5"></i>
                       <span>Cetak via Dialog Browser (PDF/printer lain)</span>
                     </button>
-                    <p className="text-[11px] text-slate-400 text-center -mt-1">"Cetak Langsung" butuh app RawBT terpasang & printer sudah di-pairing.</p>
                   </form>
-                )}
+                  );
+                })()}
 
                 {printingSubTab === 'stock' && (
                   <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
@@ -12160,13 +12531,12 @@ Daily inventory done✅
 
                     <button onClick={handleStockNotePrint} disabled={stockNoteItems.length === 0} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
                       <i data-lucide="printer" className="w-4 h-4"></i>
-                      <span>Cetak Langsung (RawBT)</span>
+                      <span>Cetak Catatan Stok</span>
                     </button>
                     <button type="button" onClick={handleStockNotePrintDialog} disabled={stockNoteItems.length === 0} className="w-full bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2">
                       <i data-lucide="monitor" className="w-3.5 h-3.5"></i>
                       <span>Cetak via Dialog Browser (PDF/printer lain)</span>
                     </button>
-                    <p className="text-[11px] text-slate-400 text-center -mt-1">"Cetak Langsung" butuh app RawBT terpasang & printer sudah di-pairing.</p>
                   </div>
                 )}
 
@@ -12219,8 +12589,18 @@ Daily inventory done✅
                                     <div className="text-xs text-slate-600 space-y-0.5">
                                       <p className="font-semibold text-slate-800 truncate">{h.data.namaBarang}</p>
                                       <p className="truncate">Toko: {h.data.namaToko}</p>
-                                      <p className="truncate">Buat: {formatIndonesianDate(h.data.tanggalBuat)} &middot; Exp: {formatIndonesianDate(h.data.tanggalExp)}</p>
-                                      {h.data.asalBahan && <p className="truncate">Asal: {h.data.asalBahan}</p>}
+                                      {h.data.kp ? (
+                                        <>
+                                          <p className="truncate">KP: {h.data.kp}</p>
+                                          <p className="truncate">ED: {h.data.ed}</p>
+                                          <p className="text-slate-500">{(h.data.bahan || []).map(b => `${b.label}: ${b.value}`).join(' · ')}</p>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <p className="truncate">Buat: {formatIndonesianDate(h.data.tanggalBuat)} &middot; Exp: {formatIndonesianDate(h.data.tanggalExp)}</p>
+                                          {h.data.asalBahan && <p className="truncate">Asal: {h.data.asalBahan}</p>}
+                                        </>
+                                      )}
                                     </div>
                                   ) : (
                                     <div className="text-xs text-slate-600 space-y-0.5">
@@ -12283,18 +12663,19 @@ Daily inventory done✅
                 #thermalPrintArea @media print di <style> global). Font monospace + layout
                 bertumpuk agar cocok baik dicetak di kertas thermal 58mm/80mm maupun kertas biasa. */}
             <div id="thermalPrintArea">
-              {premixPrintData && (
-                <div style={{ fontFamily: "'Courier New', monospace", fontSize: '12px', width: '100%', color: '#000' }}>
-                  <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '14px', marginBottom: '6px' }}>LABEL PREMIX</div>
-                  <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }}></div>
-                  <div style={{ marginBottom: '3px' }}><b>Nama Toko:</b> {premixPrintData.namaToko}</div>
-                  <div style={{ marginBottom: '3px' }}><b>Nama Barang:</b> {premixPrintData.namaBarang}</div>
-                  <div style={{ marginBottom: '3px' }}><b>Tanggal Buat:</b> {formatIndonesianDate(premixPrintData.tanggalBuat)}</div>
-                  <div style={{ marginBottom: '3px' }}><b>Tanggal Exp:</b> {formatIndonesianDate(premixPrintData.tanggalExp)}</div>
-                  <div style={{ marginBottom: '3px' }}><b>Asal Bahan Produksi:</b> {premixPrintData.asalBahan || '-'}</div>
-                  <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }}></div>
-                </div>
-              )}
+              {premixPrintData && (() => {
+                const mmArea = printerCfg.paper === '80' ? 72 : 48;
+                const fs = (mmArea / (0.6 * RECEIPT_WIDTH)).toFixed(2);
+                const lines = renderDoc(buildPremixDoc(premixPrintData), RECEIPT_WIDTH);
+                return (
+                  <div style={{ fontFamily: "'Courier New', monospace", fontSize: `${fs}mm`, lineHeight: 1.3, width: `${mmArea}mm`, color: '#000' }}>
+                    <style>{`@media print { @page { size: ${printerCfg.paper}mm auto; margin: 2mm; } }`}</style>
+                    {lines.map((l, i) => (
+                      <div key={i} style={{ whiteSpace: 'pre', textAlign: l.align === 'center' ? 'center' : 'left', fontWeight: l.bold ? 700 : 400, fontSize: l.big ? `${(fs * 2).toFixed(2)}mm` : undefined }}>{l.text || '\u00A0'}</div>
+                    ))}
+                  </div>
+                );
+              })()}
               {stockPrintData && (
                 <div style={{ fontFamily: "'Courier New', monospace", fontSize: '12px', width: '100%', color: '#000' }}>
                   <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '14px', marginBottom: '6px' }}>CATATAN STOK</div>

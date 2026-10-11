@@ -1864,6 +1864,35 @@ const { useState, useEffect } = React;
     // ditempel di tombol menu sidebar asli). Kalau target ada & ketemu di DOM, TourGuide akan
     // menyorot (spotlight) tombol tersebut langsung di sidebar. Kalau tidak ada target (step
     // pembuka/penutup yang sifatnya info umum), tampil sebagai modal biasa di tengah layar.
+    // Menu Toko dikelompokkan per kategori (2026-10) supaya sidebar tidak panjang & lebih enak dilihat.
+    const STORE_MENU_GROUPS = [
+      { id: 'utama', title: 'Utama', icon: 'layout-dashboard', chip: 'bg-purple-100 text-purple-700', items: [
+        { tab: 'dashboard', icon: 'trending-up', label: 'Dasbor', tour: 'menu-dashboard' },
+      ] },
+      { id: 'laporan', title: 'Laporan Harian', icon: 'clipboard-list', chip: 'bg-indigo-100 text-indigo-700', items: [
+        { tab: 'sales', icon: 'plus-circle', label: 'Laporan Penjualan', tour: 'menu-sales' },
+        { tab: 'inventory', icon: 'package', label: 'SO Stok', tour: 'menu-inventory' },
+        { tab: 'history', icon: 'history', label: 'Riwayat Laporan', tour: 'menu-history' },
+      ] },
+      { id: 'stok', title: 'Barang & Stok', icon: 'boxes', chip: 'bg-amber-100 text-amber-700', items: [
+        { tab: 'preorder', icon: 'calendar-clock', label: 'PO (Pre Order)', tour: 'menu-preorder' },
+        { tab: 'kedatangan', icon: 'truck', label: 'Datang Barang', tour: 'menu-kedatangan' },
+        { tab: 'bap', icon: 'clipboard-check', label: 'BAP (Berita Acara)', tour: 'menu-bap' },
+        { tab: 'wasteFoto', icon: 'camera', label: 'Foto Rijek', tour: 'menu-wasteFoto' },
+        { tab: 'investory', icon: 'thermometer-snowflake', label: 'Investory' },
+      ] },
+      { id: 'operasional', title: 'Operasional Toko', icon: 'store', chip: 'bg-emerald-100 text-emerald-700', items: [
+        { tab: 'pengunjung', icon: 'users', label: 'Pengunjung', tour: 'menu-pengunjung' },
+        { tab: 'infoRoti', icon: 'croissant', label: 'Informasi Roti', tour: 'menu-infoRoti' },
+        { tab: 'pettyCash', icon: 'wallet', label: 'Petty Cash', tour: 'menu-petty' },
+        { tab: 'printing', icon: 'printer', label: 'Printing', tour: 'menu-printing' },
+      ] },
+      { id: 'belajar', title: 'Belajar & Bantuan', icon: 'life-buoy', chip: 'bg-sky-100 text-sky-700', items: [
+        { tab: 'sop', icon: 'book-open', label: 'Panduan SOP', tour: 'menu-sop' },
+        { tab: 'psikotesOjt', icon: 'graduation-cap', label: 'Progres OJT', tour: 'menu-psikotes-ojt' },
+        { tab: 'chat', icon: 'message-circle', label: 'Chat Admin', tour: 'menu-chat' },
+      ] },
+    ];
     const STORE_ONBOARDING_STEPS = [
       { icon: 'hand', title: 'Selamat Datang! 👋', desc: 'Ini adalah aplikasi pencatatan toko Anda. Yuk kenali menu-menu utamanya satu per satu — akan disorot langsung di menu sebelah.' },
       { icon: 'trending-up', title: 'Dasbor', desc: 'Menampilkan ringkasan penjualan, pemakaian bahan baku, dan performa toko hari ini.', target: '[data-tour="menu-dashboard"]' },
@@ -1875,7 +1904,8 @@ const { useState, useEffect } = React;
       { icon: 'users', title: 'Pengunjung', desc: 'Ketuk +1 setiap ada pengunjung masuk. Data per jam dipakai AI untuk menentukan jam ramai dan apa yang perlu disiapkan.', target: '[data-tour="menu-pengunjung"]' },
       { icon: 'croissant', title: 'Informasi Roti', desc: 'Isi jumlah roti matang & roti yang masih proses baking, total dihitung otomatis lalu dikirim ke grup Telegram. Status juga dibagikan ke outlet lain untuk saran kasih/minta roti.', target: '[data-tour="menu-infoRoti"]' },
       { icon: 'camera', title: 'Foto Rijek', desc: 'Unggah foto bun rijek, barang rijek, atau waste sebagai bukti dan dikirim ke Telegram.', target: '[data-tour="menu-wasteFoto"]' },
-      { icon: 'printer', title: 'Printing', desc: 'Cetak label Premix (nama barang, tanggal buat/exp, asal bahan) dan Catatan Stok (FD/toping + jumlah). Cocok untuk printer biasa maupun thermal.', target: '[data-tour="menu-printing"]' },
+      { icon: 'wallet', title: 'Petty Cash', desc: 'Laporkan pemakaian uang kas kecil lengkap dengan foto struk. Pengajuan masuk ke Store Leader untuk di-ACC, dan statusnya bisa kamu pantau di sini.', target: '[data-tour="menu-petty"]' },
+      { icon: 'printer', title: 'Printing', desc: 'Cetak label Premix, kartu Customer Request (dengan QR Saluran WhatsApp), dan Catatan Stok ke printer thermal 58/80mm.', target: '[data-tour="menu-printing"]' },
       { icon: 'history', title: 'Riwayat Laporan', desc: 'Lihat & unduh riwayat laporan harian yang tersimpan di Cloud.', target: '[data-tour="menu-history"]' },
       { icon: 'book-open', title: 'Panduan SOP', desc: 'Semua SOP toko ada di sini — buka menu ini kapan pun butuh mengingat langkah kerja yang benar.', target: '[data-tour="menu-sop"]' },
       { icon: 'message-circle', title: 'Chat Admin', desc: 'Hubungi admin pusat langsung lewat menu Chat jika ada kendala atau pertanyaan.', target: '[data-tour="menu-chat"]' },
@@ -4998,6 +5028,10 @@ const { useState, useEffect } = React;
                     <i data-lucide="thermometer-snowflake" className="w-4 h-4"></i>
                     <span>Link Investory</span>
                   </button>
+                  <button onClick={() => { setTab('rotiNotif'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'rotiNotif' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="bell-ring" className="w-4 h-4"></i>
+                    <span>Notifikasi Roti</span>
+                  </button>
 
                   <div className="pt-3 mt-3 border-t border-slate-100 space-y-1">
                     <button onClick={() => { setShowOnboarding(true); setShowMenu(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-all">
@@ -5559,6 +5593,9 @@ const { useState, useEffect } = React;
 
             {tab === 'investory' && (
               <AdminInvestoryLinks stores={stores} />
+            )}
+            {tab === 'rotiNotif' && (
+              <AdminBreadNotifTab />
             )}
           </main>
 
@@ -6193,6 +6230,16 @@ const { useState, useEffect } = React;
       const storeBase = `stores/${storeId}`;
       const [activeMenu, setActiveMenu] = useState('dashboard'); // 'dashboard' | 'transfer' | 'jadwal' | 'inventory' | 'psikotes'
       const [menuOpen, setMenuOpen] = useState(false); // drawer hamburger
+      const [pettyPending, setPettyPending] = useState(0); // jumlah pengajuan petty cash menunggu ACC
+      useEffect(() => {
+        let alive = true;
+        const check = async () => {
+          try { const d = await pettyApi('/api/petty/pending-count'); if (alive) setPettyPending(d.pendingCount || 0); } catch (e) { /* abaikan */ }
+        };
+        check();
+        const t = setInterval(check, 120000);
+        return () => { alive = false; clearInterval(t); };
+      }, []);
       const [notification, setNotification] = useState(null);
       const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
@@ -6737,6 +6784,7 @@ const { useState, useEffect } = React;
         { key: 'jadwal', label: 'Jadwal Absensi', icon: 'calendar-clock' },
         { key: 'inventory', label: 'Inventory Store', icon: 'package' },
         { key: 'psikotes', label: 'Hasil Psikotes OJT', icon: 'graduation-cap' },
+        { key: 'petty', label: 'Petty Cash', icon: 'wallet' },
         { key: 'investory', label: 'Investory', icon: 'thermometer-snowflake' },
       ];
 
@@ -6777,8 +6825,9 @@ const { useState, useEffect } = React;
           {/* Header + tombol hamburger */}
           <div className="bg-gradient-to-r from-purple-800 to-indigo-900 text-white px-4 py-4 sticky top-0 z-30 shadow-md">
             <div className="flex items-center justify-between gap-3">
-              <button onClick={() => setMenuOpen(true)} className="shrink-0 bg-white/10 hover:bg-white/20 p-2 rounded-lg">
+              <button onClick={() => setMenuOpen(true)} className="relative shrink-0 bg-white/10 hover:bg-white/20 p-2 rounded-lg">
                 <i data-lucide="menu" className="w-5 h-5"></i>
+                {pettyPending > 0 && <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">{pettyPending}</span>}
               </button>
               <div className="min-w-0 flex-1 text-center">
                 <p className="text-[10px] text-purple-200 font-semibold tracking-wide">STORE LEADER</p>
@@ -6808,6 +6857,7 @@ const { useState, useEffect } = React;
                     >
                       <i data-lucide={item.icon} className="w-4 h-4"></i>
                       <span>{item.label}</span>
+                      {item.key === 'petty' && pettyPending > 0 && <span className="ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md">{pettyPending}</span>}
                     </button>
                   ))}
                 </div>
@@ -7311,6 +7361,10 @@ const { useState, useEffect } = React;
             </div>
           )}
 
+          {activeMenu === 'petty' && (
+            <LeaderPettyCashTab storeId={storeId} storeName={storeName} showToast={showToast} onPendingChange={setPettyPending} />
+          )}
+
           {activeMenu === 'investory' && (
             <LeaderInvestoryTab storeId={storeId} storeName={storeName} />
           )}
@@ -7406,7 +7460,7 @@ const { useState, useEffect } = React;
         ] },
       ];
       const emptyPremixForm = () => ({ namaToko: storeName || '', itemId: '', timeMode: 'auto', kpManual: '', edManual: '', choices: {}, copies: 1 });
-      const [premixForm, setPremixForm] = useState(emptyPremixForm);
+      const [premixForm, setPremixForm] = useDraftState(storeId, 'premix', emptyPremixForm, { omit: ['timeMode', 'kpManual', 'edManual'] });
       const [premixPrintData, setPremixPrintData] = useState(null);
       const [premixNow, setPremixNow] = useState(() => new Date());
 
@@ -7421,7 +7475,7 @@ const { useState, useEffect } = React;
         { id: 'caveat',   label: 'Tulisan Tangan', css: 'Caveat',           weight: 700, scale: 1.3,  note: 'Santai & personal' },
       ];
       const REQ_FONTS_HREF = 'https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@600;800&family=Poppins:wght@600;800&family=Playfair+Display:wght@700&family=Caveat:wght@700&display=swap';
-      const [reqForm, setReqForm] = useState({ from: '', dear: '', message: '', font: 'fredoka', size: 'md', qr: true, copies: 1 });
+      const [reqForm, setReqForm] = useDraftState(storeId, 'request', { from: '', dear: '', message: '', font: 'fredoka', size: 'md', qr: true, copies: 1 });
       const [reqPreview, setReqPreview] = useState(null); // { url, w, h }
       const [reqBusy, setReqBusy] = useState(false);
       const [reqPrintData, setReqPrintData] = useState(null);
@@ -7446,8 +7500,8 @@ const { useState, useEffect } = React;
       const [bleName, setBleName] = useState('');
       const bleRef = React.useRef({ device: null, char: null });
 
-      const [stockNoteStore, setStockNoteStore] = useState(storeName || '');
-      const [stockNoteItems, setStockNoteItems] = useState([]); // [{ id, nama, jumlah, satuan }]
+      const [stockNoteStore, setStockNoteStore] = useDraftState(storeId, 'stock_store', storeName || '');
+      const [stockNoteItems, setStockNoteItems] = useDraftState(storeId, 'stock_items', []); // [{ id, nama, jumlah, satuan }]
       const [stockItemDraft, setStockItemDraft] = useState({ nama: PRINTING_ITEM_OPTIONS[0], jumlah: '', satuan: 'Bag' });
       const [stockPrintData, setStockPrintData] = useState(null);
 
@@ -8395,8 +8449,8 @@ const { useState, useEffect } = React;
         custom: {} // field tambahan yang didefinisikan Admin (Form Builder)
       });
 
-      const [salesData, setSalesData] = useState(() => getEmptySalesState());
-      const [inventoryData, setInventoryData] = useState(() => getEmptyInventoryState());
+      const [salesData, setSalesData] = useDraftState(storeId, 'sales', () => getEmptySalesState());
+      const [inventoryData, setInventoryData] = useDraftState(storeId, 'inventory', () => getEmptyInventoryState());
       const [historyList, setHistoryList] = useState([]);
       const [customSalesFields, setCustomSalesFields] = useState([]);
       const [customInventoryFields, setCustomInventoryFields] = useState([]);
@@ -8581,7 +8635,7 @@ const { useState, useEffect } = React;
         tidakSesuai: [], // [{ id, nama, jumlah, satuan, keterangan }]
       });
 
-      const [kedatanganForm, setKedatanganForm] = useState(() => getEmptyKedatanganForm());
+      const [kedatanganForm, setKedatanganForm] = useDraftState(storeId, 'kedatangan', () => getEmptyKedatanganForm());
       const [kedatanganHistoryList, setKedatanganHistoryList] = useState([]);
       const [isSavingKedatangan, setIsSavingKedatangan] = useState(false);
       const [tidakSesuaiInput, setTidakSesuaiInput] = useState({ nama: '', jumlah: '', satuan: 'pcs', keterangan: '' });
@@ -8615,7 +8669,7 @@ const { useState, useEffect } = React;
         penginputanSeharusnya: BAP_PAYMENT_ISSUE_METHODS[1],
       });
 
-      const [bapForm, setBapForm] = useState(() => getEmptyBapForm());
+      const [bapForm, setBapForm] = useDraftState(storeId, 'bap', () => getEmptyBapForm());
       const [bapHistoryList, setBapHistoryList] = useState([]);
       const [isSavingBap, setIsSavingBap] = useState(false);
       // true selama keterangan belum diedit manual oleh user — teksnya ikut menyesuaikan
@@ -8625,6 +8679,23 @@ const { useState, useEffect } = React;
 
       // Menu sidebar (hamburger)
       const [showMenu, setShowMenu] = useState(false);
+      // Grup menu yang sedang terbuka (diingat per toko di perangkat ini).
+      const MENU_GROUPS_KEY = `tbmenu_groups_v1:${storeId}`;
+      const [menuGroupsOpen, setMenuGroupsOpen] = useState(() => {
+        try { const raw = localStorage.getItem(MENU_GROUPS_KEY); if (raw) return JSON.parse(raw); } catch (e) { /* abaikan */ }
+        return { utama: true, laporan: true, stok: false, operasional: true, belajar: false };
+      });
+      const toggleMenuGroup = (id) => setMenuGroupsOpen((prev) => {
+        const next = { ...prev, [id]: !prev[id] };
+        try { localStorage.setItem(MENU_GROUPS_KEY, JSON.stringify(next)); } catch (e) { /* abaikan */ }
+        return next;
+      });
+      // Pindah menu -> grup yang berisi menu itu otomatis terbuka.
+      useEffect(() => {
+        const g = STORE_MENU_GROUPS.find((x) => x.items.some((i) => i.tab === activeTab));
+        if (g) setMenuGroupsOpen((prev) => (prev[g.id] ? prev : { ...prev, [g.id]: true }));
+      }, [activeTab]);
+      useEffect(() => { scheduleLucideIcons(); }, [showMenu, menuGroupsOpen]);
 
       // ==========================================
       // FOTO WASTE / RIJEK - STATE
@@ -8678,7 +8749,7 @@ const { useState, useEffect } = React;
         fotoPreview: null,
       });
 
-      const [wasteFotoForm, setWasteFotoForm] = useState(() => getEmptyWasteFotoForm());
+      const [wasteFotoForm, setWasteFotoForm] = useDraftState(storeId, 'waste', () => getEmptyWasteFotoForm(), { omit: ['fotoPreview'] });
       const [wasteFotoList, setWasteFotoList] = useState([]);
       const [isCompressingFoto, setIsCompressingFoto] = useState(false);
       const [isSavingFoto, setIsSavingFoto] = useState(false);
@@ -8698,7 +8769,7 @@ const { useState, useEffect } = React;
         pickupJam: '',
         metodePickup: 'ambilSendiri', // 'ojol' | 'ambilSendiri'
       });
-      const [preOrderForm, setPreOrderForm] = useState(() => getEmptyPreOrderForm());
+      const [preOrderForm, setPreOrderForm] = useDraftState(storeId, 'preorder', () => getEmptyPreOrderForm(), { omit: ['buktiPreview'] });
       const [preOrderList, setPreOrderList] = useState([]);
       const [isCompressingBukti, setIsCompressingBukti] = useState(false);
       const [isSavingPreOrder, setIsSavingPreOrder] = useState(false);
@@ -10735,71 +10806,49 @@ Daily inventory done✅
                   </button>
                 </div>
 
-                <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
-                  <button data-tour="menu-dashboard" onClick={() => { setActiveTab('dashboard'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'dashboard' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="trending-up" className="w-4 h-4"></i>
-                    <span>Dasbor</span>
-                  </button>
-                  <button data-tour="menu-sales" onClick={() => { setActiveTab('sales'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'sales' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="plus-circle" className="w-4 h-4"></i>
-                    <span>Laporan Penjualan</span>
-                  </button>
-                  <button data-tour="menu-inventory" onClick={() => { setActiveTab('inventory'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'inventory' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="package" className="w-4 h-4"></i>
-                    <span>SO Stok</span>
-                  </button>
-                  <button data-tour="menu-preorder" onClick={() => { setActiveTab('preorder'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'preorder' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="calendar-clock" className="w-4 h-4"></i>
-                    <span>PO (Pre Order)</span>
-                  </button>
-                  <button data-tour="menu-bap" onClick={() => { setActiveTab('bap'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'bap' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="clipboard-check" className="w-4 h-4"></i>
-                    <span>BAP (Berita Acara Penyesuaian)</span>
-                  </button>
-                  <button data-tour="menu-kedatangan" onClick={() => { setActiveTab('kedatangan'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'kedatangan' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="truck" className="w-4 h-4"></i>
-                    <span>Datang Barang</span>
-                  </button>
-                  <button data-tour="menu-wasteFoto" onClick={() => { setActiveTab('wasteFoto'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'wasteFoto' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="camera" className="w-4 h-4"></i>
-                    <span>Foto Rijek</span>
-                    <span className="ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md">{wasteFotoList.length}</span>
-                  </button>
-                  <button data-tour="menu-pengunjung" onClick={() => { setActiveTab('pengunjung'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'pengunjung' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="users" className="w-4 h-4"></i>
-                    <span>Pengunjung</span>
-                  </button>
-                  <button data-tour="menu-infoRoti" onClick={() => { setActiveTab('infoRoti'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'infoRoti' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="croissant" className="w-4 h-4"></i>
-                    <span>Informasi Roti</span>
-                  </button>
-                  <button data-tour="menu-printing" onClick={() => { setActiveTab('printing'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'printing' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="printer" className="w-4 h-4"></i>
-                    <span>Printing</span>
-                  </button>
-                  <button data-tour="menu-history" onClick={() => { setActiveTab('history'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'history' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="history" className="w-4 h-4"></i>
-                    <span>Riwayat Laporan</span>
-                    <span className="ml-auto text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded-md">{historyList.length}</span>
-                  </button>
-                  <button data-tour="menu-sop" onClick={() => { setActiveTab('sop'); setSelectedSopCategory(null); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'sop' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="book-open" className="w-4 h-4"></i>
-                    <span>Panduan SOP</span>
-                    <span className="ml-auto text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded-md">{sopCategories.length}</span>
-                  </button>
-                  <button data-tour="menu-chat" onClick={() => { setActiveTab('chat'); setUnreadChat(0); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'chat' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="message-circle" className="w-4 h-4"></i>
-                    <span>Chat Admin</span>
-                    {unreadChat > 0 && <span className="ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md">{unreadChat}</span>}
-                  </button>
-                  <button data-tour="menu-psikotes-ojt" onClick={() => { setActiveTab('psikotesOjt'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'psikotesOjt' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="graduation-cap" className="w-4 h-4"></i>
-                    <span>Progres OJT</span>
-                  </button>
-                  <button onClick={() => { setActiveTab('investory'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === 'investory' ? 'bg-purple-50 text-purple-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <i data-lucide="thermometer-snowflake" className="w-4 h-4"></i>
-                    <span>Investory</span>
-                  </button>
+                <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
+                  {STORE_MENU_GROUPS.map((g) => {
+                    const open = showOnboarding || !!menuGroupsOpen[g.id];
+                    const hasActive = g.items.some((i) => i.tab === activeTab);
+                    const alertCount = g.items.reduce((n, i) => n + (i.tab === 'chat' ? unreadChat : 0), 0);
+                    const badgeFor = (tab) => {
+                      if (tab === 'wasteFoto') return { n: wasteFotoList.length, cls: 'bg-rose-100 text-rose-700' };
+                      if (tab === 'history') return { n: historyList.length, cls: 'bg-indigo-100 text-indigo-700' };
+                      if (tab === 'sop') return { n: sopCategories.length, cls: 'bg-indigo-100 text-indigo-700' };
+                      if (tab === 'chat') return { n: unreadChat, cls: 'bg-rose-100 text-rose-700' };
+                      return null;
+                    };
+                    return (
+                      <div key={g.id} className={`rounded-2xl border transition-all ${hasActive ? 'border-purple-200 bg-purple-50/40' : 'border-slate-100 bg-white'}`}>
+                        <button type="button" onClick={() => toggleMenuGroup(g.id)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl hover:bg-slate-50/70 transition-all">
+                          <span className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${g.chip}`}><i data-lucide={g.icon} className="w-4 h-4"></i></span>
+                          <span className="flex-1 text-left min-w-0">
+                            <span className="block text-[13px] font-extrabold text-slate-800 leading-tight">{g.title}</span>
+                            <span className="block text-[10px] text-slate-400">{g.items.length} menu</span>
+                          </span>
+                          {!open && alertCount > 0 && <span className="text-[10px] bg-rose-500 text-white font-bold px-1.5 py-0.5 rounded-full">{alertCount}</span>}
+                          <svg className="w-4 h-4 text-slate-400 shrink-0 transition-transform" style={{ transform: open ? 'rotate(180deg)' : 'none' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </button>
+                        {open && (
+                          <div className="px-2 pb-2 space-y-0.5">
+                            {g.items.map((it) => {
+                              const b = badgeFor(it.tab);
+                              const active = activeTab === it.tab;
+                              return (
+                                <button key={it.tab} data-tour={it.tour || undefined}
+                                  onClick={() => { setActiveTab(it.tab); if (it.tab === 'sop') setSelectedSopCategory(null); if (it.tab === 'chat') setUnreadChat(0); setShowMenu(false); }}
+                                  className={`w-full flex items-center gap-3 pl-4 pr-3 py-2 rounded-xl text-[13px] font-semibold transition-all ${active ? 'bg-purple-100 text-purple-800 shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}>
+                                  <i data-lucide={it.icon} className="w-4 h-4"></i>
+                                  <span className="truncate">{it.label}</span>
+                                  {b && b.n > 0 && <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-md ${b.cls}`}>{b.n}</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
 
                   <div className="pt-3 mt-3 border-t border-slate-100 space-y-1">
                     <button onClick={() => { setShowConfig(!showConfig); setShowMenu(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-all">
@@ -13249,11 +13298,15 @@ Daily inventory done✅
             )}
 
             {activeTab === 'infoRoti' && (
-              <InformasiRotiTab storeName={storeName} config={config} showToast={showToast} onOpenConfig={() => setShowConfig(true)} historyList={historyList} />
+              <InformasiRotiTab storeId={storeId} storeName={storeName} config={config} showToast={showToast} onOpenConfig={() => setShowConfig(true)} historyList={historyList} />
             )}
 
             {activeTab === 'psikotesOjt' && (
               <StorePsikotesTab />
+            )}
+
+            {activeTab === 'pettyCash' && (
+              <StorePettyCashTab storeId={storeId} storeName={storeName} showToast={showToast} />
             )}
 
             {activeTab === 'investory' && (
@@ -14184,12 +14237,12 @@ Daily inventory done✅
     // Telegram. SENGAJA tidak menyimpan apa pun (tidak ke database, tidak ke localStorage): data
     // hanya hidup di state komponen ini, dikirim, lalu form dikosongkan lagi untuk laporan berikutnya.
     // ==========================================
-    function InformasiRotiTab({ storeName, config, showToast, onOpenConfig, historyList }) {
-      const [matang, setMatang] = useState('');
-      const [baking, setBaking] = useState('');
+    function InformasiRotiTab({ storeId, storeName, config, showToast, onOpenConfig, historyList }) {
+      const [matang, setMatang] = useDraftState(storeId, 'roti_matang', '', { maxAgeHours: 6 });
+      const [baking, setBaking] = useDraftState(storeId, 'roti_baking', '', { maxAgeHours: 6 });
       const [isSending, setIsSending] = useState(false);
       const [lastSent, setLastSent] = useState(null); // hanya info "terakhir terkirim" di layar, tidak disimpan
-      const [sisaInput, setSisaInput] = useState('');
+      const [sisaInput, setSisaInput] = useDraftState(storeId, 'roti_sisa', '', { maxAgeHours: 12 });
       const [savingSisa, setSavingSisa] = useState(false);
 
       // ---- Roti antar-outlet: status semua outlet + saran kasih/minta roti (dari Worker) ----
@@ -14239,10 +14292,12 @@ Daily inventory done✅
           });
           const d = await res.json().catch(() => ({}));
           if (!res.ok || !d.ok) throw new Error(d.error || `status ${res.status}`);
-          if (d.sent && d.sent.donor && d.sent.receiver) showToast('Saran dijalankan. Bot sudah memberi tahu grup kedua outlet 🚀');
+          if (d.disabled && d.disabled.donor && d.disabled.receiver) showToast('Saran dicatat, tapi notifikasi Telegram roti sedang dinonaktifkan admin.');
+          else if (d.sent && d.sent.donor && d.sent.receiver) showToast('Saran dijalankan. Bot sudah memberi tahu grup kedua outlet 🚀');
           else {
-            const miss = [!d.sent.donor ? sg.donorName : null, !d.sent.receiver ? sg.receiverName : null].filter(Boolean).join(' & ');
-            showToast(`Saran dijalankan, tapi notifikasi ke grup ${miss} belum terkirim (Telegram belum diatur?).`);
+            const dis = d.disabled || {};
+            const miss = [(!d.sent.donor && !dis.donor) ? sg.donorName : null, (!d.sent.receiver && !dis.receiver) ? sg.receiverName : null].filter(Boolean).join(' & ');
+            showToast(miss ? `Saran dijalankan, tapi notifikasi ke grup ${miss} belum terkirim (Telegram belum diatur?).` : 'Saran dijalankan. Sebagian notifikasi dinonaktifkan admin.');
           }
           loadNetwork(true);
         } catch (err) {
@@ -14542,7 +14597,11 @@ Daily inventory done✅
                     </div>
                   ))}
                 </div>
-                <p className="text-[10px] text-slate-400">Bot Telegram juga mengingatkan tiap 2 jam (10:00–20:00 WIB) untuk update roti matang dan baking.</p>
+                {network.notif && (!network.notif.reminders || !network.notif.storeOn) ? (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5">Pengingat Telegram untuk outlet ini sedang dinonaktifkan oleh admin.</p>
+                ) : (
+                  <p className="text-[10px] text-slate-400">Bot Telegram juga mengingatkan tiap 2 jam (10:00–20:00 WIB) untuk update roti matang dan baking.</p>
+                )}
               </>
             )}
           </div>
@@ -14588,6 +14647,693 @@ Daily inventory done✅
     // ==========================================
     // TOKO: Tab "Progres OJT" -- pantau skor & status psikotes OJT yang ditempatkan di toko ini
     // ==========================================
+    // =====================================================================
+    // DRAF OTOMATIS (2026-10): isian form disimpan di localStorage perangkat supaya tidak hilang
+    // saat halaman di-refresh, tab tertutup, atau akun otomatis logout. Dikunci per toko
+    // (storeId) dan kedaluwarsa setelah 18 jam tanpa perubahan. Prefix "tbdraft_" sengaja BUKAN
+    // "tarobun_" supaya tombol "bersihkan cache" tidak ikut menghapus draf.
+    // =====================================================================
+    const DRAFT_PREFIX = 'tbdraft_v1:';
+    function draftRead(key, maxAgeMs) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const p = JSON.parse(raw);
+        if (!p || typeof p.t !== 'number' || (Date.now() - p.t) > maxAgeMs) return null;
+        return p.v === undefined ? null : p.v;
+      } catch (e) { return null; }
+    }
+    function mergeDraft(base, saved) {
+      if (Array.isArray(base)) return Array.isArray(saved) ? saved : base;
+      if (base && typeof base === 'object' && saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        const out = { ...base };
+        Object.keys(saved).forEach((k) => {
+          const b = base[k]; const sv = saved[k];
+          const bothObj = b && typeof b === 'object' && !Array.isArray(b) && sv && typeof sv === 'object' && !Array.isArray(sv);
+          out[k] = bothObj ? { ...b, ...sv } : sv;
+        });
+        return out;
+      }
+      return (saved === undefined || saved === null) ? base : saved;
+    }
+    function useDraftState(storeId, name, factory, opts) {
+      const o = opts || {};
+      const omit = o.omit || [];
+      const maxAgeMs = (o.maxAgeHours || 18) * 3600000;
+      const key = `${DRAFT_PREFIX}${storeId}:${name}`;
+      const [val, setVal] = React.useState(() => {
+        const base = typeof factory === 'function' ? factory() : factory;
+        const saved = draftRead(key, maxAgeMs);
+        return saved === null ? base : mergeDraft(base, saved);
+      });
+      const firstRun = React.useRef(true);
+      React.useEffect(() => {
+        if (firstRun.current) { firstRun.current = false; return; } // jangan perpanjang umur draf hanya karena dibuka
+        try {
+          let v = val;
+          if (omit.length && v && typeof v === 'object' && !Array.isArray(v)) { v = { ...v }; omit.forEach((k) => { delete v[k]; }); }
+          localStorage.setItem(key, JSON.stringify({ t: Date.now(), v }));
+        } catch (e) { /* kuota penuh / mode privat: abaikan */ }
+      }, [val]);
+      return [val, setVal];
+    }
+
+    // =====================================================================
+    // PETTY CASH (2026-10)
+    // =====================================================================
+    const PETTY_CATS_FALLBACK = ['Operasional', 'Bahan Baku', 'Transport', 'Kebersihan', 'Perlengkapan', 'Gaji/Lembur', 'Lain-lain'];
+    const PETTY_MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const pettyRp = (n) => { const v = Math.round(Number(n) || 0); return (v < 0 ? '-' : '') + 'Rp ' + Math.abs(v).toLocaleString('id-ID'); };
+    const pettyLocalToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+    const pettyMonthLabel = (m) => { const [y, mo] = m.split('-'); return `${PETTY_MONTHS[Number(mo) - 1]} ${y}`; };
+    const pettyShiftMonth = (m, delta) => { let [y, mo] = m.split('-').map(Number); mo += delta; while (mo < 1) { mo += 12; y -= 1; } while (mo > 12) { mo -= 12; y += 1; } return `${y}-${String(mo).padStart(2, '0')}`; };
+    const pettyFmtDate = (d) => { if (!d) return ''; const [y, mo, da] = d.split('-'); return `${Number(da)} ${PETTY_MONTHS[Number(mo) - 1].slice(0, 3)} ${y}`; };
+    const pettyDigits = (s) => String(s || '').replace(/\D/g, '');
+    const pettyFmtInput = (s) => { const d = pettyDigits(s); return d ? Number(d).toLocaleString('id-ID') : ''; };
+    const PETTY_CAT_STYLE = {
+      'Operasional': 'bg-indigo-100 text-indigo-700', 'Bahan Baku': 'bg-amber-100 text-amber-700', 'Transport': 'bg-sky-100 text-sky-700',
+      'Kebersihan': 'bg-emerald-100 text-emerald-700', 'Perlengkapan': 'bg-fuchsia-100 text-fuchsia-700', 'Gaji/Lembur': 'bg-rose-100 text-rose-700', 'Lain-lain': 'bg-slate-100 text-slate-600',
+    };
+    const PETTY_CAT_BAR = {
+      'Operasional': '#6366f1', 'Bahan Baku': '#f59e0b', 'Transport': '#0ea5e9', 'Kebersihan': '#10b981', 'Perlengkapan': '#d946ef', 'Gaji/Lembur': '#f43f5e', 'Lain-lain': '#94a3b8',
+    };
+
+    const pettyApi = async (path, opts) => {
+      const o = opts || {};
+      const res = await __apiFetch(`${WORKER_BASE}${path}`, {
+        method: o.method || 'GET',
+        headers: { ...(o.body ? { 'Content-Type': 'application/json' } : {}), ...__authHeaders() },
+        body: o.body ? JSON.stringify(o.body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error || `Gagal (HTTP ${res.status})`);
+      return data;
+    };
+
+    // Perkecil foto struk (maks 1280px, JPEG) sebelum diunggah ke R2 agar hemat kuota & storage.
+    const pettyCompressPhoto = async (file) => {
+      const MAX = 1280;
+      let src; let w; let h;
+      if (window.createImageBitmap) {
+        try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { src = await createImageBitmap(file); }
+        w = src.width; h = src.height;
+      } else {
+        src = await new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = URL.createObjectURL(file); });
+        w = src.naturalWidth; h = src.naturalHeight;
+      }
+      const scale = Math.min(1, MAX / Math.max(w, h));
+      const cw = Math.max(1, Math.round(w * scale)); const ch = Math.max(1, Math.round(h * scale));
+      const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(src, 0, 0, cw, ch);
+      if (src.close) src.close();
+      return await new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error('Gagal memproses foto'))), 'image/jpeg', 0.72));
+    };
+
+    function PettyPhotoPicker({ storeId, value, onChange, label, required, showToast }) {
+      const [busy, setBusy] = React.useState(false);
+      const [localPreview, setLocalPreview] = React.useState(null);
+      React.useEffect(() => { scheduleLucideIcons(); });
+      React.useEffect(() => { if (!value) setLocalPreview(null); }, [value]);
+      const handleFile = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        if (!/^image\//.test(file.type)) { showToast('File harus berupa foto.'); return; }
+        setBusy(true);
+        try {
+          const blob = await pettyCompressPhoto(file);
+          setLocalPreview(URL.createObjectURL(blob));
+          const up = await uploadMediaToR2(blob, `petty/${storeId}`, 'jpg');
+          onChange(up.key);
+        } catch (err) {
+          setLocalPreview(null);
+          showToast('Gagal mengunggah foto. Periksa koneksi lalu coba lagi.');
+        } finally { setBusy(false); }
+      };
+      const src = localPreview || (value ? `${WORKER_BASE}/api/media/file/${value}` : null);
+      return (
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1">{label}{required && <span className="text-rose-500"> *</span>}</label>
+          {src ? (
+            <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+              <img src={src} alt="Foto bukti" className="w-full max-h-56 object-contain" />
+              {busy && <div className="absolute inset-0 bg-white/70 flex items-center justify-center text-xs font-bold text-purple-800">Mengunggah...</div>}
+              {!busy && (
+                <div className="absolute top-2 right-2 flex gap-1.5">
+                  <label className="bg-white/95 border border-slate-200 text-slate-700 text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer shadow-sm">
+                    Ganti<input type="file" accept="image/*" onChange={handleFile} className="hidden" />
+                  </label>
+                  <button type="button" onClick={() => { onChange(null); setLocalPreview(null); }} className="bg-white/95 border border-rose-200 text-rose-600 text-[11px] font-bold px-2.5 py-1 rounded-lg shadow-sm">Hapus</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <label className={`flex flex-col items-center justify-center gap-1.5 border-2 border-dashed rounded-xl py-6 cursor-pointer transition-all ${busy ? 'border-purple-300 bg-purple-50' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'}`}>
+              <i data-lucide="camera" className="w-6 h-6 text-slate-500"></i>
+              <span className="text-xs font-bold text-slate-600">{busy ? 'Mengunggah...' : 'Ambil / pilih foto struk'}</span>
+              <span className="text-[10px] text-slate-400">Pastikan tulisan & nominal terbaca jelas</span>
+              <input type="file" accept="image/*" capture="environment" onChange={handleFile} className="hidden" disabled={busy} />
+            </label>
+          )}
+        </div>
+      );
+    }
+
+    function PettyLightbox({ src, onClose }) {
+      if (!src) return null;
+      return (
+        <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-4" onClick={onClose}>
+          <img src={src} alt="Bukti" className="max-w-full max-h-full rounded-xl" />
+          <button type="button" onClick={onClose} className="absolute top-4 right-4 bg-white/90 text-slate-800 font-bold text-sm px-3 py-1.5 rounded-lg">Tutup</button>
+        </div>
+      );
+    }
+
+    function PettyStatusBadge({ status }) {
+      const map = {
+        pending: ['Menunggu ACC', 'bg-amber-100 text-amber-700'],
+        approved: ['Disetujui', 'bg-emerald-100 text-emerald-700'],
+        rejected: ['Ditolak', 'bg-rose-100 text-rose-700'],
+      };
+      const [t, c] = map[status] || ['-', 'bg-slate-100 text-slate-600'];
+      return <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${c}`}>{t}</span>;
+    }
+
+    // ---------- Karyawan (akun Toko): ajukan penggunaan petty cash + lihat status ACC ----------
+    function StorePettyCashTab({ storeId, storeName, showToast }) {
+      const [form, setForm] = useDraftState(storeId, 'petty_staff_req', () => ({ date: pettyLocalToday(), amount: '', cat: 'Operasional', note: '', who: '', photo: null }));
+      const [list, setList] = React.useState(null);
+      const [cats, setCats] = React.useState(PETTY_CATS_FALLBACK);
+      const [sending, setSending] = React.useState(false);
+      const [zoom, setZoom] = React.useState(null);
+      const [busyId, setBusyId] = React.useState('');
+      React.useEffect(() => { scheduleLucideIcons(); });
+
+      const load = async (silent) => {
+        try {
+          const d = await pettyApi('/api/petty/requests');
+          setList(d.requests || []);
+          if (d.categories) setCats(d.categories);
+        } catch (err) { if (!silent) showToast(err.message); }
+      };
+      React.useEffect(() => {
+        load(true);
+        const t = setInterval(() => load(true), 60000);
+        return () => clearInterval(t);
+      }, []);
+
+      const setF = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
+      const amountNum = Number(pettyDigits(form.amount));
+
+      const submit = async (e) => {
+        e.preventDefault();
+        if (sending) return;
+        if (!form.who.trim()) { showToast('Isi nama pengaju terlebih dahulu.'); return; }
+        if (!amountNum || amountNum <= 0) { showToast('Isi nominal pengeluaran.'); return; }
+        if (!form.note.trim()) { showToast('Isi keterangan penggunaan.'); return; }
+        if (!form.photo) { showToast('Foto struk/bukti wajib dilampirkan.'); return; }
+        setSending(true);
+        try {
+          await pettyApi('/api/petty/request', { method: 'POST', body: { amount: amountNum, date: form.date, cat: form.cat, note: form.note, who: form.who, photo: form.photo } });
+          showToast('Pengajuan terkirim ke Store Leader. Tunggu ACC ya.');
+          setForm((prev) => ({ ...prev, amount: '', note: '', photo: null, date: pettyLocalToday() }));
+          load(true);
+        } catch (err) { showToast(err.message); }
+        finally { setSending(false); }
+      };
+
+      const cancel = async (r) => {
+        if (busyId) return;
+        setBusyId(r.id);
+        try {
+          await pettyApi('/api/petty/cancel', { method: 'POST', body: { id: r.id, month: r.date.slice(0, 7) } });
+          showToast('Pengajuan dibatalkan.');
+          load(true);
+        } catch (err) { showToast(err.message); load(true); }
+        finally { setBusyId(''); }
+      };
+
+      return (
+        <div className="space-y-4">
+          <div className="bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-2xl p-5 shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="bg-white/20 rounded-xl p-2.5"><i data-lucide="wallet" className="w-6 h-6"></i></div>
+              <div>
+                <h2 className="font-display font-extrabold text-lg leading-tight">Petty Cash</h2>
+                <p className="text-xs text-emerald-100">Laporkan uang kas kecil yang dipakai. Wajib lampirkan foto struk, lalu menunggu ACC Store Leader.</p>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={submit} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+            <h3 className="font-bold text-slate-800 text-base">Ajukan Penggunaan Petty Cash</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Pengaju <span className="text-rose-500">*</span></label>
+                <input type="text" value={form.who} maxLength={40} onChange={(e) => setF('who', e.target.value)} placeholder="Nama kamu" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Tanggal Belanja</label>
+                <input type="date" value={form.date} max={pettyLocalToday()} onChange={(e) => setF('date', e.target.value)} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Nominal <span className="text-rose-500">*</span></label>
+              <div className="flex items-center border border-slate-300 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-purple-300">
+                <span className="px-3 text-sm font-bold text-slate-500 bg-slate-50 self-stretch flex items-center border-r border-slate-200">Rp</span>
+                <input type="text" inputMode="numeric" value={pettyFmtInput(form.amount)} onChange={(e) => setF('amount', pettyDigits(e.target.value))} placeholder="0" className="w-full px-3 py-2.5 text-base font-bold outline-none" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Kategori</label>
+              <div className="flex flex-wrap gap-1.5">
+                {cats.map((c) => (
+                  <button key={c} type="button" onClick={() => setF('cat', c)} className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${form.cat === c ? 'bg-purple-800 text-white border-purple-800' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>{c}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Keterangan <span className="text-rose-500">*</span></label>
+              <textarea rows={2} maxLength={200} value={form.note} onChange={(e) => setF('note', e.target.value)} placeholder="Contoh: Beli galon air & tisu di Alfamart" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm resize-none"></textarea>
+            </div>
+            <PettyPhotoPicker storeId={storeId} value={form.photo} onChange={(k) => setF('photo', k)} label="Foto Struk / Bukti" required showToast={showToast} />
+            <button type="submit" disabled={sending} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-60 text-white font-bold py-3 rounded-xl text-sm">{sending ? 'Mengirim...' : 'Kirim ke Store Leader'}</button>
+            <p className="text-[11px] text-slate-400">Isian tersimpan otomatis di perangkat ini, jadi aman kalau halaman ter-refresh atau logout.</p>
+          </form>
+
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-800 text-base">Status Pengajuan</h3>
+              <button type="button" onClick={() => load(false)} className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600">Muat ulang</button>
+            </div>
+            {list === null ? (
+              <p className="text-xs text-slate-400 text-center py-4">Memuat...</p>
+            ) : list.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center py-4">Belum ada pengajuan bulan ini.</p>
+            ) : list.map((r) => (
+              <div key={r.id} className="border border-slate-200 rounded-xl p-3 flex gap-3">
+                {r.photo ? (
+                  <button type="button" onClick={() => setZoom(`${WORKER_BASE}/api/media/file/${r.photo}`)} className="shrink-0">
+                    <img src={`${WORKER_BASE}/api/media/file/${r.photo}`} alt="Struk" className="w-16 h-16 rounded-lg object-cover border border-slate-200" />
+                  </button>
+                ) : null}
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-extrabold text-slate-800">{pettyRp(r.amount)}</p>
+                    <PettyStatusBadge status={r.status} />
+                  </div>
+                  <p className="text-xs text-slate-600 break-words">{r.note}</p>
+                  <p className="text-[10px] text-slate-400">{pettyFmtDate(r.date)} · {r.cat} · {r.who}</p>
+                  {r.status === 'rejected' && r.decNote && <p className="text-[11px] text-rose-600 bg-rose-50 rounded-lg px-2 py-1">Alasan ditolak: {r.decNote}</p>}
+                  {r.status === 'pending' && (
+                    <button type="button" onClick={() => cancel(r)} disabled={busyId === r.id} className="text-[11px] font-bold text-rose-600 disabled:opacity-60">{busyId === r.id ? 'Membatalkan...' : 'Batalkan pengajuan'}</button>
+                  )}
+                </div>
+              </div>
+            ))}
+            <p className="text-[10px] text-slate-400">Saldo petty cash hanya terlihat oleh Store Leader.</p>
+          </div>
+          <PettyLightbox src={zoom} onClose={() => setZoom(null)} />
+        </div>
+      );
+    }
+
+    // ---------- Store Leader: buku kas, saldo awal/akhir, ACC pengajuan ----------
+    function LeaderPettyCashTab({ storeId, storeName, showToast, onPendingChange }) {
+      const [month, setMonth] = React.useState(() => pettyLocalToday().slice(0, 7));
+      const [ledger, setLedger] = React.useState(null);
+      const [loading, setLoading] = React.useState(false);
+      const [filter, setFilter] = React.useState('all'); // all | in | out | rejected
+      const [formType, setFormType] = React.useState(null); // null | 'in' | 'out'
+      const [form, setForm] = useDraftState(storeId, 'petty_leader_entry', () => ({ date: pettyLocalToday(), amount: '', cat: 'Operasional', note: '', photo: null }));
+      const [saving, setSaving] = React.useState(false);
+      const [editOpening, setEditOpening] = React.useState(false);
+      const [openingInput, setOpeningInput] = React.useState('');
+      const [rejectId, setRejectId] = React.useState(null);
+      const [rejectNote, setRejectNote] = React.useState('');
+      const [busyId, setBusyId] = React.useState('');
+      const [confirmDelId, setConfirmDelId] = React.useState(null);
+      const [zoom, setZoom] = React.useState(null);
+      React.useEffect(() => { scheduleLucideIcons(); });
+
+      const load = async (silent) => {
+        if (!silent) setLoading(true);
+        try {
+          const d = await pettyApi(`/api/petty/ledger?month=${month}`);
+          setLedger(d);
+          if (onPendingChange && month === pettyLocalToday().slice(0, 7)) onPendingChange(d.totals.pendingCount);
+        } catch (err) { if (!silent) showToast(err.message); }
+        finally { if (!silent) setLoading(false); }
+      };
+      React.useEffect(() => {
+        setLedger(null); setFilter('all'); setEditOpening(false);
+        load(false);
+        const t = setInterval(() => load(true), 60000);
+        return () => clearInterval(t);
+      }, [month]);
+
+      const setF = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
+      const cats = (ledger && ledger.categories) || PETTY_CATS_FALLBACK;
+      const amountNum = Number(pettyDigits(form.amount));
+
+      const saveEntry = async (e) => {
+        e.preventDefault();
+        if (saving) return;
+        if (!amountNum || amountNum <= 0) { showToast('Isi nominal.'); return; }
+        if (!form.note.trim()) { showToast('Isi keterangan.'); return; }
+        setSaving(true);
+        try {
+          await pettyApi('/api/petty/entry', { method: 'POST', body: { type: formType, amount: amountNum, date: form.date, cat: form.cat, note: form.note, photo: form.photo } });
+          showToast(formType === 'in' ? 'Pemasukan dicatat.' : 'Pengeluaran dicatat.');
+          setForm((prev) => ({ ...prev, amount: '', note: '', photo: null, date: pettyLocalToday() }));
+          setFormType(null);
+          const m = form.date.slice(0, 7);
+          if (m !== month) setMonth(m); else load(true);
+        } catch (err) { showToast(err.message); }
+        finally { setSaving(false); }
+      };
+
+      const decide = async (en, approve) => {
+        if (busyId) return;
+        if (!approve && !rejectNote.trim()) { showToast('Isi alasan penolakan.'); return; }
+        setBusyId(en.id);
+        try {
+          await pettyApi('/api/petty/decide', { method: 'POST', body: { id: en.id, month: en.date.slice(0, 7), approve, note: rejectNote } });
+          showToast(approve ? 'Pengajuan di-ACC. Saldo terpotong.' : 'Pengajuan ditolak.');
+          setRejectId(null); setRejectNote('');
+          load(true);
+        } catch (err) { showToast(err.message); load(true); }
+        finally { setBusyId(''); }
+      };
+
+      const delEntry = async (en) => {
+        if (busyId) return;
+        setBusyId(en.id);
+        try {
+          await pettyApi('/api/petty/delete', { method: 'POST', body: { id: en.id, month: en.date.slice(0, 7) } });
+          showToast('Transaksi dihapus.');
+          setConfirmDelId(null);
+          load(true);
+        } catch (err) { showToast(err.message); }
+        finally { setBusyId(''); }
+      };
+
+      const saveOpening = async () => {
+        const n = Number(pettyDigits(openingInput));
+        const neg = String(openingInput).trim().startsWith('-');
+        try {
+          await pettyApi('/api/petty/opening', { method: 'POST', body: { month, amount: neg ? -n : n } });
+          showToast('Saldo awal disimpan.');
+          setEditOpening(false);
+          load(true);
+        } catch (err) { showToast(err.message); }
+      };
+
+      const downloadCsv = () => {
+        if (!ledger) return;
+        const esc = (v) => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`;
+        const rows = [['Tanggal', 'Jenis', 'Kategori', 'Keterangan', 'Nominal', 'Status', 'Oleh']];
+        ledger.entries.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((en) => {
+          rows.push([en.date, en.type === 'in' ? 'Pemasukan' : 'Pengeluaran', en.cat, en.note, en.amount, en.status, en.who]);
+        });
+        rows.push([]); rows.push(['', '', '', 'Saldo Awal', ledger.opening.amount]); rows.push(['', '', '', 'Pemasukan', ledger.totals.in]);
+        rows.push(['', '', '', 'Pengeluaran', ledger.totals.out]); rows.push(['', '', '', 'Saldo Akhir', ledger.totals.closing]);
+        const csv = '\uFEFF' + rows.map((r) => r.map(esc).join(',')).join('\r\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        a.download = `petty-cash-${storeName || storeId}-${month}.csv`.replace(/\s+/g, '_');
+        document.body.appendChild(a); a.click(); a.remove();
+      };
+
+      const pending = ledger ? ledger.entries.filter((en) => en.status === 'pending') : [];
+      const shown = ledger ? ledger.entries.filter((en) => {
+        if (filter === 'rejected') return en.status === 'rejected';
+        if (en.status !== 'approved') return false;
+        return filter === 'all' ? true : en.type === filter;
+      }) : [];
+      const catTotals = (() => {
+        if (!ledger) return [];
+        const m = {};
+        ledger.entries.forEach((en) => { if (en.status === 'approved' && en.type === 'out') m[en.cat] = (m[en.cat] || 0) + en.amount; });
+        return Object.entries(m).sort((a, b) => b[1] - a[1]);
+      })();
+      const t = ledger ? ledger.totals : null;
+
+      return (
+        <div className="p-4 space-y-4">
+          {/* Pemilih bulan */}
+          <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-2 py-1.5 shadow-sm">
+            <button type="button" onClick={() => setMonth(pettyShiftMonth(month, -1))} className="px-3 py-2 text-lg font-bold text-slate-600 hover:bg-slate-50 rounded-xl">‹</button>
+            <div className="text-center">
+              <p className="text-sm font-extrabold text-slate-800">{pettyMonthLabel(month)}</p>
+              <p className="text-[10px] text-slate-400">{loading ? 'Memuat...' : 'Buku kas bulanan'}</p>
+            </div>
+            <button type="button" onClick={() => setMonth(pettyShiftMonth(month, 1))} disabled={month >= pettyLocalToday().slice(0, 7)} className="px-3 py-2 text-lg font-bold text-slate-600 hover:bg-slate-50 rounded-xl disabled:opacity-30">›</button>
+          </div>
+
+          {/* Ringkasan saldo */}
+          <div className="bg-gradient-to-br from-purple-800 to-indigo-900 text-white rounded-2xl p-5 shadow-md">
+            <p className="text-[11px] text-purple-200 font-semibold tracking-wide">SALDO AKHIR</p>
+            <p className="font-display font-extrabold text-3xl mt-0.5">{t ? pettyRp(t.closing) : '...'}</p>
+            <div className="grid grid-cols-3 gap-2 mt-4">
+              <div className="bg-white/10 rounded-xl p-2.5">
+                <p className="text-[10px] text-purple-200">Saldo Awal</p>
+                <p className="text-sm font-bold">{ledger ? pettyRp(ledger.opening.amount) : '-'}</p>
+                {ledger && <button type="button" onClick={() => { setOpeningInput(String(ledger.opening.amount)); setEditOpening((v) => !v); }} className="text-[10px] text-purple-200 underline mt-0.5">{editOpening ? 'Batal' : 'Ubah'}</button>}
+              </div>
+              <div className="bg-white/10 rounded-xl p-2.5">
+                <p className="text-[10px] text-emerald-200">Pemasukan</p>
+                <p className="text-sm font-bold text-emerald-200">{t ? pettyRp(t.in) : '-'}</p>
+              </div>
+              <div className="bg-white/10 rounded-xl p-2.5">
+                <p className="text-[10px] text-rose-200">Pengeluaran</p>
+                <p className="text-sm font-bold text-rose-200">{t ? pettyRp(t.out) : '-'}</p>
+              </div>
+            </div>
+            {ledger && ledger.opening.auto && <p className="text-[10px] text-purple-200 mt-2">Saldo awal otomatis dari saldo akhir bulan lalu. Tekan "Ubah" untuk mengisi manual.</p>}
+            {editOpening && (
+              <div className="mt-3 flex gap-2">
+                <input type="text" inputMode="numeric" value={openingInput} onChange={(e) => setOpeningInput(e.target.value.replace(/[^\d-]/g, ''))} className="flex-1 px-3 py-2 rounded-lg text-sm text-slate-800 font-bold" placeholder="Saldo awal (Rp)" />
+                <button type="button" onClick={saveOpening} className="bg-white text-purple-800 font-bold text-xs px-4 rounded-lg">Simpan</button>
+              </div>
+            )}
+          </div>
+
+          {/* Aksi cepat */}
+          <div className="grid grid-cols-2 gap-3">
+            <button type="button" onClick={() => setFormType(formType === 'in' ? null : 'in')} className={`rounded-2xl py-3 text-sm font-bold border transition-all ${formType === 'in' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>+ Pemasukan</button>
+            <button type="button" onClick={() => setFormType(formType === 'out' ? null : 'out')} className={`rounded-2xl py-3 text-sm font-bold border transition-all ${formType === 'out' ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>+ Pengeluaran</button>
+          </div>
+
+          {formType && (
+            <form onSubmit={saveEntry} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+              <h3 className={`font-bold text-base ${formType === 'in' ? 'text-emerald-700' : 'text-rose-700'}`}>{formType === 'in' ? 'Catat Pemasukan' : 'Catat Pengeluaran'}</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Tanggal</label>
+                  <input type="date" value={form.date} max={pettyLocalToday()} onChange={(e) => setF('date', e.target.value)} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Nominal</label>
+                  <div className="flex items-center border border-slate-300 rounded-xl overflow-hidden">
+                    <span className="px-2.5 text-xs font-bold text-slate-500 bg-slate-50 self-stretch flex items-center border-r border-slate-200">Rp</span>
+                    <input type="text" inputMode="numeric" value={pettyFmtInput(form.amount)} onChange={(e) => setF('amount', pettyDigits(e.target.value))} placeholder="0" className="w-full px-2.5 py-2.5 text-sm font-bold outline-none" />
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Kategori</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {cats.map((c) => (
+                    <button key={c} type="button" onClick={() => setF('cat', c)} className={`px-3 py-1.5 rounded-full text-xs font-bold border ${form.cat === c ? 'bg-purple-800 text-white border-purple-800' : 'bg-white text-slate-600 border-slate-300'}`}>{c}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Keterangan</label>
+                <textarea rows={2} maxLength={200} value={form.note} onChange={(e) => setF('note', e.target.value)} placeholder={formType === 'in' ? 'Contoh: Tambahan kas dari kantor pusat' : 'Contoh: Beli plastik & lakban'} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm resize-none"></textarea>
+              </div>
+              <PettyPhotoPicker storeId={storeId} value={form.photo} onChange={(k) => setF('photo', k)} label="Foto Bukti (opsional)" showToast={showToast} />
+              <button type="submit" disabled={saving} className={`w-full text-white font-bold py-3 rounded-xl text-sm disabled:opacity-60 ${formType === 'in' ? 'bg-emerald-600' : 'bg-rose-600'}`}>{saving ? 'Menyimpan...' : 'Simpan Transaksi'}</button>
+            </form>
+          )}
+
+          {/* Pengajuan karyawan menunggu ACC */}
+          {pending.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-amber-900 text-base">Menunggu ACC ({pending.length})</h3>
+                <span className="text-xs font-bold text-amber-700">{pettyRp(t.pendingSum)}</span>
+              </div>
+              {pending.map((en) => (
+                <div key={en.id} className="bg-white border border-amber-200 rounded-xl p-3 space-y-2">
+                  <div className="flex gap-3">
+                    {en.photo ? (
+                      <button type="button" onClick={() => setZoom(`${WORKER_BASE}/api/media/file/${en.photo}`)} className="shrink-0">
+                        <img src={`${WORKER_BASE}/api/media/file/${en.photo}`} alt="Struk" className="w-20 h-20 rounded-lg object-cover border border-slate-200" />
+                      </button>
+                    ) : null}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-extrabold text-slate-800">{pettyRp(en.amount)}</p>
+                      <p className="text-xs text-slate-600 break-words">{en.note}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">{en.who} · {pettyFmtDate(en.date)}</p>
+                      <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-md ${PETTY_CAT_STYLE[en.cat] || PETTY_CAT_STYLE['Lain-lain']}`}>{en.cat}</span>
+                    </div>
+                  </div>
+                  {rejectId === en.id ? (
+                    <div className="space-y-2">
+                      <textarea rows={2} value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} placeholder="Alasan penolakan (wajib)" className="w-full px-3 py-2 border border-rose-300 rounded-xl text-sm resize-none"></textarea>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => { setRejectId(null); setRejectNote(''); }} className="flex-1 bg-slate-100 text-slate-600 font-bold text-xs py-2.5 rounded-lg">Batal</button>
+                        <button type="button" onClick={() => decide(en, false)} disabled={busyId === en.id} className="flex-1 bg-rose-600 text-white font-bold text-xs py-2.5 rounded-lg disabled:opacity-60">Konfirmasi Tolak</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => { setRejectId(en.id); setRejectNote(''); }} className="flex-1 bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs py-2.5 rounded-lg">Tolak</button>
+                      <button type="button" onClick={() => decide(en, true)} disabled={busyId === en.id} className="flex-1 bg-emerald-600 text-white font-bold text-xs py-2.5 rounded-lg disabled:opacity-60">{busyId === en.id ? 'Memproses...' : 'ACC'}</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <p className="text-[10px] text-amber-700">Cek foto struk dan nominalnya sebelum menekan ACC. Pengajuan baru masuk ke saldo setelah di-ACC.</p>
+            </div>
+          )}
+
+          {/* Rincian pengeluaran per kategori */}
+          {catTotals.length > 0 && (
+            <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-2.5">
+              <h3 className="font-bold text-slate-800 text-sm">Pengeluaran per Kategori</h3>
+              {catTotals.map(([c, v]) => (
+                <div key={c}>
+                  <div className="flex justify-between text-xs mb-1"><span className="font-semibold text-slate-700">{c}</span><span className="font-bold text-slate-800">{pettyRp(v)}</span></div>
+                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.round((v / (t.out || 1)) * 100))}%`, background: PETTY_CAT_BAR[c] || '#94a3b8' }}></div></div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Daftar transaksi */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="font-bold text-slate-800 text-base">Transaksi</h3>
+              <button type="button" onClick={downloadCsv} disabled={!ledger || ledger.entries.length === 0} className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 disabled:opacity-40">Unduh CSV</button>
+            </div>
+            <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
+              {[['all', 'Semua'], ['in', 'Masuk'], ['out', 'Keluar'], ['rejected', 'Ditolak']].map(([k, l]) => (
+                <button key={k} type="button" onClick={() => setFilter(k)} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg ${filter === k ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>{l}</button>
+              ))}
+            </div>
+            {!ledger ? (
+              <p className="text-xs text-slate-400 text-center py-4">Memuat...</p>
+            ) : shown.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center py-4">Belum ada transaksi.</p>
+            ) : shown.map((en) => (
+              <div key={en.id} className={`border border-slate-200 rounded-xl p-3 flex gap-3 ${en.status === 'rejected' ? 'opacity-60' : ''}`}>
+                <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-lg font-extrabold ${en.type === 'in' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{en.type === 'in' ? '+' : '−'}</div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className={`text-sm font-extrabold ${en.type === 'in' ? 'text-emerald-700' : 'text-rose-700'} ${en.status === 'rejected' ? 'line-through' : ''}`}>{en.type === 'in' ? '+' : '-'}{pettyRp(en.amount)}</p>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${PETTY_CAT_STYLE[en.cat] || PETTY_CAT_STYLE['Lain-lain']}`}>{en.cat}</span>
+                  </div>
+                  <p className="text-xs text-slate-600 break-words">{en.note}</p>
+                  <p className="text-[10px] text-slate-400">{pettyFmtDate(en.date)} · {en.who}</p>
+                  {en.status === 'rejected' && <p className="text-[11px] text-rose-600">Ditolak{en.decNote ? `: ${en.decNote}` : ''}</p>}
+                  <div className="flex items-center gap-3 pt-0.5">
+                    {en.photo && <button type="button" onClick={() => setZoom(`${WORKER_BASE}/api/media/file/${en.photo}`)} className="text-[11px] font-bold text-purple-700">Lihat bukti</button>}
+                    {confirmDelId === en.id ? (
+                      <span className="text-[11px]">
+                        <button type="button" onClick={() => delEntry(en)} disabled={busyId === en.id} className="font-bold text-rose-600 mr-2">Ya, hapus</button>
+                        <button type="button" onClick={() => setConfirmDelId(null)} className="font-bold text-slate-500">Batal</button>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => setConfirmDelId(en.id)} className="text-[11px] font-bold text-slate-400 hover:text-rose-600">Hapus</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <PettyLightbox src={zoom} onClose={() => setZoom(null)} />
+        </div>
+      );
+    }
+
+    // ---------- Admin: saklar notifikasi Telegram Informasi Roti ----------
+    function ToggleSwitch({ on, onChange, disabled }) {
+      return (
+        <button type="button" role="switch" aria-checked={on} disabled={disabled} onClick={() => onChange(!on)} className={`relative shrink-0 w-12 h-7 rounded-full transition-colors disabled:opacity-50 ${on ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+          <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${on ? 'translate-x-5' : ''}`}></span>
+        </button>
+      );
+    }
+
+    function AdminBreadNotifTab() {
+      const [cfg, setCfg] = React.useState(null);
+      const [busy, setBusy] = React.useState('');
+      const [msg, setMsg] = React.useState('');
+      React.useEffect(() => { scheduleLucideIcons(); });
+      const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500); };
+      const load = async () => {
+        try { setCfg(await pettyApi('/api/bread/settings')); } catch (err) { flash(err.message); }
+      };
+      React.useEffect(() => { load(); }, []);
+      const save = async (body, optimistic, busyKey) => {
+        const prev = cfg;
+        setCfg(optimistic(cfg)); setBusy(busyKey);
+        try { await pettyApi('/api/bread/settings', { method: 'POST', body }); flash('Pengaturan disimpan.'); }
+        catch (err) { setCfg(prev); flash(err.message); }
+        finally { setBusy(''); }
+      };
+      if (!cfg) return <div className="bg-white rounded-2xl p-6 border border-slate-200 text-center text-sm text-slate-500">{msg || 'Memuat pengaturan...'}</div>;
+      const allOn = cfg.stores.every((s) => s.on);
+      return (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+            <div>
+              <h3 className="font-bold text-slate-800 text-base">Notifikasi Telegram Informasi Roti</h3>
+              <p className="text-xs text-slate-500">Matikan notifikasi bot untuk semua outlet, atau atur per outlet di bawah. Pengaturan langsung berlaku.</p>
+            </div>
+            <div className="flex items-center justify-between gap-3 border border-slate-200 rounded-xl p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-slate-800">Pengingat tiap 2 jam</p>
+                <p className="text-[11px] text-slate-500">Bot mengingatkan update roti matang &amp; baking (10:00–20:00 WIB).</p>
+              </div>
+              <ToggleSwitch on={cfg.reminders} disabled={busy === 'g-rem'} onChange={(v) => save({ scope: 'global', key: 'reminders', on: v }, (c) => ({ ...c, reminders: v }), 'g-rem')} />
+            </div>
+            <div className="flex items-center justify-between gap-3 border border-slate-200 rounded-xl p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-slate-800">Notifikasi saran antar-outlet</p>
+                <p className="text-[11px] text-slate-500">Pesan ke grup saat outlet menjalankan saran kasih/minta roti.</p>
+              </div>
+              <ToggleSwitch on={cfg.suggest} disabled={busy === 'g-sug'} onChange={(v) => save({ scope: 'global', key: 'suggest', on: v }, (c) => ({ ...c, suggest: v }), 'g-sug')} />
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="font-bold text-slate-800 text-base">Per Outlet</h3>
+              <button type="button" disabled={busy === 'all'} onClick={() => save({ scope: 'all-stores', on: !allOn }, (c) => ({ ...c, stores: c.stores.map((s) => ({ ...s, on: !allOn })) }), 'all')} className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 disabled:opacity-60">{allOn ? 'Matikan semua' : 'Nyalakan semua'}</button>
+            </div>
+            <p className="text-[11px] text-slate-500">Outlet yang dimatikan tidak menerima pengingat maupun notifikasi saran dari bot.</p>
+            {cfg.stores.length === 0 ? <p className="text-xs text-slate-400">Belum ada outlet.</p> : cfg.stores.map((s) => (
+              <div key={s.storeId} className="flex items-center justify-between gap-3 border border-slate-200 rounded-xl px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-slate-800 truncate">{s.name}</p>
+                  <p className={`text-[10px] font-semibold ${s.on ? 'text-emerald-600' : 'text-slate-400'}`}>{s.on ? 'Notifikasi aktif' : 'Dinonaktifkan'}</p>
+                </div>
+                <ToggleSwitch on={s.on} disabled={busy === `s-${s.storeId}`} onChange={(v) => save({ scope: 'store', storeId: s.storeId, on: v }, (c) => ({ ...c, stores: c.stores.map((x) => x.storeId === s.storeId ? { ...x, on: v } : x) }), `s-${s.storeId}`)} />
+              </div>
+            ))}
+            {msg && <p className="text-xs font-semibold text-purple-700 text-center">{msg}</p>}
+          </div>
+        </div>
+      );
+    }
+
     function StorePsikotesTab() {
       const [attempts, setAttempts] = useState([]);
       const [loading, setLoading] = useState(true);

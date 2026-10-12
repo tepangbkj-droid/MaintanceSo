@@ -2734,12 +2734,14 @@ const { useState, useEffect } = React;
                     <div>
                       <h3 className="font-bold text-slate-800 text-sm">{test.title}</h3>
                       {test.description && <p className="text-xs text-slate-500 mt-0.5">{test.description}</p>}
+                      {test.store_id && <p className="text-[11px] text-purple-700 font-semibold mt-0.5">🏪 Soal khusus outlet: {((stores || []).find(x => x.id === test.store_id) || {}).name || test.store_id}</p>}
                       <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-400 flex-wrap">
                         <span>{test.question_count} soal</span>
                         <span>•</span>
                         <span>{test.attempt_count} OJT sudah isi</span>
                         {test.timer_minutes && <span className="text-indigo-600">• <i data-lucide="timer" className="w-3 h-3 inline-block -mt-0.5"></i> {test.timer_minutes} mnt</span>}
                         {test.blocked_count > 0 && <span className="text-rose-600 font-semibold">• {test.blocked_count} diblokir</span>}
+                        {test.keys_ready === 0 && <span className="text-amber-600 font-semibold">• Menunggu kunci jawaban</span>}
                       </div>
                     </div>
                     {test.locked ? (
@@ -2916,6 +2918,7 @@ const { useState, useEffect } = React;
             <button onClick={() => addQuestion('esai')} className="flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl">+ Soal Esai</button>
           </div>
 
+          {questions.some(q => q.type === 'pilihan_ganda' && !Number.isInteger(q.correctIndex)) && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-center font-semibold">Ada soal pilihan ganda yang belum punya kunci jawaban. Klik bulatan di jawaban yang benar. Paket baru bisa dipakai OJT setelah semua kunci terisi.</p>}
           {saveError && <p className="text-xs text-rose-600 font-semibold text-center">{saveError}</p>}
           <button onClick={handleSave} disabled={saving} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
             {saving ? 'Menyimpan...' : 'Simpan Semua Soal'}
@@ -6871,6 +6874,7 @@ const { useState, useEffect } = React;
         { key: 'jadwal', label: 'Jadwal Absensi', icon: 'calendar-clock' },
         { key: 'inventory', label: 'Inventory Store', icon: 'package' },
         { key: 'psikotes', label: 'Hasil Psikotes OJT', icon: 'graduation-cap' },
+        { key: 'ojt', label: 'Status & Soal OJT', icon: 'clipboard-check' },
         { key: 'petty', label: 'Petty Cash', icon: 'wallet' },
         { key: 'investory', label: 'Investory', icon: 'thermometer-snowflake' },
       ];
@@ -7446,6 +7450,10 @@ const { useState, useEffect } = React;
             <div className="p-4">
               <StorePsikotesTab />
             </div>
+          )}
+
+          {activeMenu === 'ojt' && (
+            <LeaderOjtTab storeName={storeName || storeId} showToast={showToast} sendToStoreTelegram={sendToStoreTelegram} />
           )}
 
           {activeMenu === 'petty' && (
@@ -15569,6 +15577,444 @@ Daily inventory done✅
             </ul>
           </SecCard>
           {msg && <p className="text-xs font-semibold text-purple-700 text-center">{msg}</p>}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // LEADER: STATUS OJT & SOAL OJT PER OUTLET (2026-10)
+    // ==========================================
+    // Status OJT = penilaian Store Leader per stage (Bakery -> Filler -> Kasir) + evaluasi akhir.
+    // Soal OJT   = Store Leader mengirim teks soal + pilihan (bisa tempel sekaligus), paket dibuat
+    //              otomatis & hanya berlaku di outlet itu. KUNCI JAWABAN dipilih admin.
+    // Backend: /api/ojt/* (worker.js). Komponen sengaja top-level agar input tidak kehilangan fokus.
+    const OJT_STAGE_DEFS = [
+      { key: 'bakery', label: 'Bakery' },
+      { key: 'filler', label: 'Filler' },
+      { key: 'kasir', label: 'Kasir' },
+    ];
+    const ojtMdEsc = (t) => String(t === null || t === undefined ? '' : t).replace(/([_*`\[])/g, '\\$1');
+    const ojtFmtDate = (ms) => ms ? new Date(ms).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+    const ojtCopy = async (text) => {
+      try { await navigator.clipboard.writeText(text); return true; }
+      catch (e) {
+        try { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok; }
+        catch (e2) { return false; }
+      }
+    };
+    // Tempel banyak soal sekaligus. Format:  "1. Pertanyaan" lalu "A. pilihan" "B. pilihan" ...
+    const ojtParseBulk = (raw) => {
+      const qs = []; let cur = null; let lastOpt = false;
+      String(raw || '').split(/\r?\n/).forEach((line) => {
+        const t = line.trim(); if (!t) return;
+        const mq = t.match(/^(\d{1,3})\s*[.)]\s*(.+)$/);
+        const mo = t.match(/^([A-Ha-h])\s*[.)]\s*(.+)$/);
+        if (mq) { cur = { type: 'pilihan_ganda', text: mq[2].trim(), options: [] }; qs.push(cur); lastOpt = false; }
+        else if (mo && cur) { cur.options.push(mo[2].trim()); lastOpt = true; }
+        else if (cur) { if (lastOpt && cur.options.length) cur.options[cur.options.length - 1] += ' ' + t; else cur.text += ' ' + t; }
+      });
+      return qs.map(q => q.options.length >= 2 ? q : { type: 'esai', text: q.text, options: [] });
+    };
+
+    function LeaderOjtTab({ storeName, showToast, sendToStoreTelegram }) {
+      const [sub, setSub] = useState('status');
+      useEffect(() => { scheduleLucideIcons(); });
+      return (
+        <div className="p-4 max-w-2xl mx-auto space-y-4">
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+            <button onClick={() => setSub('status')} className={`flex-1 text-xs font-bold py-2 rounded-lg ${sub === 'status' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Status OJT</button>
+            <button onClick={() => setSub('soal')} className={`flex-1 text-xs font-bold py-2 rounded-lg ${sub === 'soal' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Soal OJT</button>
+          </div>
+          {sub === 'status'
+            ? <LeaderOjtStatusPanel storeName={storeName} showToast={showToast} sendToStoreTelegram={sendToStoreTelegram} />
+            : <LeaderOjtQuestionsPanel showToast={showToast} />}
+        </div>
+      );
+    }
+
+    function LeaderOjtStatusPanel({ storeName, showToast, sendToStoreTelegram }) {
+      const [people, setPeople] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [err, setErr] = useState('');
+      const [newName, setNewName] = useState('');
+      const [adding, setAdding] = useState(false);
+      const load = async () => {
+        try { const d = await pettyApi('/api/ojt/people'); setPeople(d.people || []); setErr(''); }
+        catch (e) { setErr(e.message || 'Gagal memuat data OJT.'); }
+        finally { setLoading(false); }
+      };
+      useEffect(() => { load(); }, []);
+      useEffect(() => { scheduleLucideIcons(); });
+      const add = async () => {
+        if (!newName.trim()) return;
+        setAdding(true);
+        try { await pettyApi('/api/ojt/people', { method: 'POST', body: { name: newName.trim() } }); setNewName(''); showToast('✅ OJT ditambahkan'); await load(); }
+        catch (e) { showToast('⚠️ ' + e.message); }
+        finally { setAdding(false); }
+      };
+      return (
+        <div className="space-y-3">
+          <div>
+            <h2 className="font-bold text-slate-700 text-base">Status OJT</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Nilai tiap stage (Bakery, Filler, Kasir) lalu tandai Selesai OJT. Sistem menyimpulkan apakah OJT sudah bisa lanjut ke tahap selanjutnya.</p>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200 p-3 flex gap-2">
+            <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} placeholder="Nama OJT baru" className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm" />
+            <button onClick={add} disabled={adding || !newName.trim()} className="bg-purple-800 disabled:opacity-50 text-white text-xs font-bold px-4 rounded-xl">{adding ? '...' : 'Tambah'}</button>
+          </div>
+          {loading ? (
+            <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>
+          ) : err ? (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center space-y-2">
+              <p className="text-xs text-rose-700 font-semibold">{err}</p>
+              <button onClick={() => { setLoading(true); load(); }} className="bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl">Coba Lagi</button>
+            </div>
+          ) : people.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm">Belum ada OJT. Tambahkan nama OJT di atas untuk mulai menilai.</div>
+          ) : (
+            people.map(p => <OjtPersonCard key={p.id} p={p} storeName={storeName} onChanged={load} showToast={showToast} sendToStoreTelegram={sendToStoreTelegram} />)
+          )}
+        </div>
+      );
+    }
+
+    function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram }) {
+      const [open, setOpen] = useState(false);
+      const [forms, setForms] = useState(() => {
+        const f = {};
+        OJT_STAGE_DEFS.forEach(s => { const x = (p.stages || {})[s.key]; f[s.key] = { result: x ? x.result : 'lolos', score: x ? String(x.score) : '', note: x ? (x.note || '') : '' }; });
+        return f;
+      });
+      const [finalNote, setFinalNote] = useState(p.finalNote || '');
+      const [busy, setBusy] = useState('');
+      const st = p.status || {};
+      const setF = (k, patch) => setForms(prev => ({ ...prev, [k]: { ...prev[k], ...patch } }));
+      const run = async (tag, fn, okMsg) => {
+        setBusy(tag);
+        try { await fn(); if (okMsg) showToast(okMsg); await onChanged(); }
+        catch (e) { showToast('⚠️ ' + e.message); }
+        finally { setBusy(''); }
+      };
+      const saveStage = (k, label) => {
+        const f = forms[k];
+        if (f.score === '' || isNaN(Number(f.score))) { showToast('⚠️ Isi nilai 0-100 untuk ' + label); return; }
+        run('s' + k, () => pettyApi(`/api/ojt/people/${p.id}/stage`, { method: 'POST', body: { stage: k, result: f.result, score: Number(f.score), note: f.note } }), `✅ Penilaian ${label} tersimpan`);
+      };
+      const saveFinish = (want, msg) => run('fin', () => pettyApi(`/api/ojt/people/${p.id}/finish`, { method: 'POST', body: { finished: want, finalNote } }), msg);
+      const remove = () => {
+        if (!window.confirm(`Hapus data OJT "${p.name}"?`)) return;
+        run('del', () => pettyApi(`/api/ojt/people/${p.id}`, { method: 'DELETE' }), 'Data OJT dihapus');
+      };
+      const buildText = () => {
+        const L = [];
+        L.push('📋 *STATUS OJT*');
+        L.push(`🏪 ${ojtMdEsc(storeName)}`);
+        L.push(`👤 ${ojtMdEsc(p.name)}`, '');
+        OJT_STAGE_DEFS.forEach(s => {
+          const x = (p.stages || {})[s.key];
+          if (!x) L.push(`⏳ ${s.label}: belum dinilai`);
+          else L.push(`${x.result === 'lolos' ? '✅ Lolos' : '❌ Belum lolos'} ${s.label} — nilai ${x.score}${x.note ? ` (${ojtMdEsc(x.note)})` : ''}`);
+        });
+        L.push(p.finished ? '✅ Sudah Selesai OJT' : '⏳ Belum selesai OJT');
+        if (p.tes && p.tes.score !== null && p.tes.score !== undefined) L.push(`🧠 Skor tes OJT: ${p.tes.score}`);
+        L.push('');
+        L.push(st.canProceed ? '🎯 *Keputusan: SUDAH BISA lanjut ke tahap selanjutnya*' : `🎯 *Keputusan: BELUM bisa lanjut* — ${ojtMdEsc(String(st.label || '').replace(/^Belum bisa lanjut — /, ''))}`);
+        if (p.finalNote) L.push(`📝 Evaluasi: ${ojtMdEsc(p.finalNote)}`);
+        L.push('', '_Dinilai oleh Store Leader_');
+        return L.join('\n');
+      };
+      const share = async () => {
+        setBusy('tg');
+        const ok = await sendToStoreTelegram(buildText());
+        setBusy('');
+        if (ok) showToast('✅ Status OJT terkirim ke Telegram');
+      };
+      const chip = (cls, text) => <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${cls}`}>{text}</span>;
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <button onClick={() => setOpen(o => !o)} className="w-full text-left p-4 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="font-bold text-slate-800 text-sm truncate">{p.name}</p>
+                {p.tes && p.tes.score !== null && p.tes.score !== undefined && <p className="text-[11px] text-purple-700 font-semibold">Skor tes OJT: {p.tes.score}</p>}
+              </div>
+              <i data-lucide={open ? 'chevron-up' : 'chevron-down'} className="w-4 h-4 text-slate-400 shrink-0"></i>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {OJT_STAGE_DEFS.map(s => {
+                const x = (p.stages || {})[s.key];
+                if (x && x.result === 'lolos') return <React.Fragment key={s.key}>{chip('bg-emerald-100 text-emerald-700', `Lolos ${s.label}`)}</React.Fragment>;
+                if (x) return <React.Fragment key={s.key}>{chip('bg-rose-100 text-rose-700', `Belum Lolos ${s.label}`)}</React.Fragment>;
+                return <React.Fragment key={s.key}>{chip('bg-slate-100 text-slate-500', `${s.label}: belum dinilai`)}</React.Fragment>;
+              })}
+              {p.finished ? chip('bg-indigo-100 text-indigo-700', 'Sudah Selesai OJT') : chip('bg-slate-100 text-slate-500', 'Belum selesai OJT')}
+            </div>
+            <div className={`text-xs font-bold rounded-xl px-3 py-2 ${st.canProceed ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
+              {st.canProceed ? '✅ ' : '⏳ '}{st.label}
+            </div>
+          </button>
+          {open && (
+            <div className="border-t border-slate-100 bg-slate-50 p-4 space-y-3">
+              {OJT_STAGE_DEFS.map(s => {
+                const f = forms[s.key]; const saved = (p.stages || {})[s.key];
+                return (
+                  <div key={s.key} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-bold text-slate-700">Stage {s.label}</p>
+                      {saved && <span className="text-[10px] text-slate-400">Dinilai {ojtFmtDate(saved.at)}</span>}
+                    </div>
+                    <div className="flex gap-2">
+                      <select value={f.result} onChange={e => setF(s.key, { result: e.target.value })} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-xs bg-white">
+                        <option value="lolos">Lolos</option>
+                        <option value="belum">Belum Lolos</option>
+                      </select>
+                      <input type="number" inputMode="numeric" min="0" max="100" value={f.score} onChange={e => setF(s.key, { score: e.target.value })} placeholder="Nilai 0-100" className="w-28 border border-slate-200 rounded-lg px-2 py-2 text-xs" />
+                    </div>
+                    <textarea value={f.note} onChange={e => setF(s.key, { note: e.target.value })} rows={2} maxLength={300} placeholder={`Evaluasi ${s.label} (kelebihan / yang perlu diperbaiki)`} className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-xs" />
+                    <button onClick={() => saveStage(s.key, s.label)} disabled={busy === 's' + s.key} className="w-full bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">{busy === 's' + s.key ? 'Menyimpan...' : `Simpan Penilaian ${s.label}`}</button>
+                  </div>
+                );
+              })}
+              <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                <p className="text-xs font-bold text-slate-700">Evaluasi Akhir & Selesai OJT</p>
+                <textarea value={finalNote} onChange={e => setFinalNote(e.target.value)} rows={3} maxLength={500} placeholder="Evaluasi keseluruhan Store Leader (sikap, kecepatan, kesiapan naik tahap)" className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-xs" />
+                <div className="flex gap-2">
+                  <button onClick={() => saveFinish(!!p.finished, 'Evaluasi akhir tersimpan')} disabled={busy === 'fin'} className="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg">Simpan Evaluasi</button>
+                  {p.finished
+                    ? <button onClick={() => saveFinish(false, 'Status selesai dibatalkan')} disabled={busy === 'fin'} className="flex-1 bg-amber-100 text-amber-800 text-xs font-bold py-2 rounded-lg">Batalkan Selesai</button>
+                    : <button onClick={() => saveFinish(true, '✅ Ditandai Sudah Selesai OJT')} disabled={busy === 'fin' || !st.allPassed} className="flex-1 bg-indigo-700 disabled:opacity-40 text-white text-xs font-bold py-2 rounded-lg">Tandai Sudah Selesai OJT</button>}
+                </div>
+                {!p.finished && !st.allPassed && <p className="text-[10px] text-slate-400">Tombol Selesai OJT aktif setelah Bakery, Filler, dan Kasir semuanya Lolos.</p>}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={share} disabled={busy === 'tg'} className="flex-1 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl flex items-center justify-center gap-1.5">
+                  <i data-lucide="send" className="w-3.5 h-3.5"></i>{busy === 'tg' ? 'Mengirim...' : 'Share ke Telegram'}
+                </button>
+                <button onClick={remove} disabled={busy === 'del'} className="px-4 bg-rose-50 text-rose-600 text-xs font-bold rounded-xl">Hapus</button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function LeaderOjtQuestionsPanel({ showToast }) {
+      const [tests, setTests] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [err, setErr] = useState('');
+      const [editing, setEditing] = useState(null);
+      const [linksOpen, setLinksOpen] = useState(null);
+      const [showCreate, setShowCreate] = useState(false);
+      const [title, setTitle] = useState('');
+      const [timer, setTimer] = useState('');
+      const [creating, setCreating] = useState(false);
+      const load = async () => {
+        try { const d = await pettyApi('/api/ojt/tests'); setTests(d.tests || []); setErr(''); }
+        catch (e) { setErr(e.message || 'Gagal memuat soal OJT.'); }
+        finally { setLoading(false); }
+      };
+      useEffect(() => { load(); }, []);
+      useEffect(() => { scheduleLucideIcons(); });
+      const create = async () => {
+        if (!title.trim()) return;
+        setCreating(true);
+        try {
+          const d = await pettyApi('/api/ojt/tests', { method: 'POST', body: { title: title.trim(), timer_minutes: timer || null } });
+          setTitle(''); setTimer(''); setShowCreate(false);
+          await load();
+          setEditing({ id: d.id, title: title.trim() });
+        } catch (e) { showToast('⚠️ ' + e.message); }
+        finally { setCreating(false); }
+      };
+      const remove = async (t) => {
+        if (!window.confirm(`Hapus paket soal "${t.title}"? Link & hasil tes di paket ini ikut terhapus.`)) return;
+        try { await pettyApi(`/api/ojt/tests/${t.id}`, { method: 'DELETE' }); showToast('Paket soal dihapus'); await load(); }
+        catch (e) { showToast('⚠️ ' + e.message); }
+      };
+      if (editing) return <LeaderOjtQuestionEditor test={editing} showToast={showToast} onBack={() => { setEditing(null); load(); }} />;
+      return (
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h2 className="font-bold text-slate-700 text-base">Soal OJT Outlet</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Kirim soal & pilihan jawabannya, paket tes otomatis dibuat dan hanya berlaku di outlet ini. Kunci jawaban dipilih admin.</p>
+            </div>
+            <button onClick={() => setShowCreate(v => !v)} className="shrink-0 bg-purple-800 text-white text-xs font-bold px-3 py-2 rounded-xl">+ Paket Baru</button>
+          </div>
+          {showCreate && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-3 space-y-2 animate-fadeIn">
+              <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Judul, mis. Tes Bakery OJT" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" />
+              <input type="number" inputMode="numeric" value={timer} onChange={e => setTimer(e.target.value)} placeholder="Timer (menit, opsional)" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" />
+              <button onClick={create} disabled={creating || !title.trim()} className="w-full bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl">{creating ? 'Membuat...' : 'Buat & Isi Soal'}</button>
+            </div>
+          )}
+          {loading ? (
+            <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>
+          ) : err ? (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center space-y-2">
+              <p className="text-xs text-rose-700 font-semibold">{err}</p>
+              <button onClick={() => { setLoading(true); load(); }} className="bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl">Coba Lagi</button>
+            </div>
+          ) : tests.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm">Belum ada paket soal OJT untuk outlet ini.</div>
+          ) : tests.map(t => (
+            <div key={t.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-slate-800 text-sm">{t.title}</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{t.question_count} soal • {t.attempt_count} OJT sudah isi{t.timer_minutes ? ` • ${t.timer_minutes} mnt` : ''}</p>
+                </div>
+                {t.keys_ready === 0
+                  ? <span className="shrink-0 text-[10px] bg-amber-100 text-amber-700 font-bold px-2 py-1 rounded-md">Menunggu kunci admin</span>
+                  : <span className="shrink-0 text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md">Siap dipakai</span>}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {t.attempt_count === 0 && <button onClick={() => setEditing({ id: t.id, title: t.title })} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700">Edit Soal</button>}
+                <button onClick={() => setLinksOpen(linksOpen === t.id ? null : t.id)} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700">Link OJT</button>
+                <button onClick={() => remove(t)} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 ml-auto">Hapus</button>
+              </div>
+              {linksOpen === t.id && <OjtLinksBox test={t} showToast={showToast} />}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function OjtLinksBox({ test, showToast }) {
+      const [links, setLinks] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [name, setName] = useState('');
+      const [busy, setBusy] = useState(false);
+      const load = async () => {
+        try { const d = await pettyApi(`/api/ojt/tests/${test.id}/links`); setLinks(d.links || []); } catch (e) { showToast('⚠️ ' + e.message); }
+        finally { setLoading(false); }
+      };
+      useEffect(() => { load(); }, [test.id]);
+      const mk = (token) => `${PUBLIC_APP_BASE}/psikotes.html?ojt=${token}`;
+      const add = async () => {
+        if (!name.trim()) return;
+        setBusy(true);
+        try {
+          const d = await pettyApi(`/api/ojt/tests/${test.id}/links`, { method: 'POST', body: { ojtName: name.trim() } });
+          setName('');
+          const ok = await ojtCopy(mk(d.linkToken));
+          showToast(ok ? '✅ Link dibuat & disalin' : '✅ Link dibuat (salin dari daftar)');
+          await load();
+        } catch (e) { showToast('⚠️ ' + e.message); }
+        finally { setBusy(false); }
+      };
+      const copy = async (l) => { showToast((await ojtCopy(mk(l.link_token))) ? '✅ Link disalin' : '⚠️ Gagal menyalin'); };
+      const del = async (l) => {
+        if (!window.confirm(`Hapus link untuk ${l.ojt_name}?`)) return;
+        try { await pettyApi(`/api/ojt/tests/${test.id}/links?linkId=${encodeURIComponent(l.id)}`, { method: 'DELETE' }); await load(); } catch (e) { showToast('⚠️ ' + e.message); }
+      };
+      return (
+        <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 space-y-2">
+          {test.keys_ready === 0 ? (
+            <p className="text-[11px] text-amber-700 font-semibold">Link OJT bisa dibuat setelah admin memilih kunci jawaban.</p>
+          ) : (
+            <div className="flex gap-2">
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Nama OJT" className="flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-xs bg-white" />
+              <button onClick={add} disabled={busy || !name.trim()} className="bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold px-3 rounded-lg">{busy ? '...' : 'Buat Link'}</button>
+            </div>
+          )}
+          {loading ? <p className="text-[11px] text-slate-400">Memuat...</p> : links.length === 0 ? <p className="text-[11px] text-slate-400">Belum ada link.</p> : links.map(l => (
+            <div key={l.id} className="flex items-center gap-2 bg-white rounded-lg border border-slate-200 px-2.5 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-800 truncate">{l.ojt_name}</p>
+                <p className="text-[10px] text-slate-400">{l.status === 'used' ? (l.attempt_status === 'completed' ? `Selesai • skor ${l.auto_score ?? '-'}` : 'Sudah dibuka') : 'Belum dipakai'}</p>
+              </div>
+              <button onClick={() => copy(l)} className="text-[11px] font-bold text-indigo-700 px-2 py-1 bg-indigo-50 rounded-md">Salin</button>
+              {l.status === 'unused' && <button onClick={() => del(l)} className="text-[11px] font-bold text-rose-600 px-2 py-1 bg-rose-50 rounded-md">Hapus</button>}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function LeaderOjtQuestionEditor({ test, onBack, showToast }) {
+      const [qs, setQs] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [err, setErr] = useState('');
+      const [saving, setSaving] = useState(false);
+      const [bulk, setBulk] = useState('');
+      const [showBulk, setShowBulk] = useState(false);
+      useEffect(() => {
+        (async () => {
+          try {
+            const d = await pettyApi(`/api/ojt/tests/${test.id}/questions`);
+            setQs((d.questions || []).map(q => ({ id: q.id, type: q.type, text: q.text, options: q.options && q.options.length ? q.options : (q.type === 'esai' ? [] : ['', '']) })));
+          } catch (e) { setErr(e.message || 'Gagal memuat soal.'); }
+          finally { setLoading(false); }
+        })();
+      }, [test.id]);
+      useEffect(() => { scheduleLucideIcons(); });
+      const upd = (i, patch) => setQs(prev => prev.map((q, k) => k === i ? { ...q, ...patch } : q));
+      const updOpt = (i, oi, v) => setQs(prev => prev.map((q, k) => k === i ? { ...q, options: q.options.map((o, j) => j === oi ? v : o) } : q));
+      const addOpt = (i) => setQs(prev => prev.map((q, k) => k === i && q.options.length < 6 ? { ...q, options: [...q.options, ''] } : q));
+      const delOpt = (i, oi) => setQs(prev => prev.map((q, k) => k === i && q.options.length > 2 ? { ...q, options: q.options.filter((_, j) => j !== oi) } : q));
+      const addBulk = () => {
+        const parsed = ojtParseBulk(bulk);
+        if (parsed.length === 0) { showToast('⚠️ Format tidak terbaca. Pakai "1. Soal" lalu "A. Pilihan".'); return; }
+        setQs(prev => [...prev, ...parsed]); setBulk(''); setShowBulk(false);
+        showToast(`✅ ${parsed.length} soal ditambahkan — periksa lalu simpan`);
+      };
+      const save = async () => {
+        setSaving(true);
+        try {
+          const d = await pettyApi(`/api/ojt/tests/${test.id}/questions`, { method: 'PUT', body: { questions: qs.map(q => ({ id: q.id, type: q.type, text: q.text, options: q.options })) } });
+          showToast(d.keysReady ? '✅ Soal tersimpan' : '✅ Soal terkirim — menunggu admin memilih kunci jawaban');
+          onBack();
+        } catch (e) { showToast('⚠️ ' + e.message); }
+        finally { setSaving(false); }
+      };
+      if (loading) return <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>;
+      if (err) return (
+        <div className="space-y-3">
+          <button onClick={onBack} className="text-xs font-bold text-purple-800">← Kembali</button>
+          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center text-xs text-rose-700 font-semibold">{err}</div>
+        </div>
+      );
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-100 text-sm font-bold text-slate-600">←</button>
+            <h2 className="font-bold text-slate-700 text-base truncate">Soal — {test.title}</h2>
+          </div>
+          <div className="bg-purple-50 border border-purple-100 rounded-xl px-3 py-2 text-[11px] text-purple-800">Isi soal dan pilihan jawaban saja. <b>Kunci jawaban dipilih admin</b> setelah soal kamu simpan.</div>
+          <button onClick={() => setShowBulk(v => !v)} className="w-full border border-dashed border-purple-300 text-purple-700 text-xs font-bold py-2.5 rounded-xl">{showBulk ? 'Tutup' : '📋 Tempel Banyak Soal Sekaligus'}</button>
+          {showBulk && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-3 space-y-2 animate-fadeIn">
+              <textarea value={bulk} onChange={e => setBulk(e.target.value)} rows={8} placeholder={'1. Berapa suhu oven untuk croissant?\nA. 150°C\nB. 180°C\nC. 220°C\n\n2. Apa yang dilakukan sebelum membuka kasir?\nA. ...\nB. ...'} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono" />
+              <button onClick={addBulk} disabled={!bulk.trim()} className="w-full bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-xl">Buat Soal Otomatis</button>
+            </div>
+          )}
+          {qs.map((q, i) => (
+            <div key={i} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400">Soal {i + 1} • {q.type === 'esai' ? 'Esai' : 'Pilihan Ganda'}</span>
+                <button onClick={() => setQs(prev => prev.filter((_, k) => k !== i))} className="text-rose-500 text-xs font-semibold">Hapus</button>
+              </div>
+              <textarea value={q.text} onChange={e => upd(i, { text: e.target.value })} rows={2} placeholder="Tulis pertanyaan..." className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" />
+              {q.type === 'pilihan_ganda' && (
+                <div className="space-y-1.5">
+                  {q.options.map((o, oi) => (
+                    <div key={oi} className="flex items-center gap-2">
+                      <span className="w-5 text-center text-[11px] font-bold text-slate-400">{String.fromCharCode(65 + oi)}</span>
+                      <input value={o} onChange={e => updOpt(i, oi, e.target.value)} placeholder={`Pilihan ${String.fromCharCode(65 + oi)}`} className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs" />
+                      {q.options.length > 2 && <button onClick={() => delOpt(i, oi)} className="text-slate-400 text-sm px-1">✕</button>}
+                    </div>
+                  ))}
+                  {q.options.length < 6 && <button onClick={() => addOpt(i)} className="text-[11px] font-semibold text-purple-700">+ Tambah pilihan</button>}
+                </div>
+              )}
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <button onClick={() => setQs(prev => [...prev, { type: 'pilihan_ganda', text: '', options: ['', ''] }])} className="flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl">+ Pilihan Ganda</button>
+            <button onClick={() => setQs(prev => [...prev, { type: 'esai', text: '', options: [] }])} className="flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl">+ Esai</button>
+          </div>
+          <button onClick={save} disabled={saving || qs.length === 0} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">{saving ? 'Menyimpan...' : 'Simpan & Kirim ke Admin'}</button>
         </div>
       );
     }

@@ -37,6 +37,7 @@
 
 <!-- Lucide -->
 <script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.min.js" defer crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js" defer></script>
 
 <!-- Tipografi: Inter (teks/UI/data, sangat jelas di ukuran kecil) + Plus Jakarta Sans (judul/heading,
      lebih berkarakter & modern). Dimuat dari unpkg (sudah di-whitelist di CSP di atas) supaya tidak
@@ -723,6 +724,7 @@ const { useState, useEffect } = React;
         const data = await res.json();
         if (!data || !data.ok) return null;
         if (data.role === 'admin') return { uid: data.uid, role: 'admin' };
+        if (data.role === 'leader') return { storeId: data.storeId, role: 'leader', storeName: data.storeName };
         return { storeId: data.storeId, role: 'store', storeInfo: data.storeInfo };
       } catch (e) {
         return null;
@@ -1431,6 +1433,28 @@ const { useState, useEffect } = React;
       }
     };
 
+    // Kirim FOTO/VIDEO ke grup Telegram toko lewat relay server (PRD 3.2.C).
+    // `show_caption_above_media` membuat teks tampil DI ATAS media (Bot API 7.4+). Caption Telegram maks 1024 karakter.
+    const sendTelegramMedia = async (storeId, media, caption) => {
+      try {
+        const isVideo = media.type === 'video';
+        const body = { [isVideo ? 'video' : 'photo']: media.url, show_caption_above_media: true };
+        if (caption) { body.caption = caption; body.parse_mode = 'Markdown'; }
+        const r = await tgRelayFetch(isVideo ? 'sendVideo' : 'sendPhoto', body, { storeId });
+        const d = await r.json().catch(() => ({}));
+        return d.ok ? { ok: true } : { ok: false, error: d.description || 'Telegram menolak media' };
+      } catch (e) { return { ok: false, error: 'Gagal mengirim media ke Telegram' }; }
+    };
+    // Perkecil foto pengumuman (maks 1280px, JPEG) agar ringan & di bawah batas Telegram.
+    const compressAnnouncementImage = async (file) => {
+      const bmp = await createImageBitmap(file);
+      const scale = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(bmp.width * scale); cv.height = Math.round(bmp.height * scale);
+      cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+      return await new Promise((res) => cv.toBlob((b) => res(b), 'image/jpeg', 0.82));
+    };
+
     // Kirim file/dokumen (mis. rekap laporan sebagai file) ke Telegram lewat sendDocument,
     // dengan try-catch + timeout + logging yang sama ketatnya dengan sendTelegramMessage di atas.
     const sendTelegramDocument = async (token, chatId, blob, filename, caption, options = {}) => {
@@ -1497,6 +1521,58 @@ const { useState, useEffect } = React;
     };
 
     const restOnce = async (ref) => ref.once('value');
+    // =====================================================================
+    // QR CODE (PRD 3.2.A): QR Printer Request & QR Inventory
+    // URL diatur ADMIN saja di `systemSettings/qr` (toko tidak bisa menulis path itu — lihat
+    // assertPathWritable di worker). Toko hanya punya sakelar ON/OFF di `stores/{id}/preferences`.
+    // =====================================================================
+    const STOCK_QR_FOOTER = 'Mohon diperbarui di Link Inventory agar update mulai Quality dan Ed nya.';
+    const makeQrDataUrl = (text) => {
+      try {
+        if (!text || !window.qrcode) return '';
+        const qr = window.qrcode(0, 'M');
+        qr.addData(String(text));
+        qr.make();
+        return qr.createDataURL(6, 4);
+      } catch (e) { return ''; }
+    };
+    const isHttpUrl = (u) => /^https?:\/\/\S+$/i.test(String(u || '').trim());
+
+    // =====================================================================
+    // ANTREAN OFFLINE FOTO RIJEK/WASTE (PRD 3.1.B / AC-02)
+    // Foto + data rijek langsung disimpan ke IndexedDB di perangkat SEBELUM dikirim ke
+    // server, lalu disinkronkan otomatis (saat online / tiap 30 dtk). Kalau aplikasi
+    // ditutup mendadak atau koneksi putus, data tetap ada & terkirim di sesi berikutnya.
+    // =====================================================================
+    const WasteQueue = (() => {
+      const DBN = 'tarobun_waste_queue', ST = 'items';
+      const open = () => new Promise((res, rej) => {
+        const r = indexedDB.open(DBN, 1);
+        r.onupgradeneeded = () => r.result.createObjectStore(ST, { keyPath: 'id' });
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+      const tx = async (mode, fn) => {
+        const d = await open();
+        return new Promise((res, rej) => {
+          const t = d.transaction(ST, mode);
+          const rq = fn(t.objectStore(ST));
+          t.oncomplete = () => { d.close(); res(rq ? rq.result : undefined); };
+          t.onerror = () => { d.close(); rej(t.error); };
+          t.onabort = () => { d.close(); rej(t.error); };
+        });
+      };
+      return {
+        put: (item) => tx('readwrite', (s) => s.put(item)),
+        del: (id) => tx('readwrite', (s) => s.delete(id)),
+        pending: async (storeBase) => ((await tx('readonly', (s) => s.getAll())) || []).filter((x) => x.kind === 'pending' && x.storeBase === storeBase),
+        getDraft: async (storeBase) => (await tx('readonly', (s) => s.get('draft:' + storeBase))) || null,
+        setDraft: (storeBase, fotoPreview) => fotoPreview
+          ? tx('readwrite', (s) => s.put({ id: 'draft:' + storeBase, kind: 'draft', storeBase, fotoPreview, t: Date.now() }))
+          : tx('readwrite', (s) => s.delete('draft:' + storeBase)),
+      };
+    })();
+
     const restSet = async (ref, data) => ref.set(data);
     const restMultiUpdate = async (updates) => db.ref('/').update(updates);
     const restPush = async (ref, data) => ref.push(data);
@@ -3951,6 +4027,23 @@ const { useState, useEffect } = React;
       // UPDATE WEB -> BROADCAST KE BOT TELEGRAM TOKO (STATE)
       // ==========================================
       const [webUpdateText, setWebUpdateText] = useState('');
+      // ---- QR Code (admin saja): URL QR Printer Request & QR Inventory ----
+      const [adminQr, setAdminQr] = useState({ printerRequestUrl: '', inventoryUrl: '' });
+      const [savingQr, setSavingQr] = useState(false);
+      useEffect(() => bindLiveValue(db.ref('systemSettings/qr'), (snap) => {
+        const v = snap.val() || {};
+        setAdminQr({ printerRequestUrl: v.printerRequestUrl || '', inventoryUrl: v.inventoryUrl || '' });
+      }), []);
+      const handleSaveQrSettings = async () => {
+        const p = adminQr.printerRequestUrl.trim(); const i = adminQr.inventoryUrl.trim();
+        if ((p && !isHttpUrl(p)) || (i && !isHttpUrl(i))) { showAdminToast('⚠️ URL harus diawali http:// atau https://'); return; }
+        setSavingQr(true);
+        try {
+          await restSet(db.ref('systemSettings/qr'), { printerRequestUrl: p, inventoryUrl: i, updatedAt: Date.now() });
+          showAdminToast('✅ URL QR Code tersimpan.');
+        } catch (e) { showAdminToast('⚠️ Gagal menyimpan URL QR Code.'); }
+        setSavingQr(false);
+      };
       const [webUpdateAll, setWebUpdateAll] = useState(true);
       const [webUpdateStoreIds, setWebUpdateStoreIds] = useState([]);
       // Pencarian toko di daftar "Pilih Toko" pada tab Chat (list toko sudah bisa discroll,
@@ -3958,6 +4051,16 @@ const { useState, useEffect } = React;
       const [chatStoreQuery, setChatStoreQuery] = useState('');
       const [sendingWebUpdate, setSendingWebUpdate] = useState(false);
       const [webUpdateReport, setWebUpdateReport] = useState(null); // { success: [], failed: [] }
+      const [webMedia, setWebMedia] = useState(null); // { file, preview, type: 'image' | 'video' }
+      const handlePickWebMedia = async (e) => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!f) return;
+        const isImg = f.type.startsWith('image/'); const isVid = f.type === 'video/mp4' || f.type === 'video/webm';
+        if (!isImg && !isVid) { showAdminToast('⚠️ Lampiran harus foto atau video (MP4/WebM).'); return; }
+        if (f.size > 15 * 1024 * 1024) { showAdminToast('⚠️ Ukuran lampiran maksimal 15 MB.'); return; }
+        setWebMedia({ file: f, preview: URL.createObjectURL(f), type: isImg ? 'image' : 'video' });
+      };
       const toggleWebUpdateStore = (storeId) => {
         setWebUpdateStoreIds(prev => prev.includes(storeId) ? prev.filter(id => id !== storeId) : [...prev, storeId]);
       };
@@ -4707,6 +4810,20 @@ const { useState, useEffect } = React;
         setWebUpdateReport(null);
         const success = [];
         const failed = [];
+        // Lampiran opsional: unggah SEKALI ke R2, lalu dipakai untuk semua toko tujuan + pop-up web.
+        let media = null;
+        if (webMedia) {
+          try {
+            const blob = webMedia.type === 'image' ? await compressAnnouncementImage(webMedia.file) : webMedia.file;
+            const ext = webMedia.type === 'image' ? 'jpg' : (webMedia.file.type === 'video/webm' ? 'webm' : 'mp4');
+            const up = await uploadMediaToR2(blob, 'announcements', ext);
+            media = { type: webMedia.type, url: up.url, key: up.key };
+          } catch (err) {
+            showAdminToast('⚠️ Gagal mengunggah lampiran. Coba lagi.');
+            setSendingWebUpdate(false);
+            return;
+          }
+        }
         for (const store of targets) {
           try {
             const snap = await restOnce(db.ref(`stores/${store.id}/telegramConfig`));
@@ -4723,7 +4840,13 @@ const { useState, useEffect } = React;
             // untuk kasus gagal (mis. bot diblokir user, chat_id salah). Akibatnya pengiriman yang
             // sebenarnya DITOLAK Telegram tetap tercatat "berhasil". Sekarang pakai helper terpusat
             // yang benar-benar memeriksa `result.ok` dari body JSON Telegram.
-            const res = await sendTelegramMessage(token, chatId, text, { storeId: store.id });
+            let res;
+            if (media && text.length <= 1000) {
+              res = await sendTelegramMedia(store.id, media, text); // teks = caption DI ATAS media
+            } else {
+              res = await sendTelegramMessage(token, chatId, text, { storeId: store.id });
+              if (res.ok && media) res = await sendTelegramMedia(store.id, media, ''); // teks panjang: teks dulu, media di bawah
+            }
             if (res.ok) success.push(store.name);
             else failed.push(`${store.name} (${res.error})`);
           } catch (err) {
@@ -4747,6 +4870,8 @@ const { useState, useEffect } = React;
             text: message,
             timestamp: Date.now(),
             targetStoreIds: webUpdateAll ? null : targets.map(s => s.id),
+            mediaType: media ? media.type : 'none',
+            mediaUrl: media ? media.url : '',
           });
         } catch (err) {
           console.error('Gagal menyimpan Update Web ke database:', err);
@@ -4756,6 +4881,7 @@ const { useState, useEffect } = React;
         if (success.length > 0) {
           showAdminToast(`✅ Update Web terkirim ke ${success.length} toko.`);
           setWebUpdateText('');
+          setWebMedia(null);
         }
       };
 
@@ -5547,6 +5673,21 @@ const { useState, useEffect } = React;
                   </div>
 
                   <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Lampiran Foto/Video (opsional)</label>
+                    {webMedia ? (
+                      <div className="space-y-2">
+                        {webMedia.type === 'image'
+                          ? <img src={webMedia.preview} alt="Lampiran" className="w-full max-h-48 object-contain rounded-xl border border-slate-200" />
+                          : <video src={webMedia.preview} controls playsInline className="w-full max-h-48 rounded-xl border border-slate-200"></video>}
+                        <button type="button" onClick={() => setWebMedia(null)} className="text-xs font-bold text-rose-600">Hapus lampiran</button>
+                      </div>
+                    ) : (
+                      <input type="file" accept="image/*,video/mp4,video/webm" onChange={handlePickWebMedia} className="w-full text-xs text-slate-600" />
+                    )}
+                    <p className="text-[10px] text-slate-400 mt-1">Maks 15 MB. Di web & Telegram, teks tampil di atas dan media di bawah.</p>
+                  </div>
+
+                  <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-2">Store Tujuan</label>
                     <div className="flex flex-wrap gap-2 mb-2">
                       <button type="button" onClick={() => { setWebUpdateAll(true); setWebUpdateStoreIds([]); }} className={`px-3 py-1.5 rounded-full text-xs font-bold border ${webUpdateAll ? 'bg-purple-800 text-white border-purple-800' : 'bg-white text-slate-600 border-slate-300'}`}>
@@ -5587,6 +5728,25 @@ const { useState, useEffect } = React;
                     </div>
                   )}
                 </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5"><i data-lucide="qr-code" className="w-4 h-4 text-purple-700"></i> Pengaturan QR Code</h3>
+                    <p className="text-[10px] text-slate-500 mt-1">Hanya admin yang bisa mengubah URL. Toko cuma bisa menyalakan/mematikan cetak QR di menu Printing.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">URL QR Printer Request</label>
+                    <input type="url" value={adminQr.printerRequestUrl} onChange={(e) => setAdminQr(p => ({ ...p, printerRequestUrl: e.target.value }))} placeholder="https://..." className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                    <p className="text-[10px] text-slate-400 mt-1">Kosong = pakai QR Saluran WhatsApp bawaan.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">URL QR Inventory</label>
+                    <input type="url" value={adminQr.inventoryUrl} onChange={(e) => setAdminQr(p => ({ ...p, inventoryUrl: e.target.value }))} placeholder="https://..." className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                  </div>
+                  <button onClick={handleSaveQrSettings} disabled={savingQr} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{savingQr ? 'Menyimpan...' : 'Simpan URL QR'}</button>
+                </div>
+                <AdminTelegramCentralCard showAdminToast={showAdminToast} />
+                <AdminEmployeesCard stores={stores} showAdminToast={showAdminToast} />
               </div>
             )}
 
@@ -7616,6 +7776,23 @@ const { useState, useEffect } = React;
       const [stockNoteItems, setStockNoteItems] = useDraftState(storeId, 'stock_items', []); // [{ id, nama, jumlah, satuan }]
       const [stockItemDraft, setStockItemDraft] = useState({ nama: PRINTING_ITEM_OPTIONS[0], jumlah: '', satuan: 'Bag' });
       const [stockPrintData, setStockPrintData] = useState(null);
+      // ---- QR Code: URL dari admin (read-only di sisi toko) + sakelar ON/OFF milik toko ----
+      const [qrCfg, setQrCfg] = useState({ printerUrl: '', inventoryUrl: '' });
+      const [qrPrefs, setQrPrefs] = useState({ enablePrinter: true, enableInventory: false });
+      useEffect(() => bindLiveValue(db.ref('systemSettings/qr'), (snap) => {
+        const v = snap.val() || {};
+        setQrCfg({ printerUrl: v.printerRequestUrl || '', inventoryUrl: v.inventoryUrl || '' });
+      }), []);
+      useEffect(() => bindLiveValue(db.ref(`${storeBase}/preferences`), (snap) => {
+        const v = snap.val() || {};
+        setQrPrefs({ enablePrinter: v.enableQrPrinter !== false, enableInventory: v.enableQrInventory === true });
+      }), [storeBase]);
+      const setQrPref = async (field, val) => {
+        const next = { ...qrPrefs, [field]: val };
+        setQrPrefs(next);
+        try { await restSet(db.ref(`${storeBase}/preferences`), { enableQrPrinter: next.enablePrinter, enableQrInventory: next.enableInventory }); }
+        catch (e) { showToast('Gagal menyimpan pengaturan QR. Cek koneksi.'); }
+      };
 
       // ==========================================
       // RIWAYAT CETAK (tersimpan LOKAL di perangkat masing-masing, via localStorage —
@@ -7772,6 +7949,7 @@ const { useState, useEffect } = React;
           if (r.sep) out.push({ text: (r.ch || '-').repeat(width) });
           else if (r.logo) out.push({ logo: true, text: 'TAROBUN', align: 'center', bold: true });
           else if (r.feed) { for (let i = 0; i < r.feed; i++) out.push({ text: '' }); }
+          else if (r.qr) out.push({ qr: String(r.qr) });
           else if (r.kv) { const pre = `${String(r.kv[0]).padEnd(r.w || 0)} : `; wrapText(r.kv[1], width, pre, ' '.repeat(pre.length)).forEach(t => out.push({ text: t })); }
           else if (r.item) { out.push({ text: `- ${r.item[0]}`, bold: true }); wrapText(r.item[1], width, '  ', '  ').forEach(t => out.push({ text: t })); }
           else if (r.bullet) wrapText(r.bullet, width, '- ', '  ').forEach(t => out.push({ text: t }));
@@ -7789,6 +7967,7 @@ const { useState, useEffect } = React;
       };
 
       const docToText = (doc, width) => renderDoc(doc, width).map(l => {
+        if (l.qr) return wrapText(l.qr, width).join('\n'); // mode teks tidak bisa cetak gambar QR -> cetak tautannya
         const w = l.big ? Math.floor(width / 2) : width;
         if (l.align === 'center') return ' '.repeat(Math.max(0, Math.floor((width - l.text.length * (l.big ? 2 : 1)) / 2))) + l.text;
         return l.text;
@@ -7799,6 +7978,19 @@ const { useState, useEffect } = React;
         const enc = (str) => Array.from(str).map(c => { const n = c.charCodeAt(0); return n < 128 ? n : 63; });
         renderDoc(doc, width).forEach(l => {
           if (l.logo && logoBm) { pushRaster(bytes, logoBm); return; }
+          if (l.qr) {
+            // QR native ESC/POS (GS ( k): model 2, ukuran modul 6, koreksi error M
+            const data = enc(l.qr); const n = data.length + 3;
+            if (data.length > 0 && data.length < 700) {
+              bytes.push(0x1B, 0x61, 1);
+              bytes.push(0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00);
+              bytes.push(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x06);
+              bytes.push(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x31);
+              bytes.push(0x1D, 0x28, 0x6B, n & 0xFF, (n >> 8) & 0xFF, 0x31, 0x50, 0x30, ...data);
+              bytes.push(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30, 0x0A);
+            }
+            return;
+          }
           bytes.push(0x1B, 0x61, l.align === 'center' ? 1 : 0, 0x1B, 0x45, l.bold ? 1 : 0, 0x1D, 0x21, l.big ? 0x11 : 0x00);
           enc(l.text).forEach(b => bytes.push(b));
           bytes.push(0x0A);
@@ -7835,6 +8027,8 @@ const { useState, useEffect } = React;
         { sep: true },
         ...data.items.map((it, idx) => ({ row: [`${idx + 1}. ${it.nama}`, `${it.jumlah} ${it.satuan}`] })),
         { sep: true },
+        // QR Inventory aktif (sakelar toko ON): QR (bila admin sudah isi URL) lalu teks keterangan di BAGIAN PALING BAWAH struk.
+        ...(data.qrOn ? [...(data.qrUrl ? [{ qr: data.qrUrl }] : []), { text: STOCK_QR_FOOTER, align: 'center' }] : []),
         { feed: 3 },
       ];
 
@@ -7956,11 +8150,12 @@ const { useState, useEffect } = React;
       // ==========================================
       const qrImageRef = React.useRef(null);
       const loadQrImage = () => new Promise((resolve, reject) => {
-        if (qrImageRef.current) return resolve(qrImageRef.current);
+        const reqSrc = (isHttpUrl(qrCfg.printerUrl) && makeQrDataUrl(qrCfg.printerUrl)) || QR_WA_DATA_URL;
+        if (qrImageRef.current && qrImageRef.current.__src === reqSrc) return resolve(qrImageRef.current);
         const img = new Image();
-        img.onload = () => { qrImageRef.current = img; resolve(img); };
+        img.onload = () => { img.__src = reqSrc; qrImageRef.current = img; resolve(img); };
         img.onerror = () => reject(new Error('Gambar QR gagal dimuat'));
-        img.src = QR_WA_DATA_URL;
+        img.src = reqSrc;
       });
 
       const ensureReqFonts = async () => {
@@ -8170,7 +8365,7 @@ const { useState, useEffect } = React;
       const buildReqData = () => ({
         namaToko: (storeName || '').trim() || 'Tarobun',
         from: reqForm.from.trim(), dear: reqForm.dear.trim(), message: reqForm.message.trim(),
-        font: reqForm.font, size: reqForm.size, qr: reqForm.qr,
+        font: reqForm.font, size: reqForm.size, qr: qrPrefs.enablePrinter,
       });
 
       // Pratinjau persis seperti hasil cetak (diperbarui otomatis saat isian berubah).
@@ -8186,7 +8381,7 @@ const { useState, useEffect } = React;
           } catch (err) { console.error('Pratinjau request gagal:', err); }
         }, 350);
         return () => { alive = false; clearTimeout(t); };
-      }, [activeTab, printingSubTab, reqForm, printerCfg.paper, storeName]);
+      }, [activeTab, printingSubTab, reqForm, printerCfg.paper, storeName, qrCfg.printerUrl, qrPrefs.enablePrinter]);
 
       const handleRequestPrint = async (e) => {
         e.preventDefault();
@@ -8293,7 +8488,7 @@ const { useState, useEffect } = React;
           return;
         }
         const now = new Date();
-        const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now };
+        const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now, qrOn: qrPrefs.enableInventory, qrUrl: qrCfg.inventoryUrl };
         const okPrint = await printReceipt(buildStockDoc(dataToPrint));
         if (!okPrint) return;
         // Simpan ke riwayat lokal & kosongkan kembali daftar item + nama toko.
@@ -8314,7 +8509,7 @@ const { useState, useEffect } = React;
           return;
         }
         const now = new Date();
-        const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now };
+        const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now, qrOn: qrPrefs.enableInventory, qrUrl: qrCfg.inventoryUrl };
         // PENTING: pastikan data Label Premix yang lama dikosongkan lebih dulu supaya TIDAK
         // ikut tercetak bersamaan dengan Catatan Stok di area cetak (lihat #thermalPrintArea).
         setPremixPrintData(null);
@@ -8863,6 +9058,34 @@ const { useState, useEffect } = React;
 
       const [wasteFotoForm, setWasteFotoForm] = useDraftState(storeId, 'waste', () => getEmptyWasteFotoForm(), { omit: ['fotoPreview'] });
       const [wasteFotoList, setWasteFotoList] = useState([]);
+      // --- Antrean offline foto rijek (lihat WasteQueue) ---
+      const pendingWasteRef = React.useRef([]);       // entri yang belum terkirim ke server (tampil di list + terhitung ke Laporan)
+      const wasteSyncingRef = React.useRef(false);
+      const wasteDraftReadyRef = React.useRef(false);
+      const mergePendingWaste = (list) => {
+        const extra = pendingWasteRef.current.filter((p) => !list.some((x) => x.firebaseKey === p.firebaseKey));
+        return extra.length ? [...extra, ...list].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) : list;
+      };
+      // Kirim semua entri antrean ke server. Mengembalikan jumlah yang masih tertunda.
+      const syncPendingWaste = async () => {
+        if (wasteSyncingRef.current) return pendingWasteRef.current.length;
+        wasteSyncingRef.current = true;
+        try {
+          const items = await WasteQueue.pending(storeBase);
+          for (const it of items) {
+            try {
+              const { url: fotoUrl, key: fotoKey } = await uploadMediaToR2(it.fotoDataUrl, `wasteFotos/${storeBase}`, 'jpg');
+              const payload = { ...it.payload, foto: fotoUrl, fotoKey };
+              await restSet(db.ref(`${storeBase}/wasteFotos/` + it.id), payload);
+              await WasteQueue.del(it.id);
+              pendingWasteRef.current = pendingWasteRef.current.filter((p) => p.firebaseKey !== it.id);
+              setWasteFotoList((prev) => prev.map((x) => (x.firebaseKey === it.id ? { ...payload, firebaseKey: it.id } : x)));
+            } catch (e) { break; /* koneksi bermasalah — coba lagi nanti */ }
+          }
+        } catch (e) { /* IndexedDB tidak tersedia — abaikan */ }
+        finally { wasteSyncingRef.current = false; }
+        return pendingWasteRef.current.length;
+      };
       const [isCompressingFoto, setIsCompressingFoto] = useState(false);
       const [isSavingFoto, setIsSavingFoto] = useState(false);
       const [sendingCategory, setSendingCategory] = useState(null);
@@ -8945,9 +9168,9 @@ const { useState, useEffect } = React;
               ...data[key],
               firebaseKey: key
             })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-            setWasteFotoList(formattedList);
+            setWasteFotoList(mergePendingWaste(formattedList));
           } else {
-            setWasteFotoList([]);
+            setWasteFotoList(mergePendingWaste([]));
           }
         });
 
@@ -10126,6 +10349,40 @@ Daily inventory done✅
         return Math.round((base.length * 3) / 4 / 1024);
       };
 
+      // Muat antrean tertunda saat toko dibuka + coba kirim; ulangi saat online & tiap 30 dtk.
+      useEffect(() => {
+        (async () => {
+          try {
+            const items = await WasteQueue.pending(storeBase);
+            pendingWasteRef.current = items.map((it) => ({ ...it.payload, foto: it.fotoDataUrl, firebaseKey: it.id, pending: true }));
+            if (pendingWasteRef.current.length) setWasteFotoList((prev) => mergePendingWaste(prev));
+            await syncPendingWaste();
+          } catch (e) { /* abaikan */ }
+        })();
+        const onOnline = () => { syncPendingWaste(); };
+        window.addEventListener('online', onOnline);
+        const iv = setInterval(() => { if (pendingWasteRef.current.length) syncPendingWaste(); }, 30000);
+        return () => { window.removeEventListener('online', onOnline); clearInterval(iv); };
+      }, [storeBase]);
+
+      // Auto-save foto yang sedang disiapkan (belum disimpan) ke IndexedDB; pulihkan saat dibuka lagi (maks 18 jam).
+      useEffect(() => {
+        wasteDraftReadyRef.current = false;
+        (async () => {
+          try {
+            const d = await WasteQueue.getDraft(storeBase);
+            if (d && d.fotoPreview && Date.now() - d.t < 18 * 3600000) {
+              setWasteFotoForm((prev) => (prev.fotoPreview ? prev : { ...prev, fotoPreview: d.fotoPreview }));
+            }
+          } catch (e) { /* abaikan */ }
+          wasteDraftReadyRef.current = true;
+        })();
+      }, [storeBase]);
+      useEffect(() => {
+        if (!wasteDraftReadyRef.current) return;
+        WasteQueue.setDraft(storeBase, wasteFotoForm.fotoPreview || null).catch(() => {});
+      }, [wasteFotoForm.fotoPreview]);
+
       const handleWasteFotoFileChange = async (e) => {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
@@ -10213,19 +10470,30 @@ Daily inventory done✅
             wasteFotoForm.fotoPreview,
             buildWasteFotoStampLines(finalKategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan)
           );
-          const { url: fotoUrl, key: fotoKey } = await uploadMediaToR2(stampedFoto, `wasteFotos/${storeBase}`, 'jpg');
           const payload = {
             id: now.toString(),
             kategori: finalKategori,
             tipe: wasteFotoForm.tipe,
             jumlah: numVal(wasteFotoForm.jumlah),
             keterangan: wasteFotoForm.keterangan || '',
-            foto: fotoUrl,
-            fotoKey: fotoKey,
+            foto: '',
+            fotoKey: '',
             tanggal: new Date(now).toISOString().split('T')[0],
             createdAt: now
           };
-          await restSet(db.ref(`${storeBase}/wasteFotos/` + now), payload);
+          // AUTO-SAVE (AC-02): simpan ke perangkat DULU, baru kirim ke server.
+          let queued = true;
+          try {
+            await WasteQueue.put({ id: payload.id, kind: 'pending', storeBase, payload, fotoDataUrl: stampedFoto });
+          } catch (qe) { queued = false; }
+          if (!queued) {
+            // IndexedDB tidak tersedia (mis. mode privat) -> kirim langsung seperti sebelumnya
+            const up = await uploadMediaToR2(stampedFoto, `wasteFotos/${storeBase}`, 'jpg');
+            payload.foto = up.url; payload.fotoKey = up.key;
+            await restSet(db.ref(`${storeBase}/wasteFotos/` + now), payload);
+          } else {
+            pendingWasteRef.current = [...pendingWasteRef.current, { ...payload, foto: stampedFoto, firebaseKey: payload.id, pending: true }];
+          }
 
           // Field waste di Laporan Penjualan (fdNempel, bunRejectThawing, dst) SEKARANG
           // dihitung otomatis lewat autoWasteFromRijek (lihat dekat "totalBunsSold") setiap
@@ -10243,18 +10511,30 @@ Daily inventory done✅
             showToast('Foto tersimpan ke Riwayat! 📷✨');
           }
 
-          setWasteFotoList(prev => [...prev, { ...payload, firebaseKey: now.toString() }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+          setWasteFotoList(prev => [...prev.filter(x => x.firebaseKey !== payload.id), { ...payload, foto: payload.foto || stampedFoto, firebaseKey: payload.id, pending: queued }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
           setWasteFotoViewDate(payload.tanggal);
           handleResetWasteFotoForm(true);
+          if (queued) {
+            const left = await syncPendingWaste();
+            if (left > 0) showToast('📥 Tersimpan di perangkat. Akan dikirim otomatis saat koneksi kembali.');
+          }
         } catch (error) {
           console.error(error);
-          showToast('Gagal menyimpan foto ke Cloud. Cek koneksi internet.');
+          showToast('Gagal menyimpan foto. Data tetap tersimpan di perangkat, coba lagi sebentar.');
         } finally {
           setIsSavingFoto(false);
         }
       };
 
       const handleDeleteWasteFoto = async (firebaseKey) => {
+        const pend = pendingWasteRef.current.find((p) => p.firebaseKey === firebaseKey);
+        if (pend) {
+          try { await WasteQueue.del(firebaseKey); } catch (e) {}
+          pendingWasteRef.current = pendingWasteRef.current.filter((p) => p.firebaseKey !== firebaseKey);
+          setWasteFotoList(prev => prev.filter(item => item.firebaseKey !== firebaseKey));
+          showToast('Foto yang belum terkirim dihapus.');
+          return;
+        }
         try {
           showToast('Menghapus foto... 🗑️');
           await restRemove(db.ref(`${storeBase}/wasteFotos/` + firebaseKey));
@@ -10809,6 +11089,12 @@ Daily inventory done✅
                 <h3 className="text-center font-bold text-slate-800 text-base mb-2 shrink-0">Update Sistem</h3>
                 <div className="overflow-y-auto min-h-0 mb-5 pr-1">
                   <p className="text-center text-sm text-slate-600 whitespace-pre-line">{systemUpdate.text}</p>
+                  {systemUpdate.mediaUrl && systemUpdate.mediaType === 'image' && (
+                    <img src={systemUpdate.mediaUrl} alt="Lampiran update" className="w-full rounded-xl mt-3 border border-slate-200 object-contain max-h-64" />
+                  )}
+                  {systemUpdate.mediaUrl && systemUpdate.mediaType === 'video' && (
+                    <video src={systemUpdate.mediaUrl} controls playsInline preload="metadata" className="w-full rounded-xl mt-3 border border-slate-200 max-h-64"></video>
+                  )}
                 </div>
                 <button
                   onClick={dismissSystemUpdate}
@@ -13004,7 +13290,7 @@ Daily inventory done✅
                         </div>
                       </div>
                       <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                        <input type="checkbox" checked={reqForm.qr} onChange={(e) => handleReqChange('qr', e.target.checked)} />
+                        <input type="checkbox" checked={qrPrefs.enablePrinter} onChange={(e) => setQrPref('enablePrinter', e.target.checked)} />
                         <span>Cetak QR</span>
                       </label>
                       <div className="flex items-center gap-2">
@@ -13075,6 +13361,10 @@ Daily inventory done✅
                       </div>
                     )}
 
+                    <label className="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                      <input type="checkbox" checked={qrPrefs.enableInventory} onChange={(e) => setQrPref('enableInventory', e.target.checked)} />
+                      <span>Cetak QR Inventory{!qrCfg.inventoryUrl ? ' (URL belum diatur admin — hanya teks keterangan yang tercetak)' : ''}</span>
+                    </label>
                     <button onClick={handleStockNotePrint} disabled={stockNoteItems.length === 0} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
                       <i data-lucide="printer" className="w-4 h-4"></i>
                       <span>Cetak Catatan Stok</span>
@@ -13251,6 +13541,14 @@ Daily inventory done✅
                     </div>
                   ))}
                   <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }}></div>
+                  {stockPrintData.qrOn && (
+                    <div style={{ textAlign: 'center', marginTop: '6px' }}>
+                      {stockPrintData.qrUrl && makeQrDataUrl(stockPrintData.qrUrl) && (
+                        <img src={makeQrDataUrl(stockPrintData.qrUrl)} alt="QR Inventory" style={{ width: '60%', display: 'block', margin: '0 auto 4px' }} />
+                      )}
+                      <div style={{ fontSize: '11px' }}>{STOCK_QR_FOOTER}</div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -15635,6 +15933,135 @@ Daily inventory done✅
       return qs.map(q => q.options.length >= 2 ? { ...q, correctIndex: Number.isInteger(q.correctIndex) && q.correctIndex < q.options.length ? q.correctIndex : null } : { type: 'esai', text: q.text, options: [] });
     };
 
+    // =====================================================================
+    // KARYAWAN & ULANG TAHUN (PRD 3.2.D) — nama, tanggal lahir, ID Telegram pribadi
+    // =====================================================================
+    function EmployeeBirthdayPanel({ storeId, showToast }) {
+      const [list, setList] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [editId, setEditId] = useState(null);
+      const [form, setForm] = useState({ name: '', birthDate: '', telegramId: '' });
+      const [busy, setBusy] = useState(false);
+      const qs = storeId ? `?storeId=${encodeURIComponent(storeId)}` : '';
+      const load = async () => {
+        try { const d = await pettyApi('/api/employees' + qs); setList(d.employees || []); }
+        catch (e) { showToast('⚠️ ' + e.message); }
+        finally { setLoading(false); }
+      };
+      useEffect(() => { setLoading(true); load(); }, [storeId]);
+      useEffect(() => { scheduleLucideIcons(); });
+      const reset = () => { setEditId(null); setForm({ name: '', birthDate: '', telegramId: '' }); };
+      const save = async () => {
+        if (!form.name.trim()) { showToast('⚠️ Nama wajib diisi'); return; }
+        setBusy(true);
+        try {
+          await pettyApi(editId ? `/api/employees/${editId}${qs}` : '/api/employees' + qs, { method: editId ? 'PUT' : 'POST', body: form });
+          showToast('✅ Data karyawan tersimpan'); reset(); await load();
+        } catch (e) { showToast('⚠️ ' + e.message); }
+        finally { setBusy(false); }
+      };
+      const remove = async (id, name) => {
+        if (!window.confirm(`Hapus ${name}?`)) return;
+        try { await pettyApi(`/api/employees/${id}${qs}`, { method: 'DELETE' }); await load(); }
+        catch (e) { showToast('⚠️ ' + e.message); }
+      };
+      const fmt = (d) => { if (!d) return '—'; const [y, m, da] = d.split('-'); return `${Number(da)} ${['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'][Number(m) - 1]} ${y}`; };
+      return (
+        <div className="space-y-3">
+          <div>
+            <h2 className="font-bold text-slate-700 text-base">Karyawan & Ulang Tahun</h2>
+            <p className="text-xs text-slate-500">Setiap hari 08.00 WIB bot mengumumkan yang berulang tahun ke grup operasional. Ucapan yang di-reply di grup diteruskan ke chat pribadinya (wajib isi ID Telegram & sudah menekan Start di bot).</p>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
+            <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} maxLength={80} placeholder="Nama karyawan" className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-sm" />
+            <div className="flex gap-2">
+              <input type="date" value={form.birthDate} onChange={e => setForm(f => ({ ...f, birthDate: e.target.value }))} className="flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-sm" />
+              <input type="text" inputMode="numeric" value={form.telegramId} onChange={e => setForm(f => ({ ...f, telegramId: e.target.value.replace(/\D/g, '') }))} maxLength={16} placeholder="ID Telegram" className="flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-sm" />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={save} disabled={busy} className="flex-1 bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-lg">{busy ? 'Menyimpan...' : (editId ? 'Simpan Perubahan' : 'Tambah Karyawan')}</button>
+              {editId && <button onClick={reset} className="px-4 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg">Batal</button>}
+            </div>
+          </div>
+          {loading ? <p className="text-xs text-slate-500">Memuat...</p> : list.length === 0 ? <p className="text-xs text-slate-500">Belum ada data karyawan.</p> : (
+            <div className="space-y-2">
+              {list.map(e => (
+                <div key={e.id} className="bg-white rounded-xl border border-slate-200 p-3 flex items-center gap-2">
+                  <button className="flex-1 min-w-0 text-left" onClick={() => { setEditId(e.id); setForm({ name: e.name, birthDate: e.birth_date || '', telegramId: e.telegram_id || '' }); }}>
+                    <p className="text-sm font-semibold text-slate-800 truncate">{e.name}</p>
+                    <p className="text-[11px] text-slate-500">🎂 {fmt(e.birth_date)} · {e.telegram_id ? '✅ ID Telegram terisi' : '⚠️ ID Telegram kosong'}</p>
+                  </button>
+                  <button onClick={() => remove(e.id, e.name)} className="text-rose-600 text-xs font-bold px-2">Hapus</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Admin: pengaturan bot Telegram pusat (grup operasional, status webhook)
+    function AdminTelegramCentralCard({ showAdminToast }) {
+      const [cfg, setCfg] = useState({ opsChatId: '', birthdayEnabled: true });
+      const [status, setStatus] = useState(null);
+      const [busy, setBusy] = useState('');
+      useEffect(() => bindLiveValue(db.ref('systemSettings/telegram'), (snap) => {
+        const v = snap.val() || {};
+        setCfg({ opsChatId: v.opsChatId || '', birthdayEnabled: v.birthdayEnabled !== false });
+      }), []);
+      const loadStatus = async () => { try { setStatus(await pettyApi('/api/telegram/central/status')); } catch (e) { setStatus({ error: e.message }); } };
+      useEffect(() => { loadStatus(); }, []);
+      const save = async () => {
+        setBusy('save');
+        try { await restSet(db.ref('systemSettings/telegram'), { opsChatId: cfg.opsChatId.trim(), birthdayEnabled: cfg.birthdayEnabled }); showAdminToast('✅ Pengaturan bot tersimpan.'); }
+        catch (e) { showAdminToast('⚠️ Gagal menyimpan.'); }
+        setBusy('');
+      };
+      const setup = async () => {
+        setBusy('hook');
+        try { await pettyApi('/api/telegram/central/setup-webhook', { method: 'POST', body: {} }); showAdminToast('✅ Webhook aktif.'); await loadStatus(); }
+        catch (e) { showAdminToast('⚠️ ' + e.message); }
+        setBusy('');
+      };
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div>
+            <h3 className="font-bold text-slate-800 text-sm">Bot Telegram Pusat (HR & Ulang Tahun)</h3>
+            <p className="text-[10px] text-slate-500 mt-1">Dipakai untuk hasil OJT ke chat pribadi dan ucapan ulang tahun. Token bot & secret webhook diatur sebagai Secret di Cloudflare (TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET).</p>
+          </div>
+          <div className="text-[11px] space-y-0.5">
+            {!status ? <p className="text-slate-500">Memeriksa...</p> : status.error ? <p className="text-rose-600">⚠️ {status.error}</p> : (<>
+              <p>{status.hasToken ? '✅' : '❌'} Token bot {status.bot ? `(@${status.bot.username})` : ''}</p>
+              <p>{status.hasSecret ? '✅' : '❌'} Secret webhook</p>
+              <p>{status.webhook && status.webhook.url ? '✅ Webhook aktif' : '❌ Webhook belum dipasang'}{status.webhook && status.webhook.lastError ? ` — error terakhir: ${status.webhook.lastError}` : ''}</p>
+            </>)}
+          </div>
+          <button onClick={setup} disabled={busy === 'hook'} className="w-full bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg">{busy === 'hook' ? 'Memasang...' : 'Aktifkan / Perbarui Webhook'}</button>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">ID Grup Telegram Operasional</label>
+            <input type="text" value={cfg.opsChatId} onChange={e => setCfg(c => ({ ...c, opsChatId: e.target.value }))} placeholder="contoh: -1001234567890" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <p className="text-[10px] text-slate-400 mt-1">Tambahkan bot ke grup tersebut. Pengumuman ulang tahun dikirim ke sini tiap 08.00 WIB.</p>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={cfg.birthdayEnabled} onChange={e => setCfg(c => ({ ...c, birthdayEnabled: e.target.checked }))} /> Aktifkan ucapan ulang tahun otomatis</label>
+          <button onClick={save} disabled={busy === 'save'} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{busy === 'save' ? 'Menyimpan...' : 'Simpan Pengaturan Bot'}</button>
+        </div>
+      );
+    }
+
+    // Admin: kelola karyawan per toko
+    function AdminEmployeesCard({ stores, showAdminToast }) {
+      const [sid, setSid] = useState('');
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <select value={sid} onChange={e => setSid(e.target.value)} className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm bg-white">
+            <option value="">Pilih toko untuk kelola karyawan…</option>
+            {stores.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+          </select>
+          {sid && <EmployeeBirthdayPanel storeId={sid} showToast={showAdminToast} />}
+        </div>
+      );
+    }
+
     function LeaderOjtTab({ storeName, showToast, sendToStoreTelegram }) {
       const [sub, setSub] = useState('status');
       useEffect(() => { scheduleLucideIcons(); });
@@ -15643,10 +16070,12 @@ Daily inventory done✅
           <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
             <button onClick={() => setSub('status')} className={`flex-1 text-xs font-bold py-2 rounded-lg ${sub === 'status' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Status OJT</button>
             <button onClick={() => setSub('soal')} className={`flex-1 text-xs font-bold py-2 rounded-lg ${sub === 'soal' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Soal OJT</button>
+            <button onClick={() => setSub('ultah')} className={`flex-1 text-xs font-bold py-2 rounded-lg ${sub === 'ultah' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Ulang Tahun</button>
           </div>
           {sub === 'status'
             ? <LeaderOjtStatusPanel storeName={storeName} showToast={showToast} sendToStoreTelegram={sendToStoreTelegram} />
-            : <LeaderOjtQuestionsPanel showToast={showToast} />}
+            : sub === 'soal' ? <LeaderOjtQuestionsPanel showToast={showToast} />
+            : <EmployeeBirthdayPanel storeId={null} showToast={showToast} />}
         </div>
       );
     }
@@ -15705,12 +16134,17 @@ Daily inventory done✅
         return f;
       });
       const [finalNote, setFinalNote] = useState(p.finalNote || '');
+      const [tgId, setTgId] = useState(p.telegramId || '');
       const [busy, setBusy] = useState('');
       const st = p.status || {};
       const setF = (k, patch) => setForms(prev => ({ ...prev, [k]: { ...prev[k], ...patch } }));
       const run = async (tag, fn, okMsg) => {
         setBusy(tag);
-        try { await fn(); if (okMsg) showToast(okMsg); await onChanged(); }
+        try {
+          const r = await fn(); if (okMsg) showToast(okMsg);
+          if (r && r.telegram) showToast(r.telegram.sent ? '📨 Hasil OJT terkirim ke Telegram pribadi peserta' : '⚠️ Telegram pribadi gagal: ' + r.telegram.reason);
+          await onChanged();
+        }
         catch (e) { showToast('⚠️ ' + e.message); }
         finally { setBusy(''); }
       };
@@ -15719,7 +16153,7 @@ Daily inventory done✅
         if (f.score === '' || isNaN(Number(f.score))) { showToast('⚠️ Isi nilai 0-100 untuk ' + label); return; }
         run('s' + k, () => pettyApi(`/api/ojt/people/${p.id}/stage`, { method: 'POST', body: { stage: k, result: f.result, score: Number(f.score), note: f.note } }), `✅ Penilaian ${label} tersimpan`);
       };
-      const saveFinish = (want, msg) => run('fin', () => pettyApi(`/api/ojt/people/${p.id}/finish`, { method: 'POST', body: { finished: want, finalNote } }), msg);
+      const saveFinish = (want, msg) => run('fin', () => pettyApi(`/api/ojt/people/${p.id}/finish`, { method: 'POST', body: { finished: want, finalNote, telegramId: tgId } }), msg);
       const remove = () => {
         if (!window.confirm(`Hapus data OJT "${p.name}"?`)) return;
         run('del', () => pettyApi(`/api/ojt/people/${p.id}`, { method: 'DELETE' }), 'Data OJT dihapus');
@@ -15796,6 +16230,8 @@ Daily inventory done✅
               })}
               <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
                 <p className="text-xs font-bold text-slate-700">Evaluasi Akhir & Selesai OJT</p>
+                <input type="text" inputMode="numeric" value={tgId} onChange={e => setTgId(e.target.value.replace(/\D/g, ''))} maxLength={16} placeholder="ID Telegram pribadi peserta (angka)" className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-xs" />
+                <p className="text-[10px] text-slate-400">Minta peserta membuka bot Telegram perusahaan lalu menekan Start — bot akan membalas ID-nya. Hasil OJT dikirim otomatis ke chat pribadinya saat ditandai Selesai.</p>
                 <textarea value={finalNote} onChange={e => setFinalNote(e.target.value)} rows={3} maxLength={500} placeholder="Evaluasi keseluruhan Store Leader (sikap, kecepatan, kesiapan naik tahap)" className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-xs" />
                 <div className="flex gap-2">
                   <button onClick={() => saveFinish(!!p.finished, 'Evaluasi akhir tersimpan')} disabled={busy === 'fin'} className="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg">Simpan Evaluasi</button>
@@ -15803,6 +16239,7 @@ Daily inventory done✅
                     ? <button onClick={() => saveFinish(false, 'Status selesai dibatalkan')} disabled={busy === 'fin'} className="flex-1 bg-amber-100 text-amber-800 text-xs font-bold py-2 rounded-lg">Batalkan Selesai</button>
                     : <button onClick={() => saveFinish(true, '✅ Ditandai Sudah Selesai OJT')} disabled={busy === 'fin' || !st.allPassed} className="flex-1 bg-indigo-700 disabled:opacity-40 text-white text-xs font-bold py-2 rounded-lg">Tandai Sudah Selesai OJT</button>}
                 </div>
+                <button onClick={() => run('fin', () => pettyApi(`/api/ojt/people/${p.id}/finish`, { method: 'POST', body: { finished: !!p.finished, finalNote, telegramId: tgId, notify: true } }))} disabled={busy === 'fin' || !tgId} className="w-full bg-sky-50 text-sky-700 disabled:opacity-40 text-xs font-bold py-2 rounded-lg">Kirim Hasil ke Telegram Pribadi</button>
                 {!p.finished && !st.allPassed && <p className="text-[10px] text-slate-400">Tombol Selesai OJT aktif setelah Bakery, Filler, dan Kasir semuanya Lolos.</p>}
               </div>
               <div className="flex gap-2">
@@ -16477,18 +16914,19 @@ Daily inventory done✅
           setLoading(true);
           setErr('');
           try {
-            // Fetch stok dengan token publik (tanpa session cookie)
-            const res = await fetch(`${WORKER_BASE}/api/investory?storeId=${storeId}&token=${encodeURIComponent(token)}`);
-            const d = await res.json();
-            if (!res.ok) throw new Error(d.error || 'Token tidak valid atau sudah kedaluwarsa.');
-            setEntries(d.entries || []);
+            // FIX: pakai endpoint publik khusus token (/api/investory/public/info). Endpoint lama
+            // /api/investory butuh sesi login (selalu 401 untuk pengunjung) dan /api/store-info
+            // tidak pernah ada di worker. Respons ini sudah membawa nama toko + ringkasan stok.
+            const res = await fetch(`${WORKER_BASE}/api/investory/public/info?token=${encodeURIComponent(token)}`);
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok || d.ok === false) throw new Error(d.error || 'Token tidak valid atau sudah kedaluwarsa.');
+            const list = (d.summary || []).map((s, i) => ({
+              id: 'pub' + i, lokasi: s.location, namaBarang: s.item, jumlah: s.qty,
+              satuan: s.unit, ed: s.expiry_date || '', updatedAt: 0,
+            }));
+            setEntries(list);
             setLastUpdate(Date.now());
-            // Ambil nama toko dari entri atau fallback ke storeId
-            const nameRes = await fetch(`${WORKER_BASE}/api/store-info?storeId=${storeId}`).catch(() => null);
-            if (nameRes && nameRes.ok) {
-              const nd = await nameRes.json().catch(() => ({}));
-              if (nd.name) setStoreName(nd.name);
-            }
+            if (d.storeName) setStoreName(d.storeName);
           } catch (ex) {
             setErr(ex.message);
           } finally {

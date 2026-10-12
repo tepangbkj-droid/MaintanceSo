@@ -220,6 +220,7 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
             if (statusRes.ok) {
               if (statusData.status === 'blocked') { setAttempt(parsed); setPhase('blocked'); return; }
               if (statusData.status === 'completed') { setPhase('done'); return; }
+              if (statusData.status === 'in_progress') { if (await restoreSession(parsed)) { setPhase('taking'); return; } }
             }
           } catch (e) { /* kalau gagal cek, biarkan lanjut ke form biasa */ }
         }
@@ -236,6 +237,52 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       }
     })();
   }, [linkToken]);
+
+  // ---- BUGFIX AC-01: pulihkan sesi ujian (soal + jawaban + nomor terakhir + sisa waktu) ----
+  const progressKey = `${storageKey}_progress`;
+  const readLocalProgress = () => {
+    try { return JSON.parse(localStorage.getItem(progressKey) || '{}') || {}; } catch (e) { return {}; }
+  };
+  const writeLocalProgress = (patch) => {
+    try { localStorage.setItem(progressKey, JSON.stringify({ ...readLocalProgress(), ...patch })); } catch (e) {}
+  };
+  // Mengembalikan true kalau sesi berhasil dipulihkan & siap dikerjakan, false kalau gagal
+  // (pemanggil TIDAK boleh pindah ke fase 'taking' kalau false -> mencegah layar kosong).
+  const restoreSession = async (att) => {
+    try {
+      const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${att.attemptId}/resume?attemptSecret=${encodeURIComponent(att.attemptSecret)}`);
+      const data = await res.json();
+      if (!res.ok || data.status !== 'in_progress' || !Array.isArray(data.questions) || data.questions.length === 0) return false;
+      const local = readLocalProgress();
+      const localAnswers = local.answers || {};
+      const merged = { ...localAnswers, ...(data.answers || {}) };
+      // Jawaban yang sempat tersimpan lokal tapi gagal terkirim ke server -> kirim ulang
+      for (const q of data.questions) {
+        if (localAnswers[q.id] !== undefined && localAnswers[q.id] !== '' && (data.answers || {})[q.id] === undefined) {
+          merged[q.id] = localAnswers[q.id];
+          fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${att.attemptId}/answer`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attemptSecret: att.attemptSecret, questionId: q.id, answer: localAnswers[q.id] }),
+          }).catch(() => {});
+        }
+      }
+      // Nomor terakhir: pakai posisi tersimpan; kalau tidak ada, soal pertama yang belum dijawab
+      let idx = Number.isInteger(local.qIndex) ? local.qIndex : -1;
+      if (idx < 0 || idx >= data.questions.length) {
+        idx = data.questions.findIndex(q => merged[q.id] === undefined || merged[q.id] === '');
+        if (idx < 0) idx = data.questions.length - 1;
+      }
+      setQuestions(data.questions);
+      setAnswers(merged);
+      setQIndex(idx);
+      // Timer: pertahankan sisa waktu yang sudah berjalan di layar; kalau belum ada pakai dari server
+      if (data.remainingSeconds !== null && data.remainingSeconds !== undefined) {
+        setTimerSeconds(prev => (prev !== null ? prev : data.remainingSeconds));
+      }
+      setAttempt(att);
+      return true;
+    } catch (e) { return false; }
+  };
 
   const handleStart = async () => {
     if (!assigned && (!name.trim() || !penempatan.trim())) return;
@@ -261,6 +308,8 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       setSubmittingStart(false);
     }
   };
+
+  useEffect(() => { if (phase === 'taking') writeLocalProgress({ qIndex }); }, [qIndex, phase]);
 
   // ---- Countdown timer ----
   useEffect(() => {
@@ -302,14 +351,18 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       try {
         const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/status?attemptSecret=${encodeURIComponent(attempt.attemptSecret)}`);
         const data = await res.json();
-        if (res.ok && data.status === 'in_progress') setPhase('taking');
+        if (res.ok && data.status === 'in_progress') { if (await restoreSession(attempt)) setPhase('taking'); }
       } catch (e) { /* diamkan, coba lagi di interval berikutnya */ }
     }, 5000);
     return () => clearInterval(interval);
   }, [phase, attempt]);
 
   const saveAnswer = async (questionId, value) => {
-    setAnswers(prev => ({ ...prev, [questionId]: value }));
+    setAnswers(prev => {
+      const next = { ...prev, [questionId]: value };
+      writeLocalProgress({ answers: next });
+      return next;
+    });
     try {
       await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/answer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -328,6 +381,7 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       const data = await res.json();
       if (res.ok) {
         localStorage.removeItem(storageKey);
+        localStorage.removeItem(progressKey);
         setPhase('done');
       } else {
         setErrorMsg(data.error || 'Gagal mengumpulkan jawaban');
@@ -477,6 +531,12 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
     </div></Shell>;
   }
   // ✅ PERBAIKAN: Tambah if statement yang hilang!
+  if (phase === 'taking' && questions.length === 0) {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-3">
+      <p className="text-sm text-slate-500">Memuat soal...</p>
+      <button onClick={async () => { if (!(await restoreSession(attempt))) setPhase('blocked'); }} className="bg-purple-800 text-white font-semibold px-4 py-2 rounded-xl text-sm">Muat Ulang Soal</button>
+    </div></Shell>;
+  }
   if (phase === 'taking') {
     const q = questions[qIndex];
     const allAnswered = questions.every(qq => answers[qq.id] !== undefined && answers[qq.id] !== '');

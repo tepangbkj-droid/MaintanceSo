@@ -2567,6 +2567,7 @@ const { useState, useEffect } = React;
       const [newTitle, setNewTitle] = useState('');
       const [newDesc, setNewDesc] = useState('');
       const [newTimer, setNewTimer] = useState('');
+      const [adminSub, setAdminSub] = useState('paket'); // 'paket' | 'status'
       const [creating, setCreating] = useState(false);
       const [linkCopied, setLinkCopied] = useState(null);
       const [editingTest, setEditingTest] = useState(null); // { id, title } -- buka editor soal
@@ -2687,8 +2688,24 @@ const { useState, useEffect } = React;
         return <PsikotesScoresView test={viewingScores} stores={stores} onBack={() => setViewingScores(null)} />;
       }
 
+      const adminSubToggle = (
+        <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+          <button onClick={() => setAdminSub('paket')} className={`flex-1 text-xs font-bold py-2 rounded-lg ${adminSub === 'paket' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Paket Soal</button>
+          <button onClick={() => setAdminSub('status')} className={`flex-1 text-xs font-bold py-2 rounded-lg ${adminSub === 'status' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Status OJT per Toko</button>
+        </div>
+      );
+      if (adminSub === 'status') {
+        return (
+          <div className="max-w-2xl mx-auto space-y-4">
+            {adminSubToggle}
+            <AdminOjtStatusPanel stores={stores} />
+          </div>
+        );
+      }
+
       return (
         <div className="max-w-2xl mx-auto space-y-4">
+          {adminSubToggle}
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-slate-700 text-base">Psikotes OJT</h2>
             <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 bg-purple-800 hover:bg-purple-900 text-white text-xs font-bold px-3 py-2 rounded-xl">
@@ -7448,7 +7465,7 @@ const { useState, useEffect } = React;
               aman dipakai ulang tanpa kode baru sama sekali (hemat & konsisten). */}
           {activeMenu === 'psikotes' && (
             <div className="p-4">
-              <StorePsikotesTab />
+              <StorePsikotesTab hideStatus />
             </div>
           )}
 
@@ -15607,13 +15624,15 @@ Daily inventory done✅
       const qs = []; let cur = null; let lastOpt = false;
       String(raw || '').split(/\r?\n/).forEach((line) => {
         const t = line.trim(); if (!t) return;
+        const mk = t.match(/^(?:kunci(?:\s*jawaban)?|jawaban)\s*[:=]\s*([A-Ha-h])\b/i);
+        if (mk && cur) { cur.correctIndex = mk[1].toUpperCase().charCodeAt(0) - 65; lastOpt = false; return; }
         const mq = t.match(/^(\d{1,3})\s*[.)]\s*(.+)$/);
         const mo = t.match(/^([A-Ha-h])\s*[.)]\s*(.+)$/);
         if (mq) { cur = { type: 'pilihan_ganda', text: mq[2].trim(), options: [] }; qs.push(cur); lastOpt = false; }
         else if (mo && cur) { cur.options.push(mo[2].trim()); lastOpt = true; }
         else if (cur) { if (lastOpt && cur.options.length) cur.options[cur.options.length - 1] += ' ' + t; else cur.text += ' ' + t; }
       });
-      return qs.map(q => q.options.length >= 2 ? q : { type: 'esai', text: q.text, options: [] });
+      return qs.map(q => q.options.length >= 2 ? { ...q, correctIndex: Number.isInteger(q.correctIndex) && q.correctIndex < q.options.length ? q.correctIndex : null } : { type: 'esai', text: q.text, options: [] });
     };
 
     function LeaderOjtTab({ storeName, showToast, sendToStoreTelegram }) {
@@ -15837,7 +15856,7 @@ Daily inventory done✅
           <div className="flex items-start justify-between gap-2">
             <div>
               <h2 className="font-bold text-slate-700 text-base">Soal OJT Outlet</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Kirim soal & pilihan jawabannya, paket tes otomatis dibuat dan hanya berlaku di outlet ini. Kunci jawaban dipilih admin.</p>
+              <p className="text-xs text-slate-500 mt-0.5">Isi soal, pilihan, dan kunci jawabannya. Paket tes otomatis dibuat dan hanya berlaku di outlet ini.</p>
             </div>
             <button onClick={() => setShowCreate(v => !v)} className="shrink-0 bg-purple-800 text-white text-xs font-bold px-3 py-2 rounded-xl">+ Paket Baru</button>
           </div>
@@ -15865,7 +15884,7 @@ Daily inventory done✅
                   <p className="text-[11px] text-slate-400 mt-0.5">{t.question_count} soal • {t.attempt_count} OJT sudah isi{t.timer_minutes ? ` • ${t.timer_minutes} mnt` : ''}</p>
                 </div>
                 {t.keys_ready === 0
-                  ? <span className="shrink-0 text-[10px] bg-amber-100 text-amber-700 font-bold px-2 py-1 rounded-md">Menunggu kunci admin</span>
+                  ? <span className="shrink-0 text-[10px] bg-amber-100 text-amber-700 font-bold px-2 py-1 rounded-md">Kunci belum lengkap</span>
                   : <span className="shrink-0 text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md">Siap dipakai</span>}
               </div>
               <div className="flex flex-wrap gap-2">
@@ -15911,7 +15930,7 @@ Daily inventory done✅
       return (
         <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 space-y-2">
           {test.keys_ready === 0 ? (
-            <p className="text-[11px] text-amber-700 font-semibold">Link OJT bisa dibuat setelah admin memilih kunci jawaban.</p>
+            <p className="text-[11px] text-amber-700 font-semibold">Link OJT bisa dibuat setelah semua soal pilihan ganda punya kunci jawaban.</p>
           ) : (
             <div className="flex gap-2">
               <input value={name} onChange={e => setName(e.target.value)} placeholder="Nama OJT" className="flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-xs bg-white" />
@@ -15943,7 +15962,7 @@ Daily inventory done✅
         (async () => {
           try {
             const d = await pettyApi(`/api/ojt/tests/${test.id}/questions`);
-            setQs((d.questions || []).map(q => ({ id: q.id, type: q.type, text: q.text, options: q.options && q.options.length ? q.options : (q.type === 'esai' ? [] : ['', '']) })));
+            setQs((d.questions || []).map(q => ({ id: q.id, type: q.type, text: q.text, correctIndex: Number.isInteger(q.correctIndex) ? q.correctIndex : null, options: q.options && q.options.length ? q.options : (q.type === 'esai' ? [] : ['', '']) })));
           } catch (e) { setErr(e.message || 'Gagal memuat soal.'); }
           finally { setLoading(false); }
         })();
@@ -15952,7 +15971,7 @@ Daily inventory done✅
       const upd = (i, patch) => setQs(prev => prev.map((q, k) => k === i ? { ...q, ...patch } : q));
       const updOpt = (i, oi, v) => setQs(prev => prev.map((q, k) => k === i ? { ...q, options: q.options.map((o, j) => j === oi ? v : o) } : q));
       const addOpt = (i) => setQs(prev => prev.map((q, k) => k === i && q.options.length < 6 ? { ...q, options: [...q.options, ''] } : q));
-      const delOpt = (i, oi) => setQs(prev => prev.map((q, k) => k === i && q.options.length > 2 ? { ...q, options: q.options.filter((_, j) => j !== oi) } : q));
+      const delOpt = (i, oi) => setQs(prev => prev.map((q, k) => k === i && q.options.length > 2 ? { ...q, options: q.options.filter((_, j) => j !== oi), correctIndex: q.correctIndex === oi ? null : (Number.isInteger(q.correctIndex) && q.correctIndex > oi ? q.correctIndex - 1 : q.correctIndex) } : q));
       const addBulk = () => {
         const parsed = ojtParseBulk(bulk);
         if (parsed.length === 0) { showToast('⚠️ Format tidak terbaca. Pakai "1. Soal" lalu "A. Pilihan".'); return; }
@@ -15962,8 +15981,8 @@ Daily inventory done✅
       const save = async () => {
         setSaving(true);
         try {
-          const d = await pettyApi(`/api/ojt/tests/${test.id}/questions`, { method: 'PUT', body: { questions: qs.map(q => ({ id: q.id, type: q.type, text: q.text, options: q.options })) } });
-          showToast(d.keysReady ? '✅ Soal tersimpan' : '✅ Soal terkirim — menunggu admin memilih kunci jawaban');
+          const d = await pettyApi(`/api/ojt/tests/${test.id}/questions`, { method: 'PUT', body: { questions: qs.map(q => ({ id: q.id, type: q.type, text: q.text, options: q.options, correctIndex: q.correctIndex })) } });
+          showToast(d.keysReady ? '✅ Soal & kunci jawaban tersimpan' : '✅ Soal tersimpan — masih ada soal tanpa kunci jawaban');
           onBack();
         } catch (e) { showToast('⚠️ ' + e.message); }
         finally { setSaving(false); }
@@ -15981,11 +16000,11 @@ Daily inventory done✅
             <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-100 text-sm font-bold text-slate-600">←</button>
             <h2 className="font-bold text-slate-700 text-base truncate">Soal — {test.title}</h2>
           </div>
-          <div className="bg-purple-50 border border-purple-100 rounded-xl px-3 py-2 text-[11px] text-purple-800">Isi soal dan pilihan jawaban saja. <b>Kunci jawaban dipilih admin</b> setelah soal kamu simpan.</div>
+          <div className="bg-purple-50 border border-purple-100 rounded-xl px-3 py-2 text-[11px] text-purple-800">Isi soal & pilihan jawaban, lalu <b>klik bulatan di samping jawaban yang benar</b> sebagai kunci. Link OJT baru bisa dibuat kalau semua soal pilihan ganda sudah punya kunci. Kunci tidak bisa diubah lagi setelah ada OJT yang mengerjakan.</div>
           <button onClick={() => setShowBulk(v => !v)} className="w-full border border-dashed border-purple-300 text-purple-700 text-xs font-bold py-2.5 rounded-xl">{showBulk ? 'Tutup' : '📋 Tempel Banyak Soal Sekaligus'}</button>
           {showBulk && (
             <div className="bg-white rounded-2xl border border-slate-200 p-3 space-y-2 animate-fadeIn">
-              <textarea value={bulk} onChange={e => setBulk(e.target.value)} rows={8} placeholder={'1. Berapa suhu oven untuk croissant?\nA. 150°C\nB. 180°C\nC. 220°C\n\n2. Apa yang dilakukan sebelum membuka kasir?\nA. ...\nB. ...'} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono" />
+              <textarea value={bulk} onChange={e => setBulk(e.target.value)} rows={8} placeholder={'1. Berapa suhu oven untuk croissant?\nA. 150°C\nB. 180°C\nC. 220°C\nKunci: B\n\n2. Apa yang dilakukan sebelum membuka kasir?\nA. ...\nB. ...\nKunci: A'} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono" />
               <button onClick={addBulk} disabled={!bulk.trim()} className="w-full bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-xl">Buat Soal Otomatis</button>
             </div>
           )}
@@ -16000,26 +16019,158 @@ Daily inventory done✅
                 <div className="space-y-1.5">
                   {q.options.map((o, oi) => (
                     <div key={oi} className="flex items-center gap-2">
-                      <span className="w-5 text-center text-[11px] font-bold text-slate-400">{String.fromCharCode(65 + oi)}</span>
+                      <input type="radio" name={`kunci-${i}`} checked={q.correctIndex === oi} onChange={() => upd(i, { correctIndex: oi })} title="Tandai sebagai kunci jawaban" />
+                      <span className="w-4 text-center text-[11px] font-bold text-slate-400">{String.fromCharCode(65 + oi)}</span>
                       <input value={o} onChange={e => updOpt(i, oi, e.target.value)} placeholder={`Pilihan ${String.fromCharCode(65 + oi)}`} className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs" />
                       {q.options.length > 2 && <button onClick={() => delOpt(i, oi)} className="text-slate-400 text-sm px-1">✕</button>}
                     </div>
                   ))}
                   {q.options.length < 6 && <button onClick={() => addOpt(i)} className="text-[11px] font-semibold text-purple-700">+ Tambah pilihan</button>}
+                  {!Number.isInteger(q.correctIndex) && <p className="text-[10px] text-amber-600 font-semibold">Pilih bulatan di samping jawaban yang benar (kunci).</p>}
                 </div>
               )}
             </div>
           ))}
           <div className="flex gap-2">
-            <button onClick={() => setQs(prev => [...prev, { type: 'pilihan_ganda', text: '', options: ['', ''] }])} className="flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl">+ Pilihan Ganda</button>
+            <button onClick={() => setQs(prev => [...prev, { type: 'pilihan_ganda', text: '', options: ['', ''], correctIndex: null }])} className="flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl">+ Pilihan Ganda</button>
             <button onClick={() => setQs(prev => [...prev, { type: 'esai', text: '', options: [] }])} className="flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl">+ Esai</button>
           </div>
-          <button onClick={save} disabled={saving || qs.length === 0} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">{saving ? 'Menyimpan...' : 'Simpan & Kirim ke Admin'}</button>
+          <button onClick={save} disabled={saving || qs.length === 0} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">{saving ? 'Menyimpan...' : 'Simpan Soal'}</button>
         </div>
       );
     }
 
-    function StorePsikotesTab() {
+    // ==========================================
+    // STATUS OJT — TAMPILAN BACA SAJA UNTUK TOKO & ADMIN (2026-10)
+    // ==========================================
+    const ojtChip = (key, cls, text) => <span key={key} className={`text-[10px] font-bold px-2 py-1 rounded-md ${cls}`}>{text}</span>;
+
+    function OjtReadonlyCard({ p, showStore }) {
+      const [open, setOpen] = useState(false);
+      const st = p.status || {};
+      useEffect(() => { scheduleLucideIcons(); });
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <button onClick={() => setOpen(o => !o)} className="w-full text-left p-4 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="font-bold text-slate-800 text-sm truncate">{p.name}</p>
+                {showStore && <p className="text-[11px] text-purple-700 font-semibold truncate">🏪 {p.storeName || p.storeId}</p>}
+                {p.tes && p.tes.score !== null && p.tes.score !== undefined && <p className="text-[11px] text-slate-500">Skor tes OJT: <b>{p.tes.score}</b></p>}
+              </div>
+              <i data-lucide={open ? 'chevron-up' : 'chevron-down'} className="w-4 h-4 text-slate-400 shrink-0"></i>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {OJT_STAGE_DEFS.map(s => {
+                const x = (p.stages || {})[s.key];
+                if (x && x.result === 'lolos') return ojtChip(s.key, 'bg-emerald-100 text-emerald-700', `Lolos ${s.label}`);
+                if (x) return ojtChip(s.key, 'bg-rose-100 text-rose-700', `Belum Lolos ${s.label}`);
+                return ojtChip(s.key, 'bg-slate-100 text-slate-500', `${s.label}: belum dinilai`);
+              })}
+              {p.finished ? ojtChip('fin', 'bg-indigo-100 text-indigo-700', 'Sudah Selesai OJT') : ojtChip('fin', 'bg-slate-100 text-slate-500', 'Belum selesai OJT')}
+            </div>
+            <div className={`text-xs font-bold rounded-xl px-3 py-2 ${st.canProceed ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
+              {st.canProceed ? '✅ ' : '⏳ '}{st.label}
+            </div>
+          </button>
+          {open && (
+            <div className="border-t border-slate-100 bg-slate-50 p-4 space-y-2">
+              {OJT_STAGE_DEFS.map(s => {
+                const x = (p.stages || {})[s.key];
+                return (
+                  <div key={s.key} className="bg-white rounded-xl border border-slate-200 p-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-bold text-slate-700">{s.label}</p>
+                      {x ? <span className={`text-[10px] font-bold ${x.result === 'lolos' ? 'text-emerald-600' : 'text-rose-600'}`}>{x.result === 'lolos' ? 'Lolos' : 'Belum Lolos'} • nilai {x.score}</span> : <span className="text-[10px] text-slate-400">Belum dinilai</span>}
+                    </div>
+                    {x && x.note && <p className="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">{x.note}</p>}
+                    {x && <p className="text-[10px] text-slate-400 mt-1">Dinilai {ojtFmtDate(x.at)}</p>}
+                  </div>
+                );
+              })}
+              <div className="bg-white rounded-xl border border-slate-200 p-3">
+                <p className="text-xs font-bold text-slate-700">Evaluasi Akhir Store Leader</p>
+                <p className="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">{p.finalNote || <span className="text-slate-400">Belum ada evaluasi akhir.</span>}</p>
+                {p.finished && p.finishedAt && <p className="text-[10px] text-slate-400 mt-1">Selesai OJT {ojtFmtDate(p.finishedAt)}</p>}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Dipakai akun Toko (menu Progres OJT): hanya status OJT outletnya sendiri, baca saja.
+    function StoreOjtStatusSection() {
+      const [people, setPeople] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [err, setErr] = useState('');
+      const load = async () => {
+        setLoading(true);
+        try { const d = await pettyApi('/api/ojt/people'); setPeople(d.people || []); setErr(''); }
+        catch (e) { setErr(e.message || 'Gagal memuat status OJT.'); }
+        finally { setLoading(false); }
+      };
+      useEffect(() => { load(); }, []);
+      useEffect(() => { scheduleLucideIcons(); });
+      return (
+        <div className="space-y-2">
+          <div>
+            <h3 className="font-bold text-slate-700 text-sm">Status OJT (penilaian Store Leader)</h3>
+            <p className="text-[11px] text-slate-500">Hanya bisa dilihat. Penilaian diisi oleh Store Leader outlet ini.</p>
+          </div>
+          {loading ? <div className="text-center text-slate-400 text-xs py-4"><i data-lucide="loader" className="w-5 h-5 animate-spin mx-auto"></i></div>
+            : err ? <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-center space-y-2"><p className="text-xs text-rose-700 font-semibold">{err}</p><button onClick={load} className="bg-rose-600 text-white text-xs font-bold px-4 py-1.5 rounded-xl">Coba Lagi</button></div>
+            : people.length === 0 ? <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center text-slate-500 text-xs">Belum ada penilaian OJT dari Store Leader.</div>
+            : people.map(p => <OjtReadonlyCard key={p.id} p={p} showStore={false} />)}
+        </div>
+      );
+    }
+
+    // Dipakai Admin: status OJT semua toko, bisa difilter per toko & per keputusan.
+    function AdminOjtStatusPanel({ stores }) {
+      const [people, setPeople] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [err, setErr] = useState('');
+      const [storeFilter, setStoreFilter] = useState('');
+      const [decFilter, setDecFilter] = useState('all');
+      const load = async () => {
+        setLoading(true);
+        try { const d = await pettyApi('/api/ojt/overview'); setPeople(d.people || []); setErr(''); }
+        catch (e) { setErr(e.message || 'Gagal memuat status OJT.'); }
+        finally { setLoading(false); }
+      };
+      useEffect(() => { load(); }, []);
+      useEffect(() => { scheduleLucideIcons(); });
+      const shown = people.filter(p => (!storeFilter || p.storeId === storeFilter) && (decFilter === 'all' || (decFilter === 'lanjut' ? p.status.canProceed : !p.status.canProceed)));
+      const lanjutCount = people.filter(p => p.status.canProceed).length;
+      return (
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-white rounded-xl border border-slate-200 p-2"><p className="text-lg font-extrabold text-slate-800">{people.length}</p><p className="text-[10px] text-slate-500">Total OJT</p></div>
+            <div className="bg-emerald-50 rounded-xl border border-emerald-200 p-2"><p className="text-lg font-extrabold text-emerald-700">{lanjutCount}</p><p className="text-[10px] text-emerald-700">Bisa lanjut</p></div>
+            <div className="bg-amber-50 rounded-xl border border-amber-200 p-2"><p className="text-lg font-extrabold text-amber-700">{people.length - lanjutCount}</p><p className="text-[10px] text-amber-700">Belum bisa</p></div>
+          </div>
+          <div className="flex gap-2">
+            <select value={storeFilter} onChange={e => setStoreFilter(e.target.value)} className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs bg-white">
+              <option value="">Semua toko</option>
+              {(stores || []).map(s => <option key={s.id} value={s.id}>{s.name || s.id}</option>)}
+            </select>
+            <select value={decFilter} onChange={e => setDecFilter(e.target.value)} className="border border-slate-200 rounded-xl px-3 py-2 text-xs bg-white">
+              <option value="all">Semua</option>
+              <option value="lanjut">Bisa lanjut</option>
+              <option value="belum">Belum bisa</option>
+            </select>
+            <button onClick={load} className="px-3 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl">↻</button>
+          </div>
+          {loading ? <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>
+            : err ? <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center space-y-2"><p className="text-xs text-rose-700 font-semibold">{err}</p><button onClick={load} className="bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl">Coba Lagi</button></div>
+            : shown.length === 0 ? <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm">Tidak ada data OJT untuk filter ini.</div>
+            : shown.map(p => <OjtReadonlyCard key={p.storeId + p.id} p={p} showStore={true} />)}
+        </div>
+      );
+    }
+
+    function StorePsikotesTab({ hideStatus }) {
       const [attempts, setAttempts] = useState([]);
       const [loading, setLoading] = useState(true);
       const [loadError, setLoadError] = useState(''); // BUGFIX: sebelumnya kalau gagal memuat
@@ -16072,6 +16223,7 @@ Daily inventory done✅
             <h2 className="font-bold text-slate-700 text-base">Progres OJT</h2>
             <p className="text-xs text-slate-500 mt-0.5">Skor & status psikotes OJT yang ditempatkan di toko ini oleh admin.</p>
           </div>
+          {!hideStatus && <StoreOjtStatusSection />}
 
           {loading ? (
             <div className="text-center text-slate-400 text-sm py-8"><i data-lucide="loader" className="w-6 h-6 animate-spin mx-auto"></i></div>

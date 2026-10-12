@@ -1523,8 +1523,10 @@ const { useState, useEffect } = React;
     const restOnce = async (ref) => ref.once('value');
     // =====================================================================
     // QR CODE (PRD 3.2.A): QR Printer Request & QR Inventory
-    // URL diatur ADMIN saja di `systemSettings/qr` (toko tidak bisa menulis path itu — lihat
-    // assertPathWritable di worker). Toko hanya punya sakelar ON/OFF di `stores/{id}/preferences`.
+    // URL diatur ADMIN saja: default global di `systemSettings/qr`, dan link BERBEDA PER TOKO di
+    // `systemSettings/qrStores/{storeId}` (toko tidak bisa menulis path itu — lihat assertPathWritable
+    // di worker). Toko mengambil link efektifnya lewat GET /api/qr/config (link toko -> default).
+    // Toko hanya punya sakelar ON/OFF di `stores/{id}/preferences`.
     // =====================================================================
     const STOCK_QR_FOOTER = 'Mohon diperbarui di Link Inventory agar update mulai Quality dan Ed nya.';
     const makeQrDataUrl = (text) => {
@@ -4027,23 +4029,6 @@ const { useState, useEffect } = React;
       // UPDATE WEB -> BROADCAST KE BOT TELEGRAM TOKO (STATE)
       // ==========================================
       const [webUpdateText, setWebUpdateText] = useState('');
-      // ---- QR Code (admin saja): URL QR Printer Request & QR Inventory ----
-      const [adminQr, setAdminQr] = useState({ printerRequestUrl: '', inventoryUrl: '' });
-      const [savingQr, setSavingQr] = useState(false);
-      useEffect(() => bindLiveValue(db.ref('systemSettings/qr'), (snap) => {
-        const v = snap.val() || {};
-        setAdminQr({ printerRequestUrl: v.printerRequestUrl || '', inventoryUrl: v.inventoryUrl || '' });
-      }), []);
-      const handleSaveQrSettings = async () => {
-        const p = adminQr.printerRequestUrl.trim(); const i = adminQr.inventoryUrl.trim();
-        if ((p && !isHttpUrl(p)) || (i && !isHttpUrl(i))) { showAdminToast('⚠️ URL harus diawali http:// atau https://'); return; }
-        setSavingQr(true);
-        try {
-          await restSet(db.ref('systemSettings/qr'), { printerRequestUrl: p, inventoryUrl: i, updatedAt: Date.now() });
-          showAdminToast('✅ URL QR Code tersimpan.');
-        } catch (e) { showAdminToast('⚠️ Gagal menyimpan URL QR Code.'); }
-        setSavingQr(false);
-      };
       const [webUpdateAll, setWebUpdateAll] = useState(true);
       const [webUpdateStoreIds, setWebUpdateStoreIds] = useState([]);
       // Pencarian toko di daftar "Pilih Toko" pada tab Chat (list toko sudah bisa discroll,
@@ -5729,23 +5714,9 @@ const { useState, useEffect } = React;
                   )}
                 </div>
 
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
-                  <div>
-                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5"><i data-lucide="qr-code" className="w-4 h-4 text-purple-700"></i> Pengaturan QR Code</h3>
-                    <p className="text-[10px] text-slate-500 mt-1">Hanya admin yang bisa mengubah URL. Toko cuma bisa menyalakan/mematikan cetak QR di menu Printing.</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">URL QR Printer Request</label>
-                    <input type="url" value={adminQr.printerRequestUrl} onChange={(e) => setAdminQr(p => ({ ...p, printerRequestUrl: e.target.value }))} placeholder="https://..." className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
-                    <p className="text-[10px] text-slate-400 mt-1">Kosong = pakai QR Saluran WhatsApp bawaan.</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">URL QR Inventory</label>
-                    <input type="url" value={adminQr.inventoryUrl} onChange={(e) => setAdminQr(p => ({ ...p, inventoryUrl: e.target.value }))} placeholder="https://..." className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
-                  </div>
-                  <button onClick={handleSaveQrSettings} disabled={savingQr} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{savingQr ? 'Menyimpan...' : 'Simpan URL QR'}</button>
-                </div>
+                <AdminQrCard stores={stores} showAdminToast={showAdminToast} />
                 <AdminTelegramCentralCard showAdminToast={showAdminToast} />
+                <AdminBirthdayCard stores={stores} showAdminToast={showAdminToast} />
                 <AdminEmployeesCard stores={stores} showAdminToast={showAdminToast} />
               </div>
             )}
@@ -7779,10 +7750,22 @@ const { useState, useEffect } = React;
       // ---- QR Code: URL dari admin (read-only di sisi toko) + sakelar ON/OFF milik toko ----
       const [qrCfg, setQrCfg] = useState({ printerUrl: '', inventoryUrl: '' });
       const [qrPrefs, setQrPrefs] = useState({ enablePrinter: true, enableInventory: false });
-      useEffect(() => bindLiveValue(db.ref('systemSettings/qr'), (snap) => {
-        const v = snap.val() || {};
-        setQrCfg({ printerUrl: v.printerRequestUrl || '', inventoryUrl: v.inventoryUrl || '' });
-      }), []);
+      // Link QR berbeda tiap toko: diambil dari server (link milik toko ini -> fallback default admin).
+      // Dimuat saat dashboard dibuka & dimuat ulang tiap masuk tab Printing (2 query kecil di D1).
+      const qrLoadedRef = React.useRef(false);
+      useEffect(() => {
+        const inPrinting = activeTab === 'printing';
+        if (qrLoadedRef.current && !inPrinting) return undefined;
+        let alive = true;
+        (async () => {
+          try {
+            const d = await pettyApi('/api/qr/config');
+            qrLoadedRef.current = true;
+            if (alive) setQrCfg({ printerUrl: d.printerUrl || '', inventoryUrl: d.inventoryUrl || '' });
+          } catch (e) { /* tetap pakai nilai sebelumnya; cetak jalan terus (QR WhatsApp bawaan) */ }
+        })();
+        return () => { alive = false; };
+      }, [storeId, activeTab === 'printing']);
       useEffect(() => bindLiveValue(db.ref(`${storeBase}/preferences`), (snap) => {
         const v = snap.val() || {};
         setQrPrefs({ enablePrinter: v.enableQrPrinter !== false, enableInventory: v.enableQrInventory === true });
@@ -13244,7 +13227,7 @@ Daily inventory done✅
                   <form onSubmit={handleRequestPrint} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
                     <div>
                       <h3 className="font-bold text-slate-800 text-base">Customer Request</h3>
-                      <p className="text-xs text-slate-500">Kartu kata-kata gaul buat customer, lengkap dengan QR Saluran WhatsApp. Tap contoh di bawah kolom untuk isi cepat.</p>
+                      <p className="text-xs text-slate-500">Kartu kata-kata gaul buat customer, lengkap dengan QR link sosmed toko (atau QR Saluran WhatsApp bawaan bila admin belum mengisi). Tap contoh di bawah kolom untuk isi cepat.</p>
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Outlet (otomatis)</label>
@@ -15970,7 +15953,7 @@ Daily inventory done✅
         <div className="space-y-3">
           <div>
             <h2 className="font-bold text-slate-700 text-base">Karyawan & Ulang Tahun</h2>
-            <p className="text-xs text-slate-500">Setiap hari 08.00 WIB bot mengumumkan yang berulang tahun ke grup operasional. Ucapan yang di-reply di grup diteruskan ke chat pribadinya (wajib isi ID Telegram & sudah menekan Start di bot).</p>
+            <p className="text-xs text-slate-500">Setiap hari sekitar 08.00 WIB bot mengumumkan yang berulang tahun ke grup Telegram toko (sesuai pengaturan admin). Ucapan yang di-reply pada pesan bot pusat diteruskan ke chat pribadinya (wajib isi ID Telegram & sudah menekan Start di bot).</p>
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
             <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} maxLength={80} placeholder="Nama karyawan" className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-sm" />
@@ -16040,10 +16023,225 @@ Daily inventory done✅
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">ID Grup Telegram Operasional</label>
             <input type="text" value={cfg.opsChatId} onChange={e => setCfg(c => ({ ...c, opsChatId: e.target.value }))} placeholder="contoh: -1001234567890" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <p className="text-[10px] text-slate-400 mt-1">Tambahkan bot ke grup tersebut. Pengumuman ulang tahun dikirim ke sini tiap 08.00 WIB.</p>
+            <p className="text-[10px] text-slate-400 mt-1">Opsional. Tambahkan bot ke grup tersebut. Ucapan ulang tahun juga dikirim ke sini bila opsi "Kirim juga ke grup operasional pusat" aktif di kartu Ulang Tahun ke Grup Toko.</p>
           </div>
           <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={cfg.birthdayEnabled} onChange={e => setCfg(c => ({ ...c, birthdayEnabled: e.target.checked }))} /> Aktifkan ucapan ulang tahun otomatis</label>
           <button onClick={save} disabled={busy === 'save'} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{busy === 'save' ? 'Menyimpan...' : 'Simpan Pengaturan Bot'}</button>
+        </div>
+      );
+    }
+
+    // Admin: link QR per toko (sosmed untuk QR Printer Request, Inventory untuk QR Inventory)
+    function QrThumb({ url }) {
+      const src = React.useMemo(() => (isHttpUrl(url) ? makeQrDataUrl(url) : ''), [url]);
+      if (!src) return null;
+      return <img src={src} alt="Pratinjau QR" className="w-16 h-16 border border-slate-200 rounded-lg bg-white shrink-0" />;
+    }
+
+    function AdminQrCard({ stores, showAdminToast }) {
+      const [defForm, setDefForm] = useState({ printerRequestUrl: '', inventoryUrl: '' });
+      const defDirty = React.useRef(false);
+      const [def, setDef] = useState({ printerRequestUrl: '', inventoryUrl: '' });
+      const [saved, setSaved] = useState({});
+      const [openId, setOpenId] = useState('');
+      const [draft, setDraft] = useState({ printerRequestUrl: '', inventoryUrl: '' });
+      const [q, setQ] = useState('');
+      const [busy, setBusy] = useState('');
+      useEffect(() => bindLiveValue(db.ref('systemSettings/qr'), (snap) => {
+        const v = snap.val() || {};
+        const d = { printerRequestUrl: v.printerRequestUrl || '', inventoryUrl: v.inventoryUrl || '' };
+        setDef(d);
+        if (!defDirty.current) setDefForm(d);
+      }), []);
+      useEffect(() => bindLiveValue(db.ref('systemSettings/qrStores'), (snap) => setSaved(snap.val() || {})), []);
+
+      const saveDefault = async () => {
+        const p = defForm.printerRequestUrl.trim(); const i = defForm.inventoryUrl.trim();
+        if ((p && !isHttpUrl(p)) || (i && !isHttpUrl(i))) { showAdminToast('⚠️ URL harus diawali http:// atau https://'); return; }
+        setBusy('def');
+        try {
+          await restSet(db.ref('systemSettings/qr'), { printerRequestUrl: p, inventoryUrl: i, updatedAt: Date.now() });
+          defDirty.current = false; setDef({ printerRequestUrl: p, inventoryUrl: i });
+          showAdminToast('✅ URL default QR tersimpan.');
+        } catch (e) { showAdminToast('⚠️ Gagal menyimpan URL default QR.'); }
+        setBusy('');
+      };
+      const toggleRow = (s) => {
+        if (openId === s.id) { setOpenId(''); return; }
+        const sv = saved[s.id] || {};
+        setDraft({ printerRequestUrl: sv.printerRequestUrl || '', inventoryUrl: sv.inventoryUrl || '' });
+        setOpenId(s.id);
+      };
+      const saveStore = async (id) => {
+        const p = draft.printerRequestUrl.trim(); const i = draft.inventoryUrl.trim();
+        if ((p && !isHttpUrl(p)) || (i && !isHttpUrl(i))) { showAdminToast('⚠️ URL harus diawali http:// atau https://'); return; }
+        setBusy(id);
+        try {
+          await restSet(db.ref(`systemSettings/qrStores/${id}`), (p || i) ? { printerRequestUrl: p, inventoryUrl: i, updatedAt: Date.now() } : null);
+          setSaved(prev => { const n = { ...prev }; if (p || i) n[id] = { printerRequestUrl: p, inventoryUrl: i }; else delete n[id]; return n; });
+          showAdminToast('✅ Link QR toko tersimpan.');
+        } catch (e) { showAdminToast('⚠️ Gagal menyimpan link QR toko.'); }
+        setBusy('');
+      };
+      // Isi otomatis QR Inventory dengan link Investory toko ini (sama dengan menu Link Investory per Toko).
+      const fillInventory = async (id) => {
+        setBusy('inv:' + id);
+        try {
+          const d = await apiFetch(`/api/investory/token?storeId=${encodeURIComponent(id)}`);
+          setDraft(x => ({ ...x, inventoryUrl: `${PUBLIC_APP_BASE}/investory.html?token=${encodeURIComponent(d.token)}` }));
+          showAdminToast('Link Investory terisi. Tekan Simpan untuk menyimpan.');
+        } catch (e) { showAdminToast('⚠️ ' + (e.message || 'Gagal mengambil link Investory.')); }
+        setBusy('');
+      };
+
+      const term = q.trim().toLowerCase();
+      const list = (stores || []).filter(s => !term || String(s.name || '').toLowerCase().includes(term));
+      const badge = (own, dflt, label) => (
+        <span className={own ? 'text-emerald-600' : (dflt ? 'text-amber-600' : 'text-slate-400')}>
+          {label} {own ? '✓' : (dflt ? '(default)' : '—')}
+        </span>
+      );
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div>
+            <h3 className="font-bold text-slate-800 text-sm">📱 Pengaturan QR Code per Toko</h3>
+            <p className="text-[10px] text-slate-500 mt-1">Tiap toko punya link sendiri: <b>QR Printer Request</b> = link sosmed toko tersebut, <b>QR Inventory</b> = link Inventory toko tersebut. Toko yang belum diisi memakai link default di bawah. Toko hanya bisa menyalakan/mematikan cetak QR di menu Printing.</p>
+          </div>
+          <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Cari toko…" className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+          <div className="space-y-2 max-h-[28rem] overflow-y-auto pr-0.5">
+            {list.length === 0 && <p className="text-xs text-slate-400 text-center py-4">Toko tidak ditemukan.</p>}
+            {list.map(s => {
+              const sv = saved[s.id] || {};
+              const open = openId === s.id;
+              return (
+                <div key={s.id} className="border border-slate-200 rounded-xl overflow-hidden">
+                  <button onClick={() => toggleRow(s)} className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left bg-slate-50">
+                    <span className="text-sm font-semibold text-slate-700 truncate">{s.name}</span>
+                    <span className="text-[10px] font-semibold flex gap-2 shrink-0">
+                      {badge(sv.printerRequestUrl, def.printerRequestUrl, 'Sosmed')}
+                      {badge(sv.inventoryUrl, def.inventoryUrl, 'Inventory')}
+                    </span>
+                  </button>
+                  {open && (
+                    <div className="p-3 space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Link Sosmed toko (QR Printer Request)</label>
+                        <div className="flex gap-2 items-start">
+                          <input type="url" value={draft.printerRequestUrl} onChange={e => setDraft(x => ({ ...x, printerRequestUrl: e.target.value }))} placeholder="https://instagram.com/…" className="flex-1 min-w-0 px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                          <QrThumb url={draft.printerRequestUrl.trim()} />
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">Kosong = pakai link default (atau QR Saluran WhatsApp bawaan bila default juga kosong).</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Link Inventory toko (QR Inventory)</label>
+                        <div className="flex gap-2 items-start">
+                          <input type="url" value={draft.inventoryUrl} onChange={e => setDraft(x => ({ ...x, inventoryUrl: e.target.value }))} placeholder="https://…" className="flex-1 min-w-0 px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+                          <QrThumb url={draft.inventoryUrl.trim()} />
+                        </div>
+                        <button onClick={() => fillInventory(s.id)} disabled={busy === 'inv:' + s.id} className="mt-1.5 text-[11px] font-bold text-purple-800 underline disabled:opacity-50">{busy === 'inv:' + s.id ? 'Mengambil…' : 'Isi otomatis dengan link Investory toko ini'}</button>
+                        <p className="text-[10px] text-slate-400 mt-1">Bila link Investory toko dibuat ulang, isi otomatis lagi lalu Simpan.</p>
+                      </div>
+                      <button onClick={() => saveStore(s.id)} disabled={busy === s.id} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{busy === s.id ? 'Menyimpan...' : `Simpan Link ${s.name}`}</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="border-t border-slate-200 pt-3 space-y-2">
+            <p className="text-xs font-bold text-slate-600">Link default (untuk toko yang belum punya link sendiri)</p>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-500 mb-1">URL QR Printer Request default</label>
+              <input type="url" value={defForm.printerRequestUrl} onChange={e => { defDirty.current = true; setDefForm(x => ({ ...x, printerRequestUrl: e.target.value })); }} placeholder="https://..." className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-500 mb-1">URL QR Inventory default</label>
+              <input type="url" value={defForm.inventoryUrl} onChange={e => { defDirty.current = true; setDefForm(x => ({ ...x, inventoryUrl: e.target.value })); }} placeholder="https://..." className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            </div>
+            <button onClick={saveDefault} disabled={busy === 'def'} className="w-full bg-slate-100 text-slate-700 disabled:opacity-50 font-bold py-2 rounded-xl text-xs">{busy === 'def' ? 'Menyimpan...' : 'Simpan URL Default'}</button>
+          </div>
+        </div>
+      );
+    }
+
+    // Admin: ucapan ulang tahun ke grup Telegram toko (pilih toko mana yang dikirimi)
+    function AdminBirthdayCard({ stores, showAdminToast }) {
+      const [form, setForm] = useState({ mode: 'own', via: 'store', toOps: true, on: {} });
+      const dirty = React.useRef(false);
+      const [q, setQ] = useState('');
+      const [busy, setBusy] = useState('');
+      const [testMsg, setTestMsg] = useState({});
+      useEffect(() => bindLiveValue(db.ref('systemSettings/birthday'), (snap) => {
+        if (dirty.current) return;
+        const v = snap.val() || {};
+        const on = {};
+        Object.keys(v.stores || {}).forEach(id => { if (v.stores[id] === 'on') on[id] = true; });
+        setForm({ mode: v.mode === 'all' ? 'all' : 'own', via: v.via === 'central' ? 'central' : 'store', toOps: v.toOps !== false, on });
+      }), []);
+      const upd = (patch) => { dirty.current = true; setForm(f => ({ ...f, ...patch })); };
+      const toggleStore = (id) => { dirty.current = true; setForm(f => ({ ...f, on: { ...f.on, [id]: !f.on[id] } })); };
+      const setAll = (val) => { dirty.current = true; const on = {}; if (val) (stores || []).forEach(s => { on[s.id] = true; }); setForm(f => ({ ...f, on })); };
+      const save = async () => {
+        setBusy('save');
+        try {
+          const st = {};
+          (stores || []).forEach(s => { st[s.id] = form.on[s.id] ? 'on' : 'off'; });
+          await restSet(db.ref('systemSettings/birthday'), { mode: form.mode, via: form.via, toOps: form.toOps, stores: st, updatedAt: Date.now() });
+          dirty.current = false;
+          showAdminToast('✅ Pengaturan ulang tahun tersimpan.');
+        } catch (e) { showAdminToast('⚠️ Gagal menyimpan pengaturan ulang tahun.'); }
+        setBusy('');
+      };
+      const test = async (s) => {
+        setBusy('t:' + s.id);
+        try { await pettyApi('/api/birthday/test', { method: 'POST', body: { storeId: s.id } }); setTestMsg(m => ({ ...m, [s.id]: '✅ Terkirim' })); }
+        catch (e) { setTestMsg(m => ({ ...m, [s.id]: '⚠️ ' + (e.message || 'Gagal') })); }
+        setBusy('');
+      };
+      const term = q.trim().toLowerCase();
+      const list = (stores || []).filter(s => !term || String(s.name || '').toLowerCase().includes(term));
+      const count = (stores || []).filter(s => form.on[s.id]).length;
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div>
+            <h3 className="font-bold text-slate-800 text-sm">🎂 Ulang Tahun ke Grup Toko</h3>
+            <p className="text-[10px] text-slate-500 mt-1">Pengumuman ulang tahun karyawan dikirim ke grup Telegram toko yang dicentang (grup yang sama dengan laporan toko). Toko yang tidak dicentang tidak menerima. Saklar utama ada di kartu Bot Telegram Pusat. Terkirim bertahap sekitar 08.00–12.00 WIB.</p>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-xs font-bold text-slate-600">Dikirim ke mana?</p>
+            <label className="flex items-start gap-2 text-xs text-slate-600"><input type="radio" className="mt-0.5" checked={form.mode === 'own'} onChange={() => upd({ mode: 'own' })} /><span><b>Grup toko karyawan itu saja</b> (rekomendasi, hemat pesan)</span></label>
+            <label className="flex items-start gap-2 text-xs text-slate-600"><input type="radio" className="mt-0.5" checked={form.mode === 'all'} onChange={() => upd({ mode: 'all' })} /><span><b>Semua grup toko yang dicentang</b> (satu ulang tahun = satu pesan ke tiap grup)</span></label>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">Dikirim lewat bot</label>
+            <select value={form.via} onChange={e => upd({ via: e.target.value })} className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm bg-white">
+              <option value="store">Bot masing-masing toko (langsung jalan)</option>
+              <option value="central">Bot pusat (bot pusat harus ada di grup toko; balasan ucapan diteruskan ke japri)</option>
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={form.toOps} onChange={e => upd({ toOps: e.target.checked })} /> Kirim juga ke grup operasional pusat (jika ID grupnya sudah diisi)</label>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-bold text-slate-600">Toko penerima ({count}/{(stores || []).length} dipilih)</p>
+              <div className="flex gap-3 text-[11px] font-bold text-purple-800">
+                <button onClick={() => setAll(true)} className="underline">Pilih semua</button>
+                <button onClick={() => setAll(false)} className="underline">Kosongkan</button>
+              </div>
+            </div>
+            <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Cari toko…" className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+            <div className="space-y-1 max-h-72 overflow-y-auto pr-0.5">
+              {list.length === 0 && <p className="text-xs text-slate-400 text-center py-4">Toko tidak ditemukan.</p>}
+              {list.map(s => (
+                <div key={s.id} className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2">
+                  <label className="flex items-center gap-2 flex-1 min-w-0 text-sm text-slate-700"><input type="checkbox" checked={!!form.on[s.id]} onChange={() => toggleStore(s.id)} /><span className="truncate">{s.name}</span></label>
+                  {testMsg[s.id] && <span className="text-[10px] text-slate-500 max-w-[9rem] truncate" title={testMsg[s.id]}>{testMsg[s.id]}</span>}
+                  <button onClick={() => test(s)} disabled={busy === 't:' + s.id} className="text-[11px] font-bold text-purple-800 underline shrink-0 disabled:opacity-50">{busy === 't:' + s.id ? '…' : 'Tes'}</button>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400">Tombol Tes mengirim pesan uji memakai pengaturan yang SUDAH disimpan. Toko tanpa Bot Token/Chat ID Telegram otomatis dilewati.</p>
+          </div>
+          <button onClick={save} disabled={busy === 'save'} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{busy === 'save' ? 'Menyimpan...' : 'Simpan Pengaturan Ulang Tahun'}</button>
         </div>
       );
     }

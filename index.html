@@ -9,7 +9,7 @@
   <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
 
   <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com https://fonts.gstatic.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://api.telegram.org https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com https://fonts.gstatic.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self';">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta http-equiv="X-Frame-Options" content="DENY">
   <meta name="referrer" content="strict-origin-when-cross-origin">
@@ -464,6 +464,40 @@ const { useState, useEffect } = React;
     // ==========================================
     const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
 
+    // ===== LINK AKSES (2026-10) =====
+    // Kunci dari link "?k=..." disimpan di perangkat (prefix 'tbkey' sengaja BUKAN 'tarobun_' supaya
+    // tombol bersihkan-cache tidak menghapusnya), lalu otomatis dikirim sebagai header X-Access-Key
+    // ke server pada SETIAP request ke API. Parameter k langsung dihapus dari URL.
+    const __ACCESS_KEY_LS = 'tbkey_access';
+    const __getAccessKey = () => { try { return localStorage.getItem(__ACCESS_KEY_LS) || ''; } catch (e) { return ''; } };
+    const __setAccessKey = (k) => { try { if (k) localStorage.setItem(__ACCESS_KEY_LS, k); else localStorage.removeItem(__ACCESS_KEY_LS); } catch (e) { /* abaikan */ } };
+    (function captureAccessKeyFromUrl() {
+      try {
+        const u = new URL(window.location.href);
+        const k = u.searchParams.get('k');
+        if (k && /^[A-Za-z0-9_-]{20,128}$/.test(k)) {
+          __setAccessKey(k);
+          u.searchParams.delete('k');
+          window.history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+        }
+      } catch (e) { /* abaikan */ }
+    })();
+    (function installAccessKeyFetch() {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        try {
+          const u = typeof input === 'string' ? input : ((input && input.url) || '');
+          const k = __getAccessKey();
+          if (k && u.indexOf(WORKER_BASE) === 0) {
+            const h = new Headers((init && init.headers) || (input && input.headers) || {});
+            if (!h.has('X-Access-Key')) h.set('X-Access-Key', k);
+            init = { ...(init || {}), headers: h };
+          }
+        } catch (e) { /* abaikan */ }
+        return nativeFetch(input, init);
+      };
+    })();
+
     // ==========================================
     // FIX (2026-08): base URL TETAP untuk link publik (psikotes/OJT) yang dibagikan admin
     // ke luar (WA, dsb).
@@ -535,6 +569,10 @@ const { useState, useEffect } = React;
       // mengingat untuk menulis `headers: __authHeaders()` sendiri-sendiri (rawan lolos).
       const mergedHeaders = { ...(opts.headers || {}), ...__authHeaders() };
       return fetch(url, { ...opts, headers: mergedHeaders, credentials: 'include' }).then(res => {
+        // Link akses dicabut/diganti admin saat aplikasi sedang dibuka -> tampilkan layar "Akses Dibatasi".
+        if (res.status === 403) {
+          res.clone().json().then(d => { if (d && d.code === 'ACCESS_KEY_REQUIRED') window.dispatchEvent(new Event('tb-access-required')); }).catch(() => {});
+        }
         __diagPush({
           url: String(url).replace(WORKER_BASE, ''),
           method: (opts && opts.method) || 'GET',
@@ -616,7 +654,10 @@ const { useState, useEffect } = React;
     // tapi jauh lebih baik daripada aplikasi sama sekali tidak berfungsi karena Cookie-nya
     // diblokir browser.
     let __authListeners = [];
-    const __authHeaders = () => __sessionTokenFallback ? { 'X-Session-Token': __sessionTokenFallback } : {};
+    const __authHeaders = () => ({
+      ...(__sessionTokenFallback ? { 'X-Session-Token': __sessionTokenFallback } : {}),
+      ...(__getAccessKey() ? { 'X-Access-Key': __getAccessKey() } : {}),
+    });
 
 
     // ==========================================
@@ -1307,6 +1348,24 @@ const { useState, useEffect } = React;
     // WiFi<->data seluler, dsb). Sebelumnya sekali gagal langsung tampil toast error dan
     // laporan harus dikirim ulang manual. Sekarang setiap request ke Telegram otomatis
     // dicoba lagi sampai 2x tambahan (dengan jeda singkat) SEBELUM benar-benar dianggap gagal.
+    // Kirim ke Telegram LEWAT SERVER (token bot tidak pernah ada di browser). chat_id ditentukan server.
+    const tgRelayFetch = async (method, body, opts = {}) => {
+      const qs = `method=${encodeURIComponent(method)}${opts.storeId ? `&storeId=${encodeURIComponent(opts.storeId)}` : ''}`;
+      const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
+      const url = `${WORKER_BASE}/api/telegram/relay?${qs}`;
+      const init = { method: 'POST', headers: isForm ? {} : { 'Content-Type': 'application/json' }, body: isForm ? body : JSON.stringify(body), signal: opts.signal };
+      let lastErr;
+      for (let attempt = 0; attempt <= 2; attempt++) {
+        try { return await __apiFetch(url, init); }
+        catch (err) {
+          lastErr = err;
+          if (opts.signal && opts.signal.aborted) throw err;
+          if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+        }
+      }
+      throw lastErr;
+    };
+
     const fetchWithRetry = async (url, options, retries = 2, delayMs = 1200) => {
       for (let attempt = 0; attempt <= retries; attempt++) {
         try {
@@ -1352,11 +1411,7 @@ const { useState, useEffect } = React;
         return { ok: false, error: msg };
       }
       try {
-        const response = await fetchWithRetry(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: cleanChatId, text, parse_mode: options.parseMode || 'Markdown' }),
-        });
+        const response = await tgRelayFetch('sendMessage', { text, parse_mode: options.parseMode || 'Markdown' }, { storeId: options.storeId });
         let result;
         try {
           result = await response.json();
@@ -1378,7 +1433,7 @@ const { useState, useEffect } = React;
 
     // Kirim file/dokumen (mis. rekap laporan sebagai file) ke Telegram lewat sendDocument,
     // dengan try-catch + timeout + logging yang sama ketatnya dengan sendTelegramMessage di atas.
-    const sendTelegramDocument = async (token, chatId, blob, filename, caption) => {
+    const sendTelegramDocument = async (token, chatId, blob, filename, caption, options = {}) => {
       const cleanToken = String(token || '').trim();
       const cleanChatId = String(chatId || '').trim();
       if (!cleanToken || !cleanChatId) {
@@ -1394,11 +1449,7 @@ const { useState, useEffect } = React;
         if (caption) formData.append('caption', caption);
         formData.append('parse_mode', 'Markdown');
         formData.append('document', blob, filename || 'laporan.txt');
-        const response = await fetchWithRetry(`https://api.telegram.org/bot${cleanToken}/sendDocument`, {
-          method: 'POST',
-          body: formData,
-          signal: controller.signal,
-        });
+        const response = await tgRelayFetch('sendDocument', formData, { signal: controller.signal, storeId: options.storeId });
         let result;
         try {
           result = await response.json();
@@ -4652,7 +4703,7 @@ const { useState, useEffect } = React;
             // untuk kasus gagal (mis. bot diblokir user, chat_id salah). Akibatnya pengiriman yang
             // sebenarnya DITOLAK Telegram tetap tercatat "berhasil". Sekarang pakai helper terpusat
             // yang benar-benar memeriksa `result.ok` dari body JSON Telegram.
-            const res = await sendTelegramMessage(token, chatId, text);
+            const res = await sendTelegramMessage(token, chatId, text, { storeId: store.id });
             if (res.ok) success.push(store.name);
             else failed.push(`${store.name} (${res.error})`);
           } catch (err) {
@@ -5027,6 +5078,10 @@ const { useState, useEffect } = React;
                   <button onClick={() => { setTab('investory'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'investory' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="thermometer-snowflake" className="w-4 h-4"></i>
                     <span>Link Investory</span>
+                  </button>
+                  <button onClick={() => { setTab('security'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'security' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <i data-lucide="shield-check" className="w-4 h-4"></i>
+                    <span>Keamanan</span>
                   </button>
                   <button onClick={() => { setTab('rotiNotif'); setShowMenu(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'rotiNotif' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}>
                     <i data-lucide="bell-ring" className="w-4 h-4"></i>
@@ -5597,6 +5652,9 @@ const { useState, useEffect } = React;
             {tab === 'rotiNotif' && (
               <AdminBreadNotifTab />
             )}
+            {tab === 'security' && (
+              <AdminSecurityTab />
+            )}
           </main>
 
           {/* Modal Tambah Toko */}
@@ -5771,7 +5829,7 @@ const { useState, useEffect } = React;
                       <h4 className="font-bold text-slate-700 text-sm flex items-center gap-1.5"><i data-lucide="key-round" className="w-3.5 h-3.5"></i> Kredensial Login Toko</h4>
                       <div className="flex items-center gap-2">
                         <div className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 font-mono text-sm select-all">
-                          {detailStore.token ? (showToken ? detailStore.token : '•'.repeat(Math.min(detailStore.token.length, 16))) : '(tidak tersedia — dibuat sebelum fitur ini ada, gunakan Reset Token)'}
+                          {detailStore.token ? (showToken ? detailStore.token : '•'.repeat(Math.min(detailStore.token.length, 16))) : (detailStore.tokenSet ? '🔒 Tersimpan aman (ter-hash). Tidak bisa ditampilkan lagi, gunakan Reset Token untuk membuat yang baru.' : '(belum ada token, gunakan Reset Token)')}
                         </div>
                         {detailStore.token && (
                           <button onClick={() => setShowToken(v => !v)} className="shrink-0 p-2 bg-white border border-slate-200 rounded-lg text-slate-500"><i data-lucide={showToken ? 'eye-off' : 'eye'} className="w-4 h-4"></i></button>
@@ -5831,6 +5889,13 @@ const { useState, useEffect } = React;
                             {regeneratingLeaderToken ? 'Mengganti Token...' : 'Reset / Ganti Token Leader (Acak)'}
                           </button>
                         </React.Fragment>
+                      ) : detailStore.leaderTokenSet ? (
+                        <React.Fragment>
+                          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-600">🔒 Token leader tersimpan aman (ter-hash). Tidak bisa ditampilkan lagi, gunakan tombol di bawah untuk membuat yang baru.</div>
+                          <button onClick={() => handleRegenerateLeaderToken(detailStore)} disabled={regeneratingLeaderToken || settingCustomLeaderToken} className="w-full bg-slate-800 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">
+                            {regeneratingLeaderToken ? 'Mengganti Token...' : 'Reset / Ganti Token Leader (Acak)'}
+                          </button>
+                        </React.Fragment>
                       ) : (
                         <button onClick={() => handleRegenerateLeaderToken(detailStore)} disabled={regeneratingLeaderToken} className="w-full bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-lg">
                           {regeneratingLeaderToken ? 'Membuat...' : '+ Buat Akun Store Leader'}
@@ -5839,7 +5904,7 @@ const { useState, useEffect } = React;
                       {regeneratedLeaderToken === 'ERROR' && <p className="text-[10px] text-rose-600 font-semibold">Gagal menyimpan token. Coba lagi.</p>}
                       {regeneratedLeaderToken && regeneratedLeaderToken !== 'ERROR' && <p className="text-[10px] text-emerald-600 font-semibold">Token tersimpan di atas. Beritahu store leader kode toko + token barunya.</p>}
 
-                      {detailStore.leaderToken && (
+                      {(detailStore.leaderToken || detailStore.leaderTokenSet) && (
                         <div className="pt-2 border-t border-purple-200 space-y-1.5">
                           <label htmlFor="customLeaderTokenInput" className="block text-[10px] font-semibold text-slate-600">Atau set token kustom (pilihan sendiri)</label>
                           <div className="flex items-center gap-2">
@@ -5870,7 +5935,7 @@ const { useState, useEffect } = React;
                       <h4 className="font-bold text-slate-700 text-sm flex items-center gap-1.5"><i data-lucide="send" className="w-3.5 h-3.5"></i> Integrasi Bot Telegram</h4>
                       <p className="text-[10px] text-slate-500">Hanya admin yang dapat mengatur ini. Toko tidak lagi bisa mengubah Bot Token / Chat ID sendiri.</p>
                       <div>
-                        <label htmlFor="telegramForm_botToken" className="block text-[10px] font-semibold text-slate-600 mb-1">Bot Token</label>
+                        <label htmlFor="telegramForm_botToken" className="block text-[10px] font-semibold text-slate-600 mb-1">Bot Token <span className="font-normal text-slate-400">(tersimpan terenkripsi di server; biarkan titik-titik jika tidak ingin menggantinya)</span></label>
                         <input id="telegramForm_botToken" type="text" value={telegramForm.botToken} onChange={(e) => setTelegramForm({ ...telegramForm, botToken: e.target.value })} placeholder="123456:ABC-..." className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono" />
                       </div>
                       <div>
@@ -6081,6 +6146,21 @@ const { useState, useEffect } = React;
       // Splash screen animasi masuk: tampil sebentar di awal, lalu otomatis hilang
       // (lihat SplashScreen -> onFinish). Hanya ditampilkan sekali per kunjungan tab ini.
       const [showSplash, setShowSplash] = useState(!IS_MINI_MODE);
+      // Gerbang link akses: 'checking' | 'ok' | 'blocked'
+      const [accessGate, setAccessGate] = useState('checking');
+      const checkAccess = async () => {
+        try {
+          const r = await fetch(`${WORKER_BASE}/api/access/status`);
+          const d = await r.json();
+          setAccessGate(d && d.gate && !d.allowed ? 'blocked' : 'ok');
+        } catch (e) { setAccessGate('ok'); } // gagal jaringan: biarkan; API tetap menolak sendiri kalau memang terkunci
+      };
+      useEffect(() => {
+        checkAccess();
+        const onBlocked = () => setAccessGate('blocked');
+        window.addEventListener('tb-access-required', onBlocked);
+        return () => window.removeEventListener('tb-access-required', onBlocked);
+      }, []);
 
       useEffect(() => {
         const unsub = auth.onAuthStateChanged(async (user) => {
@@ -6177,6 +6257,17 @@ const { useState, useEffect } = React;
 
       if (showSplash) {
         return <SplashScreen onFinish={() => setShowSplash(false)} />;
+      }
+
+      if (accessGate === 'checking') {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-slate-50">
+            <div className="w-8 h-8 rounded-full border-4 border-purple-200 border-t-purple-700 animate-spin"></div>
+          </div>
+        );
+      }
+      if (accessGate === 'blocked') {
+        return <AccessBlockedScreen onUnlocked={() => { setAccessGate('checking'); checkAccess(); }} />;
       }
 
       if (checking) {
@@ -6282,11 +6373,7 @@ const { useState, useEffect } = React;
           return false;
         }
         try {
-          const res = await fetch(`https://api.telegram.org/bot${tgConfig.botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: tgConfig.chatId, text, parse_mode: 'Markdown' }),
-          });
+          const res = await tgRelayFetch('sendMessage', { text, parse_mode: 'Markdown' });
           const data = await res.json().catch(() => ({}));
           if (data.ok) return true;
           showToast(`Gagal kirim ke Telegram: ${data.description || 'periksa Bot Token/Chat ID'}`);
@@ -10423,11 +10510,7 @@ Daily inventory done✅
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000);
         try {
-          const response = await fetchWithRetry(`https://api.telegram.org/bot${token}/sendPhoto`, {
-            method: 'POST',
-            body: formData,
-            signal: controller.signal
-          });
+          const response = await tgRelayFetch('sendPhoto', formData, { signal: controller.signal });
           // Jangan langsung response.json() tanpa guard: kalau Telegram merespons
           // non-JSON (mis. HTML error 404 karena token salah), .json() akan melempar
           // error generik yang membingungkan. Tangani secara eksplisit di sini.
@@ -10551,11 +10634,7 @@ Daily inventory done✅
 
           // Telegram caption foto dibatasi ~1024 karakter; jika kepanjangan, kirim teks rekap penuh terpisah
           if (caption.length > 1000) {
-            await fetchWithRetry(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: config.telegramChatId, text: caption, parse_mode: 'Markdown' })
-            });
+            await tgRelayFetch('sendMessage', { text: caption, parse_mode: 'Markdown' });
             const shortCaption = `*${catInfo.label.toUpperCase()}*\n${tanggalLabel}\n*TOTAL : ${group.total} pcs* (${orderedItems.length} foto)`;
             await sendPhotoToTelegram(collageDataUrl, shortCaption);
           } else {
@@ -15330,6 +15409,166 @@ Daily inventory done✅
             ))}
             {msg && <p className="text-xs font-semibold text-purple-700 text-center">{msg}</p>}
           </div>
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // KEAMANAN (2026-10): layar "Akses Dibatasi" + menu Admin > Keamanan
+    // =====================================================================
+    function AccessBlockedScreen({ onUnlocked }) {
+      const [code, setCode] = React.useState('');
+      const [err, setErr] = React.useState('');
+      const [busy, setBusy] = React.useState(false);
+      const submit = async (e) => {
+        e.preventDefault();
+        let k = code.trim();
+        try { const u = new URL(k); k = u.searchParams.get('k') || k; } catch (_) { /* bukan URL: anggap kode mentah */ }
+        if (!/^[A-Za-z0-9_-]{20,128}$/.test(k)) { setErr('Kode tidak valid. Tempel link lengkap atau kode dari admin.'); return; }
+        setBusy(true); setErr('');
+        try {
+          const r = await fetch(`${WORKER_BASE}/api/access/status`, { headers: { 'X-Access-Key': k } });
+          const d = await r.json();
+          if (d && d.allowed) { __setAccessKey(k); onUnlocked(); return; }
+        } catch (_) { /* jatuh ke pesan gagal di bawah */ }
+        setErr('Kode salah atau sudah tidak berlaku. Minta link terbaru dari admin.');
+        setBusy(false);
+      };
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 p-6">
+          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-7 text-center">
+            <div className="mx-auto w-16 h-16 rounded-2xl bg-purple-100 flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-purple-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            </div>
+            <h1 className="font-extrabold text-xl text-slate-800">Akses Dibatasi</h1>
+            <p className="text-sm text-slate-500 mt-1.5">Aplikasi Tarobun hanya bisa dibuka lewat <b>link resmi</b> dari admin. Buka ulang link tersebut, atau tempel link/kodenya di bawah.</p>
+            <form onSubmit={submit} className="mt-5 space-y-3 text-left">
+              <input type="text" value={code} onChange={(e) => { setCode(e.target.value); setErr(''); }} placeholder="Tempel link atau kode akses" autoComplete="off" className="w-full px-3 py-3 border border-slate-300 rounded-xl text-sm" />
+              {err && <p className="text-xs text-rose-600 font-semibold">{err}</p>}
+              <button type="submit" disabled={busy || !code.trim()} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">{busy ? 'Memeriksa...' : 'Buka Aplikasi'}</button>
+            </form>
+            <p className="text-[11px] text-slate-400 mt-4">Belum punya link? Hubungi admin Tarobun.</p>
+          </div>
+        </div>
+      );
+    }
+
+    function SecCard({ children }) { return <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">{children}</div>; }
+
+    function AdminSecurityTab() {
+      const [acc, setAcc] = React.useState(null);
+      const [msg, setMsg] = React.useState('');
+      const [busy, setBusy] = React.useState('');
+      const [grace, setGrace] = React.useState(24);
+      const [newLink, setNewLink] = React.useState('');
+      const [migr, setMigr] = React.useState(null); // { running, total, hashed, encrypted, done, error }
+      const [copied, setCopied] = React.useState(false);
+      React.useEffect(() => { scheduleLucideIcons(); });
+      const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 3500); };
+      const load = async () => { try { setAcc(await pettyApi('/api/security/access')); } catch (e) { flash(e.message); } };
+      React.useEffect(() => { load(); }, []);
+      const hasLocalKey = !!__getAccessKey();
+      const fmt = (ts) => ts ? new Date(ts).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+
+      const rotate = async () => {
+        if (acc && acc.enabled && !window.confirm(grace > 0 ? `Link lama tetap berlaku ${grace} jam, setelah itu mati. Lanjut buat link baru?` : 'Link lama LANGSUNG mati. Semua staf harus memakai link baru. Lanjut?')) return;
+        setBusy('rotate');
+        try {
+          const d = await pettyApi('/api/security/access/rotate', { method: 'POST', body: { graceHours: Number(grace) || 0 } });
+          __setAccessKey(d.key); // perangkat admin langsung memakai kunci baru agar tidak terkunci
+          setNewLink(`${location.origin}${location.pathname}?k=${d.key}`);
+          setCopied(false);
+          flash('Link akses baru dibuat. Salin dan bagikan ke staf.');
+          load();
+        } catch (e) { flash(e.message); } finally { setBusy(''); }
+      };
+      const toggle = async (on) => {
+        setBusy('enable');
+        try { await pettyApi('/api/security/access/enable', { method: 'POST', body: { on } }); flash(on ? 'Gerbang link akses DINYALAKAN.' : 'Gerbang link akses dimatikan.'); load(); }
+        catch (e) { flash(e.message); } finally { setBusy(''); }
+      };
+      const runMigrate = async () => {
+        if (!window.confirm('Amankan semua token sekarang? Token login lama diubah jadi hash (tidak bisa dilihat lagi) dan token bot Telegram dienkripsi. Token tetap berlaku seperti biasa.')) return;
+        setMigr({ running: true, total: 0, hashed: 0, encrypted: 0 });
+        let offset = 0; let hashed = 0; let encrypted = 0; let total = 0;
+        try {
+          for (let guard = 0; guard < 200 && offset !== null; guard++) {
+            const d = await pettyApi('/api/security/migrate', { method: 'POST', body: { offset } });
+            hashed += d.hashed; encrypted += d.encrypted; total = d.total; offset = d.next;
+            setMigr({ running: offset !== null, total, hashed, encrypted });
+          }
+          setMigr({ running: false, done: true, total, hashed, encrypted });
+        } catch (e) { setMigr({ running: false, error: e.message, total, hashed, encrypted }); }
+      };
+
+      if (!acc) return <div className="bg-white rounded-2xl p-6 border border-slate-200 text-center text-sm text-slate-500">{msg || 'Memuat pengaturan keamanan...'}</div>;
+      return (
+        <div className="space-y-4">
+          <div className="bg-gradient-to-br from-slate-800 to-purple-900 text-white rounded-2xl p-5">
+            <h2 className="font-extrabold text-lg">Keamanan</h2>
+            <p className="text-xs text-purple-200 mt-0.5">Atur siapa yang bisa membuka aplikasi dan amankan token yang tersimpan di server.</p>
+          </div>
+
+          <SecCard>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-slate-800 text-base">Link Akses Web</h3>
+                <p className="text-xs text-slate-500">Kalau dinyalakan, aplikasi hanya berfungsi untuk yang membuka link berkode. Tanpa link, login pun tidak bisa.</p>
+              </div>
+              <span className={`shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-full ${acc.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{acc.enabled ? 'AKTIF' : 'NONAKTIF'}</span>
+            </div>
+            {acc.overriddenByEnv && <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2">Gerbang sedang dimatikan paksa lewat variabel Worker ACCESS_GATE_DISABLED. Hapus variabel itu agar pengaturan ini berlaku.</p>}
+            <div className="text-xs text-slate-600 space-y-1">
+              <p>Link dibuat: <b>{fmt(acc.createdAt)}</b></p>
+              {acc.prevUntil > Date.now() && <p>Link lama masih berlaku sampai: <b>{fmt(acc.prevUntil)}</b></p>}
+              <p>Perangkat ini {hasLocalKey ? <b className="text-emerald-700">sudah memegang kunci</b> : <b className="text-rose-600">belum memegang kunci</b>}.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold text-slate-600">Link lama berlaku</label>
+              <select value={grace} onChange={(e) => setGrace(e.target.value)} className="px-2 py-1.5 border border-slate-300 rounded-lg text-xs">
+                <option value={0}>Langsung mati</option><option value={24}>24 jam</option><option value={72}>72 jam</option><option value={168}>7 hari</option>
+              </select>
+            </div>
+            <button type="button" onClick={rotate} disabled={busy === 'rotate'} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl text-sm">{busy === 'rotate' ? 'Membuat...' : (acc.hasKey ? 'Buat Link Akses Baru' : 'Buat Link Akses')}</button>
+            {newLink && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
+                <p className="text-[11px] font-bold text-emerald-800">Link akses (hanya tampil sekali, salin sekarang):</p>
+                <div className="bg-white border border-emerald-200 rounded-lg px-3 py-2 text-[11px] font-mono break-all select-all">{newLink}</div>
+                <button type="button" onClick={() => { navigator.clipboard && navigator.clipboard.writeText(newLink); setCopied(true); }} className="w-full bg-emerald-600 text-white font-bold py-2 rounded-lg text-xs">{copied ? 'Tersalin ✓' : 'Salin Link'}</button>
+                <p className="text-[10px] text-emerald-700">Bagikan hanya ke staf lewat grup tertutup. Siapa pun yang punya link ini bisa membuka aplikasi.</p>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+              <div>
+                <p className="text-sm font-bold text-slate-800">Wajib pakai link</p>
+                <p className="text-[11px] text-slate-500">{acc.hasKey ? 'Staf yang belum membuka link akan melihat layar "Akses Dibatasi".' : 'Buat link dulu sebelum menyalakan.'}</p>
+              </div>
+              <ToggleSwitch on={acc.enabled} disabled={busy === 'enable' || !acc.hasKey} onChange={toggle} />
+            </div>
+            <p className="text-[10px] text-slate-400">Urutan aman: buat link, buka link itu di perangkat admin, nyalakan, lalu bagikan link ke staf. Staf cukup membuka link sekali per perangkat.</p>
+          </SecCard>
+
+          <SecCard>
+            <h3 className="font-bold text-slate-800 text-base">Amankan Token Tersimpan</h3>
+            <p className="text-xs text-slate-500">Token login toko &amp; Store Leader diubah jadi <b>hash</b> (satu arah, tidak bisa dibalik). Token Bot Telegram <b>dienkripsi</b> dan tidak lagi dikirim ke browser. Token lama otomatis diamankan saat login berikutnya; tombol ini mengerjakan semuanya sekarang.</p>
+            <button type="button" onClick={runMigrate} disabled={migr && migr.running} className="w-full bg-slate-800 hover:bg-slate-900 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl text-sm">{migr && migr.running ? 'Mengamankan...' : 'Amankan Semua Token Sekarang'}</button>
+            {migr && (
+              <div className={`rounded-xl px-3 py-2.5 text-xs ${migr.error ? 'bg-rose-50 text-rose-700' : (migr.done ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600')}`}>
+                {migr.error ? `Gagal: ${migr.error}` : (migr.done ? 'Selesai. ' : 'Berjalan... ')}
+                {migr.total} toko diperiksa · {migr.hashed} token login di-hash · {migr.encrypted} token bot dienkripsi
+              </div>
+            )}
+          </SecCard>
+
+          <SecCard>
+            <h3 className="font-bold text-slate-800 text-base">Daftar Periksa Keamanan</h3>
+            <ul className="space-y-2 text-xs">
+              <li className="flex gap-2"><span>{acc.hasDataKey ? '✅' : '⚠️'}</span><span><b>Kunci enkripsi khusus (DATA_ENC_KEY):</b> {acc.hasDataKey ? 'sudah diatur.' : 'belum diatur, sementara memakai JWT_SECRET. Sangat disarankan membuat Secret DATA_ENC_KEY (teks acak panjang) di Cloudflare. Simpan salinannya di tempat aman, karena tanpa kunci ini token bot tidak bisa dibuka lagi.'}</span></li>
+              <li className="flex gap-2"><span>{acc.enabled ? '✅' : '⚠️'}</span><span><b>Link akses:</b> {acc.enabled ? 'aktif.' : 'belum dinyalakan.'}</span></li>
+              <li className="flex gap-2"><span>💡</span><span><b>Saran lanjutan:</b> aktifkan Cloudflare WAF/Rate Limiting rule dan Bot Fight Mode di domain Worker, pasang Cloudflare Turnstile di layar login, dan ganti link akses tiap kali ada staf yang keluar.</span></li>
+            </ul>
+          </SecCard>
+          {msg && <p className="text-xs font-semibold text-purple-700 text-center">{msg}</p>}
         </div>
       );
     }

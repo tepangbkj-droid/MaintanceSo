@@ -173,7 +173,7 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${WORKER_BASE}/api/rtdb/get?path=storeDirectory`);
+        const res = await fetch(`${WORKER_BASE}/api/psikotes/public/stores`);
         const data = await res.json();
         if (cancelled) return;
         const dir = data.value || {};

@@ -1440,14 +1440,19 @@ const { useState, useEffect } = React;
     // Kirim FOTO/VIDEO ke grup Telegram toko lewat relay server (PRD 3.2.C).
     // `show_caption_above_media` membuat teks tampil DI ATAS media (Bot API 7.4+). Caption Telegram maks 1024 karakter.
     const sendTelegramMedia = async (storeId, media, caption) => {
+      // Batas waktu 120 dtk per toko: Telegram perlu mengunduh video dulu dari server kita. Tanpa batas ini
+      // satu toko yang macet membuat tombol "Mengirim..." menggantung selamanya.
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 120000);
       try {
         const isVideo = media.type === 'video';
         const body = { [isVideo ? 'video' : 'photo']: media.url, show_caption_above_media: true };
         if (caption) { body.caption = caption; body.parse_mode = 'Markdown'; }
-        const r = await tgRelayFetch(isVideo ? 'sendVideo' : 'sendPhoto', body, { storeId });
+        const r = await tgRelayFetch(isVideo ? 'sendVideo' : 'sendPhoto', body, { storeId, signal: ctl.signal });
         const d = await r.json().catch(() => ({}));
         return d.ok ? { ok: true } : { ok: false, error: d.description || 'Telegram menolak media' };
-      } catch (e) { return { ok: false, error: 'Gagal mengirim media ke Telegram' }; }
+      } catch (e) { return { ok: false, error: ctl.signal.aborted ? 'Waktu habis (Telegram terlalu lama menerima video)' : 'Gagal mengirim media ke Telegram' }; }
+      finally { clearTimeout(timer); }
     };
     // Perkecil foto pengumuman (maks 1280px, JPEG) agar ringan & di bawah batas Telegram.
     const compressAnnouncementImage = async (file) => {
@@ -4039,6 +4044,7 @@ const { useState, useEffect } = React;
       // ini menambahkan kotak cari supaya lebih cepat menemukan toko tertentu).
       const [chatStoreQuery, setChatStoreQuery] = useState('');
       const [sendingWebUpdate, setSendingWebUpdate] = useState(false);
+      const [webUpdateProgress, setWebUpdateProgress] = useState(''); // teks status saat mengirim broadcast
       const [webUpdateReport, setWebUpdateReport] = useState(null); // { success: [], failed: [] }
       const [webMedia, setWebMedia] = useState(null); // { file, preview, type: 'image' | 'video' }
       const handlePickWebMedia = async (e) => {
@@ -4802,6 +4808,9 @@ const { useState, useEffect } = React;
         // Lampiran opsional: unggah SEKALI ke R2, lalu dipakai untuk semua toko tujuan + pop-up web.
         let media = null;
         if (webMedia) {
+          const t0 = Date.now(); const mb = (webMedia.file.size / 1048576).toFixed(1);
+          const tick = setInterval(() => setWebUpdateProgress(`Mengunggah lampiran ${mb} MB… ${Math.round((Date.now() - t0) / 1000)} dtk`), 1000);
+          setWebUpdateProgress(`Mengunggah lampiran ${mb} MB…`);
           try {
             const blob = webMedia.type === 'image' ? await compressAnnouncementImage(webMedia.file) : webMedia.file;
             const ext = webMedia.type === 'image' ? 'jpg' : (webMedia.file.type === 'video/webm' ? 'webm' : 'mp4');
@@ -4809,11 +4818,14 @@ const { useState, useEffect } = React;
             media = { type: webMedia.type, url: up.url, key: up.key };
           } catch (err) {
             showAdminToast('⚠️ Gagal mengunggah lampiran. Coba lagi.');
-            setSendingWebUpdate(false);
+            setWebUpdateProgress(''); setSendingWebUpdate(false);
             return;
-          }
+          } finally { clearInterval(tick); }
         }
-        for (const store of targets) {
+        // Kirim ke 3 toko sekaligus (bot tiap toko berbeda, jadi aman). Dulu satu per satu: tiap toko menunggu
+        // Telegram mengunduh video dulu, sehingga total waktu = jumlah toko x waktu unduh.
+        let doneCount = 0;
+        const sendOne = async (store) => {
           try {
             const snap = await restOnce(db.ref(`stores/${store.id}/telegramConfig`));
             const tg = snap.val() || {};
@@ -4821,7 +4833,7 @@ const { useState, useEffect } = React;
             const chatId = (tg.chatId || '').trim();
             if (!token || !chatId) {
               failed.push(`${store.name} (Bot Telegram belum diatur)`);
-              continue;
+              return;
             }
             const text = `*📢 UPDATE SISTEM WEB TAROBUN*\n\n${escapeMdWebUpdate(message)}`;
             // PERBAIKAN: kode lama mengecek `response.ok` (status HTTP fetch), padahal Telegram
@@ -4841,8 +4853,16 @@ const { useState, useEffect } = React;
           } catch (err) {
             console.error('Gagal kirim Update Web ke toko:', store.name, err);
             failed.push(store.name);
+          } finally {
+            doneCount++; setWebUpdateProgress(`Mengirim ke toko… ${doneCount}/${targets.length}`);
           }
-        }
+        };
+        setWebUpdateProgress(`Mengirim ke toko… 0/${targets.length}`);
+        const queue = targets.slice();
+        const pool = Array.from({ length: Math.min(3, queue.length) }, async () => {
+          while (queue.length) { const st = queue.shift(); await sendOne(st); }
+        });
+        await Promise.all(pool);
         setWebUpdateReport({ success, failed });
 
         // Simpan juga ke database agar Toko yang online menerima pop-up real-time.
@@ -4866,7 +4886,7 @@ const { useState, useEffect } = React;
           console.error('Gagal menyimpan Update Web ke database:', err);
         }
 
-        setSendingWebUpdate(false);
+        setWebUpdateProgress(''); setSendingWebUpdate(false);
         if (success.length > 0) {
           showAdminToast(`✅ Update Web terkirim ke ${success.length} toko.`);
           setWebUpdateText('');
@@ -5703,7 +5723,7 @@ const { useState, useEffect } = React;
                     className="w-full flex items-center justify-center gap-2 bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm"
                   >
                     <i data-lucide="send" className="w-4 h-4"></i>
-                    {sendingWebUpdate ? 'Mengirim...' : 'Kirim'}
+                    {sendingWebUpdate ? (webUpdateProgress || 'Mengirim...') : 'Kirim'}
                   </button>
 
                   {webUpdateReport && (
@@ -10863,11 +10883,15 @@ Daily inventory done✅
       const handleQuickSendWasteFotoToTelegram = async () => {
         if (!wasteFotoForm.fotoPreview) return;
         try {
+          // Kategori final sama persis dengan alur "Simpan ke Riwayat": Bun Waste / Rijek Barang tidak
+          // boleh terkirim dengan label kategori rijek yang kebetulan masih terpilih di form.
+          const finalKategori = wasteFotoForm.tipe === 'bunWaste' ? 'bunWaste'
+            : wasteFotoForm.tipe === 'rijekBarang' ? 'rijekBarang' : wasteFotoForm.kategori;
           const stampedFoto = await stampWasteFotoImage(
             wasteFotoForm.fotoPreview,
-            buildWasteFotoStampLines(wasteFotoForm.kategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan)
+            buildWasteFotoStampLines(finalKategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan)
           );
-          await handleSendSingleWasteFotoToTelegram({ ...wasteFotoForm, foto: stampedFoto, tanggal: todayWIB() });
+          await handleSendSingleWasteFotoToTelegram({ ...wasteFotoForm, kategori: finalKategori, foto: stampedFoto, tanggal: todayWIB() });
         } catch (error) {
           console.error(error);
           showToast('Gagal menyiapkan stempel foto sebelum mengirim.');

@@ -404,7 +404,20 @@
 <body class="bg-slate-50 text-slate-800 font-sans">
 
 
-  <div id="root"></div>
+  <div id="root">
+    <!-- PERBAIKAN (2026-10): layar pembuka statis. Sebelumnya #root kosong sampai Babel selesai
+         mengompilasi seluruh aplikasi (beberapa detik di HP) -> layar putih kosong; lalu splash
+         React tampil BERANTAKAN (logo raksasa, teks tanpa gaya) selama Tailwind belum termuat.
+         Blok ini memakai inline style murni sehingga tampil rapi seketika, dan otomatis diganti
+         React begitu aplikasi siap. -->
+    <div id="boot-splash" style="position:fixed;top:0;right:0;bottom:0;left:0;z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#581c87,#312e81,#0f172a);font-family:Inter,system-ui,-apple-system,sans-serif;">
+      <img src="icon-512.png" alt="Tarobun" width="112" height="112" style="width:112px;height:112px;max-width:60vw;border-radius:24px;object-fit:contain;background:rgba(255,255,255,.05);box-shadow:0 25px 50px -12px rgba(0,0,0,.5);">
+      <div style="margin-top:20px;text-align:center;padding:0 16px;">
+        <div style="color:#fff;font-weight:800;font-size:18px;letter-spacing:.02em;">TAROBUN SO Mandiri Hub</div>
+        <div style="color:#e9d5ff;font-size:12px;margin-top:4px;">Memuat aplikasi...</div>
+      </div>
+    </div>
+  </div>
 
 <script>
   // ==========================================
@@ -721,9 +734,16 @@ const { useState, useEffect } = React;
     // bertanya LANGSUNG ke server lewat Cookie HttpOnly (otomatis terkirim oleh __apiFetch),
     // karena JavaScript di sini tidak pernah bisa membaca isi cookie sesi itu sendiri.
     // Mengembalikan null kalau tidak ada sesi valid (belum login / cookie kedaluwarsa/dihapus).
+    // PERBAIKAN (2026-10): (1) ada batas waktu 12 dtk -> layar "memuat" tidak bisa menggantung selamanya
+    // kalau sinyal jelek; (2) gangguan jaringan/server (timeout, HTTP 5xx) mengembalikan '__unreachable__'
+    // dan BUKAN null, supaya pengguna yang sebenarnya masih punya sesi tidak langsung dilempar ke layar
+    // login (dan sesi lokalnya tidak dihapus) hanya karena sinyal putus sebentar saat membuka web.
     const __fetchServerSession = async () => {
+      const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch (e) {} }, 12000);
       try {
-        const res = await __apiFetch(`${WORKER_BASE}/api/session/me`, { cache: 'no-store' });
+        const res = await __apiFetch(`${WORKER_BASE}/api/session/me`, { cache: 'no-store', signal: ctl ? ctl.signal : undefined });
+        if (res.status >= 500) return '__unreachable__';
         if (!res.ok) return null;
         const data = await res.json();
         if (!data || !data.ok) return null;
@@ -731,8 +751,8 @@ const { useState, useEffect } = React;
         if (data.role === 'leader') return { storeId: data.storeId, role: 'leader', storeName: data.storeName };
         return { storeId: data.storeId, role: 'store', storeInfo: data.storeInfo };
       } catch (e) {
-        return null;
-      }
+        return '__unreachable__';
+      } finally { clearTimeout(timer); }
     };
 
     const __makeSnapshot = (value) => ({
@@ -1112,12 +1132,13 @@ const { useState, useEffect } = React;
     // Upload satu blob/foto ke R2 lewat Worker. `folder` dipakai sebagai prefix key (mis.
     // "wasteFotos/{storeId}") supaya rapi dan gampang ditelusuri. Balikannya { url, key } —
     // `url` langsung dipakai sebagai <img src>, `key` disimpan di database untuk keperluan hapus nanti.
-    const uploadMediaToR2 = async (dataUrlOrBlob, folder, ext = 'jpg') => {
+    const uploadMediaToR2 = async (dataUrlOrBlob, folder, ext = 'jpg', opts = {}) => {
       const blob = dataUrlOrBlob instanceof Blob ? dataUrlOrBlob : dataUrlToBlob(dataUrlOrBlob);
       const res = await __apiFetch(`${WORKER_BASE}/api/media/upload?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(ext)}`, {
         method: 'POST',
         headers: { 'Content-Type': blob.type || 'application/octet-stream', ...__authHeaders() },
         body: blob,
+        signal: opts.signal,
       });
       if (!res.ok) throw new Error('Gagal upload foto ke storage (HTTP ' + res.status + ')');
       const data = await res.json();
@@ -1155,7 +1176,14 @@ const { useState, useEffect } = React;
         // Async: mengecek sesi ke server (lihat __fetchServerSession) alih-alih membaca
         // localStorage secara instan, karena kebenaran sesi sekarang murni ada di server/cookie.
         (async () => {
-          const savedUser = await __fetchServerSession();
+          let savedUser = await __fetchServerSession();
+          if (savedUser === '__unreachable__') {
+            // Server tidak terjangkau: pakai sesi lokal yang masih berlaku (kalau ada). Kalau memang
+            // sesinya sudah tidak valid, request API berikutnya akan ditolak server (401) dan
+            // pengguna diarahkan login seperti biasa.
+            let ls = null; try { ls = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) {}
+            savedUser = (ls && ls.expiresAt && Date.now() < ls.expiresAt) ? { uid: ls.uid || ls.storeId, ...ls } : null;
+          }
           auth.currentUser = __makeUser(savedUser);
           cb(auth.currentUser);
         })();
@@ -1450,7 +1478,17 @@ const { useState, useEffect } = React;
         if (caption) { body.caption = caption; body.parse_mode = 'Markdown'; }
         const r = await tgRelayFetch(isVideo ? 'sendVideo' : 'sendPhoto', body, { storeId, signal: ctl.signal });
         const d = await r.json().catch(() => ({}));
-        return d.ok ? { ok: true } : { ok: false, error: d.description || 'Telegram menolak media' };
+        if (d.ok) return { ok: true };
+        // Cadangan: video ditolak Telegram karena format/kodek -> kirim sebagai dokumen (tetap bisa diputar).
+        if (isVideo && !/Token|Chat ID|storeId|chat not found|blocked|kicked|Unauthorized|tidak ditemukan/i.test(d.description || '')) {
+          const docBody = { document: media.url };
+          if (caption) { docBody.caption = caption; docBody.parse_mode = 'Markdown'; }
+          const r2 = await tgRelayFetch('sendDocument', docBody, { storeId, signal: ctl.signal });
+          const d2 = await r2.json().catch(() => ({}));
+          if (d2.ok) return { ok: true };
+          return { ok: false, error: d2.description || d.description || 'Telegram menolak media' };
+        }
+        return { ok: false, error: d.description || 'Telegram menolak media' };
       } catch (e) { return { ok: false, error: ctl.signal.aborted ? 'Waktu habis (Telegram terlalu lama menerima video)' : 'Gagal mengirim media ke Telegram' }; }
       finally { clearTimeout(timer); }
     };
@@ -2253,24 +2291,34 @@ const { useState, useEffect } = React;
     // Login/utama. onFinish dipanggil otomatis lewat animasi CSS "tarobun-splash"
     // (lihat <style> di <head>) setelah durasi tampil selesai.
     function SplashScreen({ onFinish }) {
+      // PERBAIKAN (2026-10): `onFinish` dari induk berupa fungsi BARU di setiap render, sehingga
+      // effect lama (dependensi [onFinish]) mengulang timer 1,8 dtk tiap induk render ulang
+      // (cek akses, cek sesi, dll) -> splash bisa tertahan lebih lama / berkedip. Pakai ref + timer sekali jalan.
+      const finishRef = React.useRef(onFinish);
+      finishRef.current = onFinish;
       useEffect(() => {
-        const timer = setTimeout(onFinish, 1800);
+        const timer = setTimeout(() => finishRef.current && finishRef.current(), 1800);
         return () => clearTimeout(timer);
-      }, [onFinish]);
+      }, []);
 
+      // Gaya inti ditulis inline (selain class Tailwind) supaya splash tetap rapi walau Tailwind CDN
+      // belum selesai dimuat saat aplikasi pertama dibuka.
       return (
         <div
           className="tarobun-splash fixed inset-0 z-[999] flex flex-col items-center justify-center bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900"
-          onAnimationEnd={(e) => { if (e.animationName === 'tarobunSplashOut') onFinish(); }}
+          style={{ position: 'fixed', top: 0, right: 0, bottom: 0, left: 0, zIndex: 999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg,#581c87,#312e81,#0f172a)' }}
+          onAnimationEnd={(e) => { if (e.target === e.currentTarget && e.animationName === 'tarobunSplashOut') finishRef.current && finishRef.current(); }}
         >
           <img
             src="icon-512.png"
             alt="Tarobun"
+            width="112" height="112"
             className="tarobun-splash-logo w-28 h-28 sm:w-32 sm:h-32 rounded-3xl shadow-2xl object-contain bg-white/5"
+            style={{ width: 112, height: 112, maxWidth: '60vw', borderRadius: 24, objectFit: 'contain' }}
           />
-          <div className="tarobun-splash-text mt-5 text-center">
-            <h1 className="text-white font-display font-extrabold text-lg tracking-wide">TAROBUN SO Mandiri Hub</h1>
-            <p className="text-purple-200 text-xs mt-1">Memuat aplikasi...</p>
+          <div className="tarobun-splash-text mt-5 text-center" style={{ marginTop: 20, textAlign: 'center', padding: '0 16px' }}>
+            <h1 className="text-white font-display font-extrabold text-lg tracking-wide" style={{ color: '#fff', fontWeight: 800, fontSize: 18, margin: 0 }}>TAROBUN SO Mandiri Hub</h1>
+            <p className="text-purple-200 text-xs mt-1" style={{ color: '#e9d5ff', fontSize: 12, margin: '4px 0 0' }}>Memuat aplikasi...</p>
           </div>
         </div>
       );
@@ -4051,10 +4099,12 @@ const { useState, useEffect } = React;
         const f = e.target.files && e.target.files[0];
         e.target.value = '';
         if (!f) return;
-        const isImg = f.type.startsWith('image/'); const isVid = f.type === 'video/mp4' || f.type === 'video/webm';
+        const nm = (f.name || '').toLowerCase();
+        const ftype = f.type || (nm.endsWith('.mp4') ? 'video/mp4' : nm.endsWith('.webm') ? 'video/webm' : '');
+        const isImg = ftype.startsWith('image/'); const isVid = ftype === 'video/mp4' || ftype === 'video/webm';
         if (!isImg && !isVid) { showAdminToast('⚠️ Lampiran harus foto atau video (MP4/WebM).'); return; }
         if (f.size > 15 * 1024 * 1024) { showAdminToast('⚠️ Ukuran lampiran maksimal 15 MB.'); return; }
-        setWebMedia({ file: f, preview: URL.createObjectURL(f), type: isImg ? 'image' : 'video' });
+        setWebMedia({ file: (f.type ? f : new Blob([f], { type: ftype })), preview: URL.createObjectURL(f), type: isImg ? 'image' : 'video' });
       };
       const toggleWebUpdateStore = (storeId) => {
         setWebUpdateStoreIds(prev => prev.includes(storeId) ? prev.filter(id => id !== storeId) : [...prev, storeId]);
@@ -4812,12 +4862,17 @@ const { useState, useEffect } = React;
           const tick = setInterval(() => setWebUpdateProgress(`Mengunggah lampiran ${mb} MB… ${Math.round((Date.now() - t0) / 1000)} dtk`), 1000);
           setWebUpdateProgress(`Mengunggah lampiran ${mb} MB…`);
           try {
-            const blob = webMedia.type === 'image' ? await compressAnnouncementImage(webMedia.file) : webMedia.file;
-            const ext = webMedia.type === 'image' ? 'jpg' : (webMedia.file.type === 'video/webm' ? 'webm' : 'mp4');
-            const up = await uploadMediaToR2(blob, 'announcements', ext);
+            const isWebm = webMedia.file.type === 'video/webm';
+            const blob = webMedia.type === 'image' ? await compressAnnouncementImage(webMedia.file) : new Blob([webMedia.file], { type: isWebm ? 'video/webm' : 'video/mp4' });
+            const ext = webMedia.type === 'image' ? 'jpg' : (isWebm ? 'webm' : 'mp4');
+            const upCtl = new AbortController();
+            const upTimer = setTimeout(() => upCtl.abort(), 180000);
+            let up;
+            try { up = await uploadMediaToR2(blob, 'announcements', ext, { signal: upCtl.signal }); } finally { clearTimeout(upTimer); }
             media = { type: webMedia.type, url: up.url, key: up.key };
           } catch (err) {
-            showAdminToast('⚠️ Gagal mengunggah lampiran. Coba lagi.');
+            console.error('Gagal unggah lampiran Update Web:', err);
+            showAdminToast('⚠️ Gagal mengunggah lampiran: ' + ((err && err.name === 'AbortError') ? 'koneksi terlalu lambat (timeout).' : ((err && err.message) || 'coba lagi.')));
             setWebUpdateProgress(''); setSendingWebUpdate(false);
             return;
           } finally { clearInterval(tick); }
@@ -4862,7 +4917,7 @@ const { useState, useEffect } = React;
         const pool = Array.from({ length: Math.min(3, queue.length) }, async () => {
           while (queue.length) { const st = queue.shift(); await sendOne(st); }
         });
-        await Promise.all(pool);
+        try { await Promise.all(pool); } catch (err) { console.error('Broadcast Update Web terhenti:', err); }
         setWebUpdateReport({ success, failed });
 
         // Simpan juga ke database agar Toko yang online menerima pop-up real-time.
@@ -6325,7 +6380,9 @@ const { useState, useEffect } = React;
       const [accessGate, setAccessGate] = useState('checking');
       const checkAccess = async () => {
         try {
-          const r = await fetch(`${WORKER_BASE}/api/access/status`);
+          const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+          const tmo = setTimeout(() => { try { ctl && ctl.abort(); } catch (e) {} }, 8000);
+          let r; try { r = await fetch(`${WORKER_BASE}/api/access/status`, { headers: __authHeaders(), signal: ctl ? ctl.signal : undefined }); } finally { clearTimeout(tmo); }
           const d = await r.json();
           setAccessGate(d && d.gate && !d.allowed ? 'blocked' : 'ok');
         } catch (e) { setAccessGate('ok'); } // gagal jaringan: biarkan; API tetap menolak sendiri kalau memang terkunci

@@ -516,6 +516,10 @@ const { useState, useEffect } = React;
     // ini di-deploy (harus SAMA dengan salah satu domain di ALLOWED_ORIGIN, wrangler.toml).
     const PUBLIC_APP_BASE = 'https://so-mandiri-tarobun.vercel.app';
 
+    // Tanggal "hari ini" menurut WIB (UTC+7) dalam format YYYY-MM-DD. JANGAN pakai
+    // todayWIB(): itu tanggal UTC, jadi pukul 00.00-06.59 WIB masih "kemarin".
+    function todayWIB(ts) { return new Date((ts === undefined ? Date.now() : ts) + 7 * 3600000).toISOString().slice(0, 10); }
+
     // ==========================================
     // SEMUA fetch() ke WORKER_BASE WAJIB lewat __apiFetch (bukan fetch() langsung) supaya
     // credentials: 'include' selalu ikut terkirim -- ini yang membuat Cookie sesi HttpOnly
@@ -6483,7 +6487,8 @@ const { useState, useEffect } = React;
         return () => { alive = false; clearInterval(t); };
       }, []);
       const [notification, setNotification] = useState(null);
-      const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+      const [selectedDate, setSelectedDate] = useState(todayWIB());
+      useFollowToday(selectedDate, setSelectedDate);
 
       const showToast = (message) => {
         setNotification(message);
@@ -6762,7 +6767,7 @@ const { useState, useEffect } = React;
         setSavingTransfer(true);
         try {
           const id = Date.now().toString();
-          const tanggal = new Date().toISOString().split('T')[0];
+          const tanggal = todayWIB();
           const payload = { ...transferForm, pihak: transferForm.pihak.trim(), jenisBarang: transferForm.jenisBarang.trim(), tanggal, createdAt: Date.now() };
           await restSet(db.ref(`${storeBase}/transfers/${id}`), payload);
           showToast('Transfer tersimpan! 📦');
@@ -6890,7 +6895,7 @@ const { useState, useEffect } = React;
       };
       const goPrevWeek = () => { const d = new Date(weekAnchor+'T00:00:00'); d.setDate(d.getDate()-7); setWeekAnchor(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); };
       const goNextWeek = () => { const d = new Date(weekAnchor+'T00:00:00'); d.setDate(d.getDate()+7); setWeekAnchor(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); };
-      const goThisWeek = () => setWeekAnchor(new Date().toISOString().slice(0,10));
+      const goThisWeek = () => setWeekAnchor(todayWIB());
       const GRID_STATUS_BG = { Hadir:'bg-emerald-50 border-emerald-200', Libur:'bg-slate-100 border-slate-200', Izin:'bg-amber-50 border-amber-200', Sakit:'bg-rose-50 border-rose-200', Cuti:'bg-sky-50 border-sky-200' };
       const GRID_STATUS_TEXT = { Hadir:'text-emerald-700', Libur:'text-slate-500', Izin:'text-amber-700', Sakit:'text-rose-700', Cuti:'text-sky-700' };
       const calcWeekTotal = (nama) => {
@@ -7049,7 +7054,7 @@ const { useState, useEffect } = React;
               <i data-lucide="chevron-right" className="w-4 h-4"></i>
             </button>
             <button
-              onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
+              onClick={() => setSelectedDate(todayWIB())}
               className="shrink-0 bg-purple-50 text-purple-700 text-xs font-bold px-3 py-2 rounded-lg"
             >
               Hari Ini
@@ -7451,7 +7456,7 @@ const { useState, useEffect } = React;
                           <tr className="bg-slate-50">
                             <th className="sticky left-0 z-10 bg-slate-50 border border-slate-200 px-3 py-2 text-left text-xs font-bold text-slate-600 min-w-[110px]">Nama</th>
                             {weekDates.map((d,i) => {
-                              const isToday = d === new Date().toISOString().slice(0,10);
+                              const isToday = d === todayWIB();
                               return (
                                 <th key={d} className={`border border-slate-200 px-2 py-2 text-center text-xs font-bold min-w-[92px] ${isToday?'bg-purple-100 text-purple-800':'text-slate-600'}`}>
                                   <div>{DAY_LABELS_ID[i]}</div>
@@ -7473,7 +7478,7 @@ const { useState, useEffect } = React;
                               {weekDates.map(d => {
                                 const entry = getGridEntry(nama, d);
                                 const isEditing = gridEditCell && gridEditCell.dateStr === d && gridEditCell.namaTarget === nama;
-                                const isToday = d === new Date().toISOString().slice(0,10);
+                                const isToday = d === todayWIB();
                                 return (
                                   <td key={d} className={`border border-slate-200 p-1 align-top ${isToday?'bg-purple-50/40':''}`}>
                                     {isEditing ? (
@@ -8651,7 +8656,7 @@ const { useState, useEffect } = React;
       });
 
       // Default empty templates
-      const getEmptySalesState = (dateStr = new Date().toISOString().split('T')[0]) => ({
+      const getEmptySalesState = (dateStr = todayWIB()) => ({
         tanggal: dateStr,
         suhuFreezer: '',
         suhuChiller: '',
@@ -8694,7 +8699,7 @@ const { useState, useEffect } = React;
         custom: {} // field tambahan yang didefinisikan Admin (Form Builder)
       });
 
-      const getEmptyInventoryState = (dateStr = new Date().toISOString().split('T')[0]) => ({
+      const getEmptyInventoryState = (dateStr = todayWIB()) => ({
         tanggal: dateStr,
         frozenDough: '',
         toppingTaro: '',
@@ -8739,8 +8744,8 @@ const { useState, useEffect } = React;
         custom: {} // field tambahan yang didefinisikan Admin (Form Builder)
       });
 
-      const [salesData, setSalesData] = useDraftState(storeId, 'sales', () => getEmptySalesState());
-      const [inventoryData, setInventoryData] = useDraftState(storeId, 'inventory', () => getEmptyInventoryState());
+      const [salesData, setSalesData] = useDraftState(storeId, 'sales', () => getEmptySalesState(), { dateField: 'tanggal' });
+      const [inventoryData, setInventoryData] = useDraftState(storeId, 'inventory', () => getEmptyInventoryState(), { dateField: 'tanggal' });
       const [historyList, setHistoryList] = useState([]);
       const [customSalesFields, setCustomSalesFields] = useState([]);
       const [customInventoryFields, setCustomInventoryFields] = useState([]);
@@ -8918,14 +8923,14 @@ const { useState, useEffect } = React;
         { key: 'tissueLarge', label: 'Tissue Large', unit: 'pack' },
       ];
 
-      const getEmptyKedatanganForm = (dateStr = new Date().toISOString().split('T')[0]) => ({
+      const getEmptyKedatanganForm = (dateStr = todayWIB()) => ({
         tanggal: dateStr,
         noSuratJalan: '', // Kop Khusus / No. Faktur Surat Jalan
         items: {}, // { itemKey: jumlah }
         tidakSesuai: [], // [{ id, nama, jumlah, satuan, keterangan }]
       });
 
-      const [kedatanganForm, setKedatanganForm] = useDraftState(storeId, 'kedatangan', () => getEmptyKedatanganForm());
+      const [kedatanganForm, setKedatanganForm] = useDraftState(storeId, 'kedatangan', () => getEmptyKedatanganForm(), { dateField: 'tanggal' });
       const [kedatanganHistoryList, setKedatanganHistoryList] = useState([]);
       const [isSavingKedatangan, setIsSavingKedatangan] = useState(false);
       const [tidakSesuaiInput, setTidakSesuaiInput] = useState({ nama: '', jumlah: '', satuan: 'pcs', keterangan: '' });
@@ -8943,7 +8948,7 @@ const { useState, useEffect } = React;
       // sebagai pilihan (baik sebagai metode yang salah dipakai maupun yang seharusnya dipakai).
       const BAP_PAYMENT_ISSUE_METHODS = ['Tunai', 'EDC BCA', 'Qris BCA', 'Gofood', 'GrabFood', 'ShopeeFood'];
 
-      const getEmptyBapForm = (dateStr = new Date().toISOString().split('T')[0]) => ({
+      const getEmptyBapForm = (dateStr = todayWIB()) => ({
         tanggal: dateStr,
         // 'selisih' = Selisih Transaksi (form/format lama, tidak berubah), 'paymentIssue' = BAP
         // Payment Issue (baru, 2026-08) untuk kasus salah input metode pembayaran di POS.
@@ -8959,7 +8964,7 @@ const { useState, useEffect } = React;
         penginputanSeharusnya: BAP_PAYMENT_ISSUE_METHODS[1],
       });
 
-      const [bapForm, setBapForm] = useDraftState(storeId, 'bap', () => getEmptyBapForm());
+      const [bapForm, setBapForm] = useDraftState(storeId, 'bap', () => getEmptyBapForm(), { dateField: 'tanggal' });
       const [bapHistoryList, setBapHistoryList] = useState([]);
       const [isSavingBap, setIsSavingBap] = useState(false);
       // true selama keterangan belum diedit manual oleh user — teksnya ikut menyesuaikan
@@ -9073,21 +9078,22 @@ const { useState, useEffect } = React;
       const [isSavingFoto, setIsSavingFoto] = useState(false);
       const [sendingCategory, setSendingCategory] = useState(null);
       // Tanggal riwayat yang sedang ditampilkan di tab Foto Rijek (default: hari ini)
-      const [wasteFotoViewDate, setWasteFotoViewDate] = useState(() => new Date().toISOString().split('T')[0]);
+      const [wasteFotoViewDate, setWasteFotoViewDate] = useState(() => todayWIB());
+      useFollowToday(wasteFotoViewDate, setWasteFotoViewDate);
 
       // ==========================================
       // MENU: PRE ORDER PESANAN (2026-07-20)
       // ==========================================
       const getEmptyPreOrderForm = () => ({
-        tanggalPesanan: new Date().toISOString().split('T')[0],
+        tanggalPesanan: todayWIB(),
         namaPemesan: '',
         isiPesanan: '',
         buktiPreview: null, // bukti pembayaran/struk, base64 hasil kompresi untuk preview & kirim
-        pickupTanggal: new Date().toISOString().split('T')[0],
+        pickupTanggal: todayWIB(),
         pickupJam: '',
         metodePickup: 'ambilSendiri', // 'ojol' | 'ambilSendiri'
       });
-      const [preOrderForm, setPreOrderForm] = useDraftState(storeId, 'preorder', () => getEmptyPreOrderForm(), { omit: ['buktiPreview'] });
+      const [preOrderForm, setPreOrderForm] = useDraftState(storeId, 'preorder', () => getEmptyPreOrderForm(), { omit: ['buktiPreview'], dateFields: ['tanggalPesanan', 'pickupTanggal'] });
       const [preOrderList, setPreOrderList] = useState([]);
       const [isCompressingBukti, setIsCompressingBukti] = useState(false);
       const [isSavingPreOrder, setIsSavingPreOrder] = useState(false);
@@ -9376,7 +9382,7 @@ const { useState, useEffect } = React;
       };
 
       const handleClearForm = () => {
-        const today = new Date().toISOString().split('T')[0];
+        const today = todayWIB();
         setSalesData(getEmptySalesState(today));
         setInventoryData(getEmptyInventoryState(today));
         showToast('Form telah dikosongkan! Siap untuk input hari baru. 🧼');
@@ -10461,7 +10467,7 @@ Daily inventory done✅
             keterangan: wasteFotoForm.keterangan || '',
             foto: '',
             fotoKey: '',
-            tanggal: new Date(now).toISOString().split('T')[0],
+            tanggal: todayWIB(now),
             createdAt: now
           };
           // AUTO-SAVE (AC-02): simpan ke perangkat DULU, baru kirim ke server.
@@ -10698,13 +10704,13 @@ Daily inventory done✅
       const wasteFotoGroups = groupWasteFotosByCategory(wasteFotoListForViewDate);
 
       const handleWasteFotoViewYesterday = () => {
-        const d = new Date(wasteFotoViewDate + 'T00:00:00');
-        d.setDate(d.getDate() - 1);
-        setWasteFotoViewDate(d.toISOString().split('T')[0]);
+        const d = new Date(wasteFotoViewDate + 'T00:00:00Z');
+        d.setUTCDate(d.getUTCDate() - 1);
+        setWasteFotoViewDate(d.toISOString().slice(0, 10));
       };
 
       const handleWasteFotoViewToday = () => {
-        setWasteFotoViewDate(new Date().toISOString().split('T')[0]);
+        setWasteFotoViewDate(todayWIB());
       };
 
       // Gabungkan beberapa foto (base64) menjadi satu gambar kolase grid agar rapi saat dikirim ke Telegram
@@ -10861,7 +10867,7 @@ Daily inventory done✅
             wasteFotoForm.fotoPreview,
             buildWasteFotoStampLines(wasteFotoForm.kategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan)
           );
-          await handleSendSingleWasteFotoToTelegram({ ...wasteFotoForm, foto: stampedFoto, tanggal: new Date().toISOString().split('T')[0] });
+          await handleSendSingleWasteFotoToTelegram({ ...wasteFotoForm, foto: stampedFoto, tanggal: todayWIB() });
         } catch (error) {
           console.error(error);
           showToast('Gagal menyiapkan stempel foto sebelum mengirim.');
@@ -15066,11 +15072,33 @@ Daily inventory done✅
       const omit = o.omit || [];
       const maxAgeMs = (o.maxAgeHours || 18) * 3600000;
       const key = `${DRAFT_PREFIX}${storeId}:${name}`;
+      // Kolom tanggal mengikuti hari ini (WIB) HANYA untuk form yang masih kosong (belum disentuh).
+      // Form yang sudah berisi data kemarin dibiarkan tetap bertanggal kemarin supaya data tidak salah tanggal.
+      const dfs = o.dateFields || (o.dateField ? [o.dateField] : []);
+      const blank = (v) => { const r = { ...v }; dfs.forEach((f) => { r[f] = ''; }); return JSON.stringify(r); };
+      const bump = (v, today) => {
+        if (!v || typeof v !== 'object' || !dfs.length) return v;
+        if (!dfs.some((f) => v[f] && v[f] < today)) return v;
+        const fresh = typeof factory === 'function' ? factory() : factory;
+        try { if (blank(v) !== blank(fresh)) return v; } catch (e) { return v; }
+        const n = { ...v }; dfs.forEach((f) => { if (n[f] && n[f] < today) n[f] = today; });
+        return n;
+      };
       const [val, setVal] = React.useState(() => {
         const base = typeof factory === 'function' ? factory() : factory;
         const saved = draftRead(key, maxAgeMs);
-        return saved === null ? base : mergeDraft(base, saved);
+        const v = saved === null ? base : mergeDraft(base, saved);
+        return bump(v, todayWIB());
       });
+      const [dayKey, setDayKey] = React.useState(() => todayWIB());
+      React.useEffect(() => {
+        if (!dfs.length) return undefined;
+        const tick = () => setDayKey(todayWIB());
+        const iv = setInterval(tick, 30000);
+        document.addEventListener('visibilitychange', tick);
+        return () => { clearInterval(iv); document.removeEventListener('visibilitychange', tick); };
+      }, []);
+      React.useEffect(() => { if (dfs.length) setVal((prev) => bump(prev, dayKey)); }, [dayKey]);
       const firstRun = React.useRef(true);
       React.useEffect(() => {
         if (firstRun.current) { firstRun.current = false; return; } // jangan perpanjang umur draf hanya karena dibuka
@@ -15083,13 +15111,29 @@ Daily inventory done✅
       return [val, setVal];
     }
 
+    // Tampilan tanggal "hari ini" (bukan draf): saat web dibuka kembali di hari yang baru (WIB), tampilan yang
+    // tadinya "hari ini" pindah ke hari baru. Tanggal yang dipilih manual (mis. kemarin) tidak diubah.
+    function useFollowToday(value, setValue) {
+      const last = React.useRef(todayWIB());
+      const latest = React.useRef(value); latest.current = value;
+      const [k, setK] = React.useState(() => todayWIB());
+      React.useEffect(() => {
+        const tick = () => { if (document.visibilityState === 'visible') setK(todayWIB()); };
+        document.addEventListener('visibilitychange', tick);
+        return () => { document.removeEventListener('visibilitychange', tick); };
+      }, []);
+      React.useEffect(() => {
+        if (last.current !== k) { if (latest.current === last.current) setValue(k); last.current = k; }
+      }, [k]);
+    }
+
     // =====================================================================
     // PETTY CASH (2026-10)
     // =====================================================================
     const PETTY_CATS_FALLBACK = ['Operasional', 'Bahan Baku', 'Transport', 'Kebersihan', 'Perlengkapan', 'Gaji/Lembur', 'Lain-lain'];
     const PETTY_MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
     const pettyRp = (n) => { const v = Math.round(Number(n) || 0); return (v < 0 ? '-' : '') + 'Rp ' + Math.abs(v).toLocaleString('id-ID'); };
-    const pettyLocalToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+    const pettyLocalToday = () => todayWIB();
     const pettyMonthLabel = (m) => { const [y, mo] = m.split('-'); return `${PETTY_MONTHS[Number(mo) - 1]} ${y}`; };
     const pettyShiftMonth = (m, delta) => { let [y, mo] = m.split('-').map(Number); mo += delta; while (mo < 1) { mo += 12; y -= 1; } while (mo > 12) { mo -= 12; y += 1; } return `${y}-${String(mo).padStart(2, '0')}`; };
     const pettyFmtDate = (d) => { if (!d) return ''; const [y, mo, da] = d.split('-'); return `${Number(da)} ${PETTY_MONTHS[Number(mo) - 1].slice(0, 3)} ${y}`; };
@@ -15953,7 +15997,7 @@ Daily inventory done✅
         <div className="space-y-3">
           <div>
             <h2 className="font-bold text-slate-700 text-base">Karyawan & Ulang Tahun</h2>
-            <p className="text-xs text-slate-500">Setiap hari sekitar 08.00 WIB bot mengumumkan yang berulang tahun ke grup Telegram toko (sesuai pengaturan admin). Ucapan yang di-reply pada pesan bot pusat diteruskan ke chat pribadinya (wajib isi ID Telegram & sudah menekan Start di bot).</p>
+            <p className="text-xs text-slate-500">Admin mengirim pengumuman yang berulang tahun ke grup Telegram toko lewat tombol Kirim (kartu Ulang Tahun ke Grup Toko). Ucapan yang di-reply pada pesan bot pusat diteruskan ke chat pribadinya (wajib isi ID Telegram & sudah menekan Start di bot).</p>
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
             <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} maxLength={80} placeholder="Nama karyawan" className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-sm" />
@@ -16025,7 +16069,7 @@ Daily inventory done✅
             <input type="text" value={cfg.opsChatId} onChange={e => setCfg(c => ({ ...c, opsChatId: e.target.value }))} placeholder="contoh: -1001234567890" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" />
             <p className="text-[10px] text-slate-400 mt-1">Opsional. Tambahkan bot ke grup tersebut. Ucapan ulang tahun juga dikirim ke sini bila opsi "Kirim juga ke grup operasional pusat" aktif di kartu Ulang Tahun ke Grup Toko.</p>
           </div>
-          <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={cfg.birthdayEnabled} onChange={e => setCfg(c => ({ ...c, birthdayEnabled: e.target.checked }))} /> Aktifkan ucapan ulang tahun otomatis</label>
+          <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={cfg.birthdayEnabled} onChange={e => setCfg(c => ({ ...c, birthdayEnabled: e.target.checked }))} /> Aktifkan fitur ucapan ulang tahun</label>
           <button onClick={save} disabled={busy === 'save'} className="w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{busy === 'save' ? 'Menyimpan...' : 'Simpan Pengaturan Bot'}</button>
         </div>
       );
@@ -16171,6 +16215,34 @@ Daily inventory done✅
       const [q, setQ] = useState('');
       const [busy, setBusy] = useState('');
       const [testMsg, setTestMsg] = useState({});
+      const [today, setToday] = useState(null);
+      const [sendLog, setSendLog] = useState('');
+      const [resetSend, setResetSend] = useState(false);
+      const checkToday = async () => {
+        setBusy('chk');
+        try { setToday(await pettyApi('/api/birthday/today')); }
+        catch (e) { showAdminToast('⚠️ ' + (e.message || 'Gagal memeriksa ulang tahun hari ini.')); }
+        setBusy('');
+      };
+      // Kirim manual: server mengirim maks 10 pesan per panggilan, tombol memanggil berulang sampai selesai.
+      const sendNow = async () => {
+        setBusy('send'); setSendLog('');
+        let sent = 0; let fails = []; let reset = resetSend; let prev = Infinity; let note = '';
+        try {
+          for (let i = 0; i < 40; i++) {
+            const r = await pettyApi('/api/birthday/send', { method: 'POST', body: { reset } });
+            reset = false;
+            if (r.message) note = r.message;
+            sent += r.sent || 0; fails = fails.concat(r.failed || []);
+            if (!r.remaining || r.remaining >= prev) break;
+            prev = r.remaining;
+          }
+          setSendLog((note && sent === 0 && fails.length === 0 ? note : `✅ Terkirim ${sent} pesan.`) + fails.slice(0, 6).map(f => `\n⚠️ ${f.name} → ${f.target}: ${f.reason}`).join(''));
+          setResetSend(false);
+          await checkToday();
+        } catch (e) { setSendLog('⚠️ ' + (e.message || 'Gagal mengirim.') + (sent ? ` (sebagian sudah terkirim: ${sent})` : '')); }
+        setBusy('');
+      };
       useEffect(() => bindLiveValue(db.ref('systemSettings/birthday'), (snap) => {
         if (dirty.current) return;
         const v = snap.val() || {};
@@ -16205,7 +16277,21 @@ Daily inventory done✅
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
           <div>
             <h3 className="font-bold text-slate-800 text-sm">🎂 Ulang Tahun ke Grup Toko</h3>
-            <p className="text-[10px] text-slate-500 mt-1">Pengumuman ulang tahun karyawan dikirim ke grup Telegram toko yang dicentang (grup yang sama dengan laporan toko). Toko yang tidak dicentang tidak menerima. Saklar utama ada di kartu Bot Telegram Pusat. Terkirim bertahap sekitar 08.00–12.00 WIB.</p>
+            <p className="text-[10px] text-slate-500 mt-1">Pengumuman ulang tahun karyawan dikirim ke grup Telegram toko yang dicentang (grup yang sama dengan laporan toko). Toko yang tidak dicentang tidak menerima. Pengiriman MANUAL: tekan tombol Kirim di bawah (tidak ada kiriman otomatis).</p>
+          </div>
+          <div className="rounded-xl border border-pink-200 bg-pink-50 p-3 space-y-2">
+            <p className="text-xs font-bold text-pink-800">Ulang tahun hari ini</p>
+            {today && (today.employees.length === 0
+              ? <p className="text-xs text-slate-600">Tidak ada karyawan yang berulang tahun hari ini.</p>
+              : <ul className="text-xs text-slate-700 space-y-0.5">{today.employees.map(e => <li key={e.id}>🎂 {e.name} <span className="text-slate-400">({e.storeName})</span></li>)}</ul>)}
+            {today && today.employees.length > 0 && <p className="text-[11px] text-slate-500">Belum terkirim: {today.pending} pesan</p>}
+            <div className="flex gap-2">
+              <button onClick={checkToday} disabled={busy === 'chk' || busy === 'send'} className="flex-1 bg-white border border-pink-300 text-pink-800 font-bold py-2 rounded-xl text-xs disabled:opacity-50">{busy === 'chk' ? 'Memeriksa…' : 'Cek hari ini'}</button>
+              <button onClick={sendNow} disabled={busy === 'send' || busy === 'chk'} className="flex-1 bg-pink-600 text-white font-bold py-2 rounded-xl text-xs disabled:opacity-50">{busy === 'send' ? 'Mengirim…' : 'Kirim sekarang'}</button>
+            </div>
+            <label className="flex items-center gap-2 text-[11px] text-slate-600"><input type="checkbox" checked={resetSend} onChange={e => setResetSend(e.target.checked)} /> Kirim ulang (abaikan catatan yang sudah terkirim hari ini)</label>
+            {sendLog && <p className="text-[11px] text-slate-700 whitespace-pre-line">{sendLog}</p>}
+            <p className="text-[10px] text-slate-400">Tombol memakai pengaturan yang SUDAH disimpan di bawah — simpan dulu bila baru diubah.</p>
           </div>
           <div className="space-y-1.5">
             <p className="text-xs font-bold text-slate-600">Dikirim ke mana?</p>

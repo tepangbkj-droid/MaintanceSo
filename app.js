@@ -45,6 +45,104 @@ catch (e) { } };
         return nativeFetch(input, init);
     };
 })();
+const __APP_VER = '20261017';
+const __monDeviceId = () => {
+    try {
+        let d = localStorage.getItem('tbmon_did');
+        if (!d) {
+            d = (Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 24);
+            localStorage.setItem('tbmon_did', d);
+        }
+        return d;
+    }
+    catch (e) {
+        return 'nols' + Date.now().toString(36);
+    }
+};
+const __monNormPath = (p) => String(p || '').split('?')[0].replace(/[A-Za-z0-9_-]{20,}/g, '*').replace(/\d{3,}/g, '#').slice(0, 120);
+const __monQueue = [];
+const __monSeen = {};
+let __monCount = 0;
+let __monTimer = null;
+const __monFlush = () => {
+    __monTimer = null;
+    if (!__monQueue.length)
+        return;
+    const events = __monQueue.splice(0, 5);
+    try {
+        fetch(`${WORKER_BASE}/api/monitor/report`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ events }), keepalive: true }).catch(() => { });
+    }
+    catch (e) { }
+    if (__monQueue.length)
+        __monTimer = setTimeout(__monFlush, 2000);
+};
+window.__tbReport = (kind, message, extra) => {
+    try {
+        const ex = extra || {};
+        if (__monCount >= 25)
+            return;
+        const msg = String(message || '').slice(0, 300);
+        const key = kind + '|' + msg + '|' + (ex.path || '') + '|' + (ex.status || 0);
+        const now = Date.now();
+        if (__monSeen[key] && now - __monSeen[key] < 60000)
+            return;
+        __monSeen[key] = now;
+        __monCount++;
+        let sess = null;
+        try {
+            sess = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+        }
+        catch (e) {
+            sess = null;
+        }
+        __monQueue.push({
+            kind, message: msg, stack: String(ex.stack || '').slice(0, 600),
+            path: ex.path || __monNormPath(location.pathname), status: ex.status || 0,
+            deviceId: __monDeviceId(), storeId: (sess && sess.storeId) || '', role: (sess && sess.role) || '',
+            appVer: __APP_VER, ua: (navigator.userAgent || '').slice(0, 160),
+        });
+        if (!__monTimer)
+            __monTimer = setTimeout(__monFlush, 2000);
+    }
+    catch (e) { }
+};
+window.addEventListener('error', (e) => {
+    const m = (e && e.message) || '';
+    if (!m || /ResizeObserver|^Script error\.?$/i.test(m))
+        return;
+    window.__tbReport('js', m, { stack: (e.error && e.error.stack) || `${e.filename || ''}:${e.lineno || 0}` });
+});
+window.addEventListener('unhandledrejection', (e) => {
+    const r = e && e.reason;
+    const m = (r && r.message) || String(r || 'Promise ditolak');
+    if ((r && r.name === 'AbortError') || /Failed to fetch|NetworkError|Load failed/i.test(m))
+        return;
+    window.__tbReport('promise', m, { stack: r && r.stack });
+});
+(function installApiMonitor() {
+    const prev = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+        const u = typeof input === 'string' ? input : ((input && input.url) || '');
+        if (u.indexOf(WORKER_BASE) !== 0 || u.indexOf('/api/monitor/') !== -1)
+            return prev(input, init);
+        const p = __monNormPath(u.slice(WORKER_BASE.length));
+        try {
+            const res = await prev(input, init);
+            if (res.status >= 500)
+                window.__tbReport('api', 'HTTP ' + res.status, { path: p, status: res.status });
+            else if (res.status === 403) {
+                res.clone().json().then((d) => { if (d && d.code === 'ACCESS_KEY_REQUIRED')
+                    window.__tbReport('access', 'Akses ditolak: perangkat tanpa link akses', { path: p, status: 403 }); }).catch(() => { });
+            }
+            return res;
+        }
+        catch (err) {
+            if (!(err && err.name === 'AbortError') && navigator.onLine !== false)
+                window.__tbReport('network', (err && err.message) || 'Gagal terhubung ke server', { path: p });
+            throw err;
+        }
+    };
+})();
 const PUBLIC_APP_BASE = 'https://so-mandiri-tarobun.vercel.app';
 function todayWIB(ts) { return new Date((ts === undefined ? Date.now() : ts) + 7 * 3600000).toISOString().slice(0, 10); }
 let __sessionTokenFallback = null;
@@ -2743,6 +2841,198 @@ function StoreDetailSkeleton() {
             React.createElement(Skeleton, { className: "h-4 w-32" }),
             [0, 1, 2].map(i => React.createElement(Skeleton, { key: i, className: "h-10 w-full" })))));
 }
+function MonitoringTab({ stores }) {
+    const [hours, setHours] = React.useState(24);
+    const [data, setData] = React.useState(null);
+    const [err, setErr] = React.useState('');
+    const [open, setOpen] = React.useState(null);
+    const [events, setEvents] = React.useState({});
+    const [settings, setSettings] = React.useState({ alertEnabled: true, minDevices: 2 });
+    const [busy, setBusy] = React.useState('');
+    const [msg, setMsg] = React.useState('');
+    const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 6000); };
+    const storeLabel = (id) => (stores.find((s) => s.id === id) || {}).name || id || '-';
+    const KIND = {
+        js: ['Error JS', 'bg-rose-100 text-rose-700'], promise: ['Error proses', 'bg-rose-100 text-rose-700'],
+        react: ['Tampilan crash', 'bg-red-100 text-red-700'], api: ['Server error', 'bg-orange-100 text-orange-700'],
+        network: ['Gagal konek', 'bg-amber-100 text-amber-700'], access: ['Akses ditolak', 'bg-purple-100 text-purple-700'],
+        boot: ['Gagal/lama dimuat', 'bg-red-100 text-red-700'],
+    };
+    const ago = (ts) => {
+        const s = Math.max(1, Math.round((Date.now() - ts) / 1000));
+        if (s < 60)
+            return `${s} dtk lalu`;
+        if (s < 3600)
+            return `${Math.round(s / 60)} mnt lalu`;
+        if (s < 86400)
+            return `${Math.round(s / 3600)} jam lalu`;
+        return `${Math.round(s / 86400)} hari lalu`;
+    };
+    const load = async () => {
+        try {
+            setData(await pettyApi(`/api/monitor/summary?hours=${hours}`));
+            setErr('');
+        }
+        catch (e) {
+            setErr(e.message);
+        }
+    };
+    React.useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [hours]);
+    React.useEffect(() => { pettyApi('/api/monitor/settings').then((d) => setSettings(d.settings)).catch(() => { }); }, []);
+    const toggleOpen = async (fp) => {
+        if (open === fp) {
+            setOpen(null);
+            return;
+        }
+        setOpen(fp);
+        if (!events[fp]) {
+            try {
+                const d = await pettyApi(`/api/monitor/events?fp=${encodeURIComponent(fp)}&hours=${hours}`);
+                setEvents((p) => ({ ...p, [fp]: d.events }));
+            }
+            catch (e) {
+                flash(e.message);
+            }
+        }
+    };
+    const clearOne = async (fp) => {
+        if (!window.confirm('Hapus log kendala ini (tandai sudah beres)? Kalau terjadi lagi, akan tercatat baru.'))
+            return;
+        try {
+            await pettyApi('/api/monitor/clear', { method: 'POST', body: { fingerprint: fp } });
+            setOpen(null);
+            load();
+        }
+        catch (e) {
+            flash(e.message);
+        }
+    };
+    const clearAll = async () => {
+        if (!window.confirm('Hapus SEMUA log kendala?'))
+            return;
+        try {
+            await pettyApi('/api/monitor/clear', { method: 'POST', body: { all: true } });
+            setOpen(null);
+            load();
+        }
+        catch (e) {
+            flash(e.message);
+        }
+    };
+    const saveSettings = async () => {
+        setBusy('save');
+        try {
+            const d = await pettyApi('/api/monitor/settings', { method: 'POST', body: settings });
+            setSettings(d.settings);
+            flash('Pengaturan notifikasi disimpan.');
+        }
+        catch (e) {
+            flash(e.message);
+        }
+        finally {
+            setBusy('');
+        }
+    };
+    const testAlert = async () => {
+        setBusy('test');
+        try {
+            const d = await pettyApi('/api/monitor/test-alert', { method: 'POST', body: {} });
+            flash(d.telegram ? '✅ Tes terkirim ke grup Telegram operasional.' : `⚠️ Telegram belum terkirim: ${d.note || 'cek pengaturan Bot Telegram Pusat'}`);
+        }
+        catch (e) {
+            flash(e.message);
+        }
+        finally {
+            setBusy('');
+        }
+    };
+    const totals = (data && data.totals) || { events: 0, devices: 0, stores: 0 };
+    const groups = (data && data.groups) || [];
+    const tl = (data && data.timeline) || [];
+    const maxC = Math.max(1, ...tl.map((x) => x.c));
+    return (React.createElement("div", { className: "max-w-xl mx-auto space-y-4" },
+        React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4" },
+            React.createElement("div", { className: "flex items-start justify-between gap-2" },
+                React.createElement("div", null,
+                    React.createElement("h3", { className: "font-bold text-slate-800 text-sm" }, "\uD83D\uDCE1 Monitoring Kendala User"),
+                    React.createElement("p", { className: "text-[11px] text-slate-500 mt-0.5" }, "Error yang dialami user saat memakai web, dikelompokkan per jenis kendala. Diperbarui otomatis tiap 30 detik.")),
+                React.createElement("select", { value: hours, onChange: (e) => setHours(Number(e.target.value)), className: "text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white" },
+                    React.createElement("option", { value: 1 }, "1 jam"),
+                    React.createElement("option", { value: 24 }, "24 jam"),
+                    React.createElement("option", { value: 72 }, "3 hari"),
+                    React.createElement("option", { value: 168 }, "7 hari"))),
+            err && React.createElement("div", { className: "text-xs text-rose-600 bg-rose-50 rounded-lg px-3 py-2" }, err),
+            React.createElement("div", { className: "grid grid-cols-3 gap-2 text-center" },
+                React.createElement("div", { className: "rounded-xl bg-rose-50 py-3" },
+                    React.createElement("div", { className: "text-xl font-extrabold text-rose-700" }, totals.devices),
+                    React.createElement("div", { className: "text-[10px] text-rose-600 font-semibold" }, "Perangkat terdampak")),
+                React.createElement("div", { className: "rounded-xl bg-amber-50 py-3" },
+                    React.createElement("div", { className: "text-xl font-extrabold text-amber-700" }, totals.stores),
+                    React.createElement("div", { className: "text-[10px] text-amber-600 font-semibold" }, "Toko terdampak")),
+                React.createElement("div", { className: "rounded-xl bg-slate-100 py-3" },
+                    React.createElement("div", { className: "text-xl font-extrabold text-slate-700" }, totals.events),
+                    React.createElement("div", { className: "text-[10px] text-slate-500 font-semibold" }, "Total kejadian"))),
+            tl.length > 0 && (React.createElement("div", { className: "flex items-end gap-[2px] h-10" }, tl.map((x, i) => React.createElement("div", { key: i, title: `${new Date(x.t).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}: ${x.c} kejadian`, className: "flex-1 bg-rose-300 rounded-sm", style: { height: `${Math.max(8, Math.round((x.c / maxC) * 100))}%` } }))))),
+        data && groups.length === 0 && !err && (React.createElement("div", { className: "bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-2xl px-4 py-6 text-center text-sm font-semibold" }, "\u2705 Tidak ada kendala tercatat dalam periode ini.")),
+        groups.map((g) => {
+            const k = KIND[g.kind] || [g.kind, 'bg-slate-100 text-slate-600'];
+            const ev = events[g.fingerprint];
+            return (React.createElement("div", { key: g.fingerprint, className: "bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" },
+                React.createElement("button", { onClick: () => toggleOpen(g.fingerprint), className: "w-full text-left p-4 space-y-2" },
+                    React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
+                        React.createElement("span", { className: `text-[10px] font-bold px-2 py-0.5 rounded-md ${k[1]}` }, k[0]),
+                        React.createElement("span", { className: "text-[10px] text-slate-400" }, ago(g.last_ts))),
+                    React.createElement("div", { className: "text-sm font-semibold text-slate-800 break-words" }, g.message || '(tanpa pesan)'),
+                    (g.path || g.status) ? React.createElement("div", { className: "text-[11px] text-slate-500 break-all" },
+                        g.path,
+                        g.status ? ` · HTTP ${g.status}` : '') : null,
+                    React.createElement("div", { className: "flex gap-3 text-[11px] font-semibold" },
+                        React.createElement("span", { className: "text-rose-600" },
+                            "\uD83D\uDC64 ",
+                            g.devices,
+                            " perangkat"),
+                        React.createElement("span", { className: "text-amber-600" },
+                            "\uD83C\uDFEA ",
+                            g.stores,
+                            " toko"),
+                        React.createElement("span", { className: "text-slate-500" },
+                            "\u00D7 ",
+                            g.count))),
+                open === g.fingerprint && (React.createElement("div", { className: "border-t border-slate-100 bg-slate-50 p-4 space-y-2" },
+                    !ev && React.createElement("div", { className: "text-xs text-slate-400" }, "Memuat detail\u2026"),
+                    ev && ev.length === 0 && React.createElement("div", { className: "text-xs text-slate-400" }, "Tidak ada detail."),
+                    ev && ev.slice(0, 15).map((e, i) => (React.createElement("div", { key: i, className: "text-[11px] bg-white border border-slate-200 rounded-lg px-3 py-2 space-y-0.5" },
+                        React.createElement("div", { className: "font-semibold text-slate-700" },
+                            storeLabel(e.store_id),
+                            e.role ? ` · ${e.role}` : '',
+                            " ",
+                            React.createElement("span", { className: "text-slate-400 font-normal" },
+                                "\u00B7 perangkat \u2026",
+                                e.device_id,
+                                " \u00B7 ",
+                                ago(e.ts))),
+                        React.createElement("div", { className: "text-slate-400 break-all" },
+                            e.ua,
+                            e.app_ver ? ` · v${e.app_ver}` : ''),
+                        e.extra ? React.createElement("pre", { className: "text-[10px] text-slate-500 whitespace-pre-wrap break-all max-h-24 overflow-auto" }, e.extra) : null))),
+                    React.createElement("button", { onClick: () => clearOne(g.fingerprint), className: "w-full text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg py-2" }, "\u2713 Sudah beres \u2014 hapus log ini")))));
+        }),
+        React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3" },
+            React.createElement("h3", { className: "font-bold text-slate-800 text-sm" }, "\uD83D\uDD14 Notifikasi Kendala"),
+            React.createElement("p", { className: "text-[11px] text-slate-500" }, "Saat suatu kendala dialami cukup banyak perangkat (dalam 30 menit), pesan dikirim ke grup Telegram operasional (diatur di \u201CBot Telegram Pusat\u201D) dan push ke HP admin. Maksimal 1 pesan per jenis kendala tiap 1 jam."),
+            React.createElement("label", { className: "flex items-center gap-2 text-sm text-slate-700" },
+                React.createElement("input", { type: "checkbox", checked: settings.alertEnabled, onChange: (e) => setSettings({ ...settings, alertEnabled: e.target.checked }) }),
+                "Aktifkan notifikasi kendala"),
+            React.createElement("label", { className: "flex items-center gap-2 text-sm text-slate-700" },
+                "Kirim jika terdampak minimal",
+                React.createElement("select", { value: settings.minDevices, onChange: (e) => setSettings({ ...settings, minDevices: Number(e.target.value) }), className: "border border-slate-200 rounded-lg px-2 py-1 text-sm bg-white" }, [1, 2, 3, 5, 10, 20].map((n) => React.createElement("option", { key: n, value: n }, n))),
+                "perangkat"),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("button", { disabled: busy === 'save', onClick: saveSettings, className: "flex-1 bg-purple-700 text-white text-sm font-semibold rounded-xl py-2.5 disabled:opacity-50" }, "Simpan"),
+                React.createElement("button", { disabled: busy === 'test', onClick: testAlert, className: "flex-1 bg-slate-100 text-slate-700 text-sm font-semibold rounded-xl py-2.5 disabled:opacity-50" }, "Kirim tes")),
+            msg && React.createElement("div", { className: "text-xs text-slate-600 bg-slate-50 rounded-lg px-3 py-2" }, msg),
+            React.createElement("button", { onClick: clearAll, className: "w-full text-[11px] text-slate-400 hover:text-rose-600 pt-1" }, "Hapus semua log"))));
+}
 function AdminPanel({ onLogout }) {
     const [tab, setTab] = useState('stores');
     const [showMenu, setShowMenu] = useState(false);
@@ -3088,6 +3378,29 @@ function AdminPanel({ onLogout }) {
     useEffect(() => {
         scheduleLucideIcons();
     });
+    const [monBadge, setMonBadge] = useState(0);
+    useEffect(() => {
+        let alive = true;
+        let last = -1;
+        const poll = async () => {
+            if (document.hidden)
+                return;
+            try {
+                const d = await pettyApi('/api/monitor/summary?hours=1&brief=1');
+                if (!alive)
+                    return;
+                const n = d.totals.devices;
+                setMonBadge(n);
+                if (last >= 0 && n > last)
+                    showAdminToast(`⚠️ Ada kendala baru: ${n} perangkat terdampak (1 jam terakhir). Cek menu Monitoring.`);
+                last = n;
+            }
+            catch (e) { }
+        };
+        poll();
+        const t = setInterval(poll, 60000);
+        return () => { alive = false; clearInterval(t); };
+    }, []);
     useEffect(() => {
         let stopped = false;
         const poll = async () => {
@@ -3814,6 +4127,10 @@ function AdminPanel({ onLogout }) {
                         React.createElement("i", { "data-lucide": "message-circle", className: "w-4 h-4" }),
                         React.createElement("span", null, "Chat"),
                         totalAdminUnread > 0 && React.createElement("span", { className: "ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md" }, totalAdminUnread)),
+                    React.createElement("button", { onClick: () => { setTab('monitoring'); setShowMenu(false); }, className: `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'monitoring' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}` },
+                        React.createElement("i", { "data-lucide": "activity", className: "w-4 h-4" }),
+                        React.createElement("span", null, "Monitoring"),
+                        monBadge > 0 && React.createElement("span", { className: "ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md" }, monBadge)),
                     React.createElement("button", { onClick: () => { setTab('webupdate'); setShowMenu(false); }, className: `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'webupdate' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}` },
                         React.createElement("i", { "data-lucide": "megaphone", className: "w-4 h-4" }),
                         React.createElement("span", null, "Update Web")),
@@ -4042,6 +4359,7 @@ function AdminPanel({ onLogout }) {
                         chatStoreQuery,
                         "\"."))),
                 React.createElement("div", { className: "md:col-span-2" }, activeChatStore ? (React.createElement(ChatPanel, { storeId: activeChatStore.id, senderRole: "admin", senderLabel: "Admin", title: `Chat dengan ${activeChatStore.name}`, allowEndSession: true })) : (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center text-slate-600 text-sm" }, "Pilih toko di sebelah kiri untuk mulai chat."))))),
+            tab === 'monitoring' && React.createElement(MonitoringTab, { stores: stores }),
             tab === 'webupdate' && (React.createElement("div", { className: "max-w-xl mx-auto space-y-4" },
                 React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4" },
                     React.createElement("div", null,
@@ -14079,6 +14397,10 @@ class AppErrorBoundary extends React.Component {
     }
     componentDidCatch(error, info) {
         console.error('Tarobun App Error (ditangkap ErrorBoundary):', error, info);
+        try {
+            window.__tbReport && window.__tbReport('react', (error && error.message) || 'Tampilan crash', { stack: (error && error.stack) || '' });
+        }
+        catch (e) { }
     }
     render() {
         if (this.state.hasError) {

@@ -50,7 +50,6 @@
 
   <!-- Preconnect: siapkan koneksi ke CDN Tailwind lebih awal supaya lebih cepat & lebih kecil
        kemungkinan timeout di jaringan lambat. -->
-  <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
 
   <script>
     // PENTING: window.tailwind.config HARUS sudah ada SEBELUM script CDN Tailwind
@@ -174,7 +173,11 @@
         if (document.body) { append(); } else { document.addEventListener('DOMContentLoaded', append); }
       }
 
-      loadTailwindCDN();
+      // PERBAIKAN (2026-10): gaya Tailwind sekarang dari file statis tailwind.css (dibuat sekali saat build,
+      // sama persis hasilnya, tanpa menunggu CDN & tanpa kompilasi di HP) -> tampilan tidak bisa "polos"
+      // lagi gara-gara CDN lambat/diblokir. CDN ini TIDAK dimuat lagi kecuali tailwind.css gagal dimuat
+      // (lihat onerror pada <link> tailwind.css di bawah), sebagai cadangan terakhir.
+      window.__tbLoadTailwindCDN = loadTailwindCDN;
     })();
   </script>
 
@@ -400,6 +403,9 @@
     }
     .animate-slideInLeft { animation: tarobunSlideInLeft 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
   </style>
+  <!-- Gaya utama (Tailwind statis). Diletakkan PALING AKHIR di <head> supaya urutannya sama seperti dulu
+       (Tailwind CDN menyisipkan <style>-nya setelah style inline halaman). -->
+  <link rel="stylesheet" href="tailwind.css?v=20261017" onerror="window.__tbLoadTailwindCDN&&window.__tbLoadTailwindCDN()">
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
 
@@ -466,7 +472,32 @@
     };
   })();
 </script>
-<script src="app.js?v=20261015" defer></script>
+<script>
+// PEMANTAU MUAT AWAL (2026-10): kalau aplikasi gagal/lama tampil, laporkan ke Admin (menu Monitoring)
+// dan beri tombol "Muat ulang" ke user. Berdiri sendiri (tidak butuh React) supaya tetap jalan
+// walau app.js / CDN gagal dimuat.
+(function () {
+  var API = 'https://tarobun-api.tepangbkj8.workers.dev', sent = {};
+  function did() { try { var d = localStorage.getItem('tbmon_did'); if (!d) { d = (Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 24); localStorage.setItem('tbmon_did', d); } return d; } catch (e) { return 'nols' + Date.now().toString(36); } }
+  function rep(msg, stack) {
+    if (sent[msg]) return; sent[msg] = 1;
+    try { fetch(API + '/api/monitor/report', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, keepalive: true, body: JSON.stringify({ events: [{ kind: 'boot', message: msg, stack: stack || '', path: location.pathname, deviceId: did(), appVer: '20261017', ua: navigator.userAgent.slice(0, 160) }] }) }).catch(function () {}); } catch (e) {}
+  }
+  window.addEventListener('error', function (e) {
+    if (!document.getElementById('boot-splash')) return;
+    var t = e && e.target;
+    if (t && t.tagName === 'SCRIPT') rep('Gagal memuat script: ' + String(t.src || '').split('?')[0].slice(0, 120));
+    else if (e && e.message && !/^Script error/i.test(e.message)) rep('Error saat memuat: ' + e.message, (e.filename || '') + ':' + (e.lineno || 0));
+  }, true);
+  setTimeout(function () {
+    var el = document.getElementById('boot-splash'); if (!el) return;
+    rep('Aplikasi belum tampil setelah 20 detik');
+    var t = el.lastElementChild && el.lastElementChild.lastElementChild;
+    if (t) t.innerHTML = 'Memuat lebih lama dari biasanya.<br><button onclick="location.reload()" style="margin-top:10px;padding:8px 18px;border:0;border-radius:10px;background:#fff;color:#581c87;font-weight:700;font-size:13px;">Muat ulang</button>';
+  }, 20000);
+})();
+</script>
+<script src="app.js?v=20261017" defer></script>
   <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {

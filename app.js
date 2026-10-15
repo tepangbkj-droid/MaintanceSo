@@ -45,7 +45,7 @@ catch (e) { } };
         return nativeFetch(input, init);
     };
 })();
-const __APP_VER = '20261017';
+const __APP_VER = '20261019';
 const __monDeviceId = () => {
     try {
         let d = localStorage.getItem('tbmon_did');
@@ -963,7 +963,7 @@ const bindLiveValue = (ref, handler, errHandler) => {
     return () => ref.off('value', handler);
 };
 const restOnce = async (ref) => ref.once('value');
-const STOCK_QR_FOOTER = 'Mohon diperbarui di Link Inventory agar update mulai Quality dan Ed nya.';
+const STOCK_QR_FOOTER = 'Scan QR untuk cek stok di Investory. Update stok lewat Catatan Stok.';
 const makeQrDataUrl = (text) => {
     try {
         if (!text || !window.qrcode)
@@ -2841,6 +2841,82 @@ function StoreDetailSkeleton() {
             React.createElement(Skeleton, { className: "h-4 w-32" }),
             [0, 1, 2].map(i => React.createElement(Skeleton, { key: i, className: "h-10 w-full" })))));
 }
+function CloudflareUsageTab() {
+    const [data, setData] = React.useState(null);
+    const [err, setErr] = React.useState('');
+    const [loading, setLoading] = React.useState(false);
+    const load = async (fresh) => {
+        setLoading(true);
+        try {
+            setData(await pettyApi(`/api/admin/cf-usage${fresh ? '?refresh=1' : ''}`));
+            setErr('');
+        }
+        catch (e) {
+            setErr(e.message);
+        }
+        finally {
+            setLoading(false);
+        }
+    };
+    React.useEffect(() => { load(false); const t = setInterval(() => load(false), 120000); return () => clearInterval(t); }, []);
+    const fmtBytes = (b) => b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(2)} GB` : b >= 1024 ** 2 ? `${(b / 1024 ** 2).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`;
+    const fmt = (m, v) => m.unit === 'bytes' ? fmtBytes(v) : Math.round(v).toLocaleString('id-ID');
+    const barColor = (p) => p >= 85 ? 'bg-rose-500' : p >= 60 ? 'bg-amber-400' : 'bg-emerald-500';
+    const meters = (data && data.meters) || [];
+    const hot = meters.filter(m => !m.error && m.pct >= 85);
+    const groups = [];
+    meters.forEach(m => { let g = groups.find(x => x.name === m.group); if (!g) {
+        g = { name: m.group, items: [] };
+        groups.push(g);
+    } g.items.push(m); });
+    return (React.createElement("div", { className: "max-w-xl mx-auto space-y-4" },
+        React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3" },
+            React.createElement("div", { className: "flex items-start justify-between gap-2" },
+                React.createElement("div", null,
+                    React.createElement("h3", { className: "font-bold text-slate-800 text-sm" }, "\u2601\uFE0F Pemakaian Cloudflare"),
+                    React.createElement("p", { className: "text-[11px] text-slate-500 mt-0.5" }, "Persentase pemakaian dibanding batas paket gratis. Kuota harian reset pukul 07.00 WIB; angka bisa tertunda beberapa menit.")),
+                React.createElement("button", { onClick: () => load(true), disabled: loading, className: "text-xs font-bold text-purple-700 border border-purple-200 rounded-lg px-3 py-1.5 disabled:opacity-50 shrink-0" }, loading ? 'Memuat…' : 'Muat ulang')),
+            err && React.createElement("div", { className: "text-xs text-rose-600 bg-rose-50 rounded-lg px-3 py-2" }, err),
+            hot.length > 0 && React.createElement("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 font-semibold" },
+                "\u26A0\uFE0F Hampir habis: ",
+                hot.map(m => `${m.group} — ${m.label} (${Math.round(m.pct)}%)`).join('; ')),
+            data && data.configured === false && (React.createElement("div", { className: "text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-1" },
+                React.createElement("p", { className: "font-bold" }, "Baru ukuran database (D1) yang tampil. Untuk Workers, R2, AI, dan KV:"),
+                React.createElement("ol", { className: "list-decimal pl-4 space-y-0.5" },
+                    React.createElement("li", null,
+                        "Cloudflare \u2192 My Profile \u2192 API Tokens \u2192 Create Token (Custom). Izin: ",
+                        React.createElement("b", null, "Account \u00B7 Account Analytics \u00B7 Read"),
+                        "."),
+                    React.createElement("li", null,
+                        "Workers \u2192 worker ini \u2192 Settings \u2192 Variables and Secrets: tambah secret ",
+                        React.createElement("b", null, "CF_API_TOKEN"),
+                        " (isi token tadi) dan variabel ",
+                        React.createElement("b", null, "CF_ACCOUNT_ID"),
+                        " (Account ID, 32 karakter, ada di halaman Workers & Pages)."),
+                    React.createElement("li", null, "Deploy ulang lalu tekan Muat ulang."))))),
+        groups.map(g => (React.createElement("div", { key: g.name, className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3" },
+            React.createElement("h4", { className: "font-bold text-slate-700 text-sm" }, g.name),
+            g.items.map((m, i) => m.error ? (React.createElement("div", { key: i, className: "text-[11px] text-slate-500" },
+                React.createElement("span", { className: "font-semibold" }, m.label),
+                " \u2014 tidak bisa diambil: ",
+                m.error)) : (React.createElement("div", { key: i, className: "space-y-1" },
+                React.createElement("div", { className: "flex items-baseline justify-between gap-2" },
+                    React.createElement("span", { className: "text-xs font-semibold text-slate-700" }, m.label),
+                    React.createElement("span", { className: `text-sm font-extrabold ${m.pct >= 85 ? 'text-rose-600' : m.pct >= 60 ? 'text-amber-600' : 'text-emerald-600'}` },
+                        m.pct < 1 && m.used > 0 ? '<1' : Math.round(m.pct),
+                        "%")),
+                React.createElement("div", { className: "h-2 bg-slate-100 rounded-full overflow-hidden" },
+                    React.createElement("div", { className: `h-full ${barColor(m.pct)}`, style: { width: `${Math.min(100, m.pct)}%` } })),
+                React.createElement("p", { className: "text-[10px] text-slate-500" },
+                    fmt(m, m.used),
+                    " / ",
+                    fmt(m, m.limit),
+                    m.unit !== 'bytes' ? ` ${m.unit}` : '',
+                    " \u00B7 ",
+                    m.period,
+                    m.enforced ? ' · kalau lewat, query D1 ditolak' : ''))))))),
+        React.createElement("p", { className: "text-[10px] text-slate-400 text-center" }, "Batas gratis yang dipakai: Workers 100 rb request/hari \u00B7 D1 5 jt baris dibaca & 100 rb baris ditulis/hari, 5 GB \u00B7 R2 10 GB, 1 jt Class A & 10 jt Class B/bulan \u00B7 Workers AI 10.000 neuron/hari \u00B7 KV 100 rb baca & 1.000 tulis/hari.")));
+}
 function MonitoringTab({ stores }) {
     const [hours, setHours] = React.useState(24);
     const [data, setData] = React.useState(null);
@@ -3068,6 +3144,14 @@ function AdminPanel({ onLogout }) {
     const [newFieldStoreIds, setNewFieldStoreIds] = useState([]);
     const toggleNewFieldStore = (storeId) => {
         setNewFieldStoreIds(prev => prev.includes(storeId) ? prev.filter(id => id !== storeId) : [...prev, storeId]);
+    };
+    const [newCatName, setNewCatName] = useState('');
+    const [newCatItems, setNewCatItems] = useState('');
+    const [newCatUnit, setNewCatUnit] = useState('pcs');
+    const [newCatStoreIds, setNewCatStoreIds] = useState([]);
+    const [savingCat, setSavingCat] = useState(false);
+    const toggleNewCatStore = (storeId) => {
+        setNewCatStoreIds(prev => prev.includes(storeId) ? prev.filter(id => id !== storeId) : [...prev, storeId]);
     };
     const [webUpdateText, setWebUpdateText] = useState('');
     const [webUpdateAll, setWebUpdateAll] = useState(true);
@@ -3318,6 +3402,50 @@ function AdminPanel({ onLogout }) {
         }
         catch (err) {
             console.error(err);
+        }
+    };
+    const handleAddCategoryItems = async (e) => {
+        e.preventDefault();
+        const category = newCatName.trim();
+        const lines = newCatItems.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 40);
+        if (!category || lines.length === 0) {
+            showAdminToast('Isi nama kategori dan minimal 1 barang.');
+            return;
+        }
+        setSavingCat(true);
+        try {
+            const added = [];
+            for (const line of lines) {
+                const parts = line.split('|').map(s => s.trim());
+                const label = parts[0];
+                if (!label)
+                    continue;
+                const fieldData = { label, unit: parts[1] || newCatUnit.trim(), type: 'number', category };
+                if (newCatStoreIds.length > 0)
+                    fieldData.storeIds = newCatStoreIds;
+                const result = await restPush(db.ref('formSchemas/sales'), fieldData);
+                added.push({ id: (result && result.name) ? result.name : ('local-' + Date.now() + '-' + added.length), ...fieldData });
+            }
+            setFormSchemas(prev => ({ ...prev, sales: [...(prev.sales || []), ...added] }));
+            setNewCatName('');
+            setNewCatItems('');
+            setNewCatStoreIds([]);
+            showAdminToast(`✅ ${added.length} barang ditambahkan ke kategori "${category}".`);
+        }
+        catch (err) {
+            console.error(err);
+            showAdminToast('Gagal menambah kategori: ' + ((err && err.message) || 'coba lagi.'));
+        }
+        finally {
+            setSavingCat(false);
+        }
+    };
+    const handleDeleteCategory = async (category) => {
+        const list = (formSchemas.sales || []).filter(f => f.category === category);
+        if (!window.confirm(`Hapus kategori "${category}" beserta ${list.length} barang di dalamnya? Data penjualan yang sudah tersimpan tidak ikut terhapus.`))
+            return;
+        for (const f of list) {
+            await handleDeleteFormField('sales', f.id);
         }
     };
     const [detailLoading, setDetailLoading] = useState(false);
@@ -4127,6 +4255,9 @@ function AdminPanel({ onLogout }) {
                         React.createElement("i", { "data-lucide": "message-circle", className: "w-4 h-4" }),
                         React.createElement("span", null, "Chat"),
                         totalAdminUnread > 0 && React.createElement("span", { className: "ml-auto text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-md" }, totalAdminUnread)),
+                    React.createElement("button", { onClick: () => { setTab('cfusage'); setShowMenu(false); }, className: `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'cfusage' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}` },
+                        React.createElement("i", { "data-lucide": "cloud", className: "w-4 h-4" }),
+                        React.createElement("span", null, "Pemakaian Cloudflare")),
                     React.createElement("button", { onClick: () => { setTab('monitoring'); setShowMenu(false); }, className: `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'monitoring' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}` },
                         React.createElement("i", { "data-lucide": "activity", className: "w-4 h-4" }),
                         React.createElement("span", null, "Monitoring"),
@@ -4253,17 +4384,50 @@ function AdminPanel({ onLogout }) {
                             React.createElement(StorePicker, { stores: stores, selectedIds: newFieldStoreIds, onToggle: toggleNewFieldStore, onSelectAll: () => setNewFieldStoreIds([]), activeColorClass: "bg-purple-800 text-white border-purple-800" }),
                             React.createElement("p", { className: "text-[10px] text-slate-600" }, "Klik \"Semua Toko\" agar berlaku untuk semua, atau pilih satu/beberapa toko tertentu saja. Field ini juga akan otomatis ikut muncul di laporan Telegram sesuai toko yang dipilih."))),
                     React.createElement("button", { type: "submit", disabled: savingField, className: "bg-purple-800 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-lg" }, savingField ? 'Menambahkan...' : '+ Tambah Field')),
+                React.createElement("form", { onSubmit: handleAddCategoryItems, className: "bg-white rounded-2xl border border-purple-200 shadow-sm p-4 space-y-3" },
+                    React.createElement("div", null,
+                        React.createElement("h3", { className: "font-bold text-slate-700 text-sm" }, "\uD83D\uDCC2 Kategori & Barang Jualan (SO Penjualan)"),
+                        React.createElement("p", { className: "text-[11px] text-slate-500 mt-0.5" }, "Buat kategori baru beserta daftar barang yang dijual. Di form Laporan Penjualan toko, barang tampil dikelompokkan per kategori dan ikut masuk laporan Telegram.")),
+                    React.createElement("div", null,
+                        React.createElement("label", { htmlFor: "newCatName", className: "block text-[10px] font-semibold text-slate-600 mb-1" }, "Nama Kategori"),
+                        React.createElement("input", { id: "newCatName", type: "text", list: "catNameList", value: newCatName, onChange: (e) => setNewCatName(e.target.value), placeholder: "Contoh: Minuman Baru / Snack", className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-xs" }),
+                        React.createElement("datalist", { id: "catNameList" }, Array.from(new Set((formSchemas.sales || []).map(f => f.category).filter(Boolean))).map(c => React.createElement("option", { key: c, value: c }))),
+                        React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Pilih nama kategori yang sudah ada untuk menambah barang ke dalamnya.")),
+                    React.createElement("div", null,
+                        React.createElement("label", { htmlFor: "newCatItems", className: "block text-[10px] font-semibold text-slate-600 mb-1" }, "Barang yang dijual (satu barang per baris)"),
+                        React.createElement("textarea", { id: "newCatItems", rows: 5, value: newCatItems, onChange: (e) => setNewCatItems(e.target.value), placeholder: "Es Teh\nKopi Susu | cup\nBrownies | box", className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-xs" }),
+                        React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" },
+                            "Tulis ",
+                            React.createElement("b", null, "Nama | satuan"),
+                            " kalau satuannya berbeda dari satuan bawaan.")),
+                    React.createElement("div", null,
+                        React.createElement("label", { htmlFor: "newCatUnit", className: "block text-[10px] font-semibold text-slate-600 mb-1" }, "Satuan bawaan"),
+                        React.createElement("input", { id: "newCatUnit", type: "text", value: newCatUnit, onChange: (e) => setNewCatUnit(e.target.value), className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-xs" })),
+                    React.createElement("div", null,
+                        React.createElement("label", { className: "block text-[10px] font-semibold text-slate-600 mb-1" }, "Tampil di Toko Mana"),
+                        React.createElement(StorePicker, { stores: stores, selectedIds: newCatStoreIds, onToggle: toggleNewCatStore, onSelectAll: () => setNewCatStoreIds([]), activeColorClass: "bg-purple-800 text-white border-purple-800" }),
+                        React.createElement("p", { className: "text-[10px] text-slate-600" }, "Klik \"Semua Toko\" agar berlaku untuk semua, atau pilih satu/beberapa toko saja.")),
+                    React.createElement("button", { type: "submit", disabled: savingCat, className: "bg-purple-800 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-lg" }, savingCat ? 'Menyimpan...' : '+ Tambah Kategori & Barang')),
                 React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4" },
                     React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-4" },
                         React.createElement("h3", { className: "font-bold text-slate-700 text-sm mb-3" }, "Field Tambahan \u2014 Laporan Penjualan"),
-                        formSchemas.sales.length === 0 ? (React.createElement("p", { className: "text-xs text-slate-600" }, "Belum ada field tambahan.")) : (React.createElement("div", { className: "space-y-2" }, formSchemas.sales.map(f => (React.createElement("div", { key: f.id, className: "flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2" },
-                            React.createElement("div", { className: "min-w-0" },
-                                React.createElement("span", { className: "text-xs font-semibold text-slate-700 block truncate" },
-                                    f.label,
-                                    f.unit ? ` (${f.unit})` : ''),
-                                React.createElement("span", { className: "text-[10px] text-purple-600 font-semibold" }, getFieldStoreLabel(f))),
-                            React.createElement("button", { onClick: () => handleDeleteFormField('sales', f.id), className: "text-rose-500 shrink-0" },
-                                React.createElement("i", { "data-lucide": "trash-2", className: "w-3.5 h-3.5" })))))))),
+                        formSchemas.sales.length === 0 ? (React.createElement("p", { className: "text-xs text-slate-600" }, "Belum ada field tambahan.")) : (React.createElement("div", { className: "space-y-3" }, (() => {
+                            const groups = {};
+                            formSchemas.sales.forEach(f => { const k = f.category || ''; (groups[k] = groups[k] || []).push(f); });
+                            const keys = Object.keys(groups).sort((a, b) => (a === '' ? 1 : 0) - (b === '' ? 1 : 0) || a.localeCompare(b));
+                            return keys.map(cat => (React.createElement("div", { key: cat || '_none', className: "space-y-2" },
+                                React.createElement("div", { className: "flex items-center justify-between" },
+                                    React.createElement("p", { className: "text-[11px] font-bold text-indigo-700" }, cat ? `📂 ${cat}` : 'Tanpa kategori'),
+                                    cat && React.createElement("button", { onClick: () => handleDeleteCategory(cat), className: "text-[10px] text-rose-500 font-semibold" }, "Hapus kategori")),
+                                groups[cat].map(f => (React.createElement("div", { key: f.id, className: "flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2" },
+                                    React.createElement("div", { className: "min-w-0" },
+                                        React.createElement("span", { className: "text-xs font-semibold text-slate-700 block truncate" },
+                                            f.label,
+                                            f.unit ? ` (${f.unit})` : ''),
+                                        React.createElement("span", { className: "text-[10px] text-purple-600 font-semibold" }, getFieldStoreLabel(f))),
+                                    React.createElement("button", { onClick: () => handleDeleteFormField('sales', f.id), className: "text-rose-500 shrink-0" },
+                                        React.createElement("i", { "data-lucide": "trash-2", className: "w-3.5 h-3.5" }))))))));
+                        })()))),
                     React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-4" },
                         React.createElement("h3", { className: "font-bold text-slate-700 text-sm mb-3" }, "Field Tambahan \u2014 SO Stok"),
                         formSchemas.inventory.length === 0 ? (React.createElement("p", { className: "text-xs text-slate-600" }, "Belum ada field tambahan.")) : (React.createElement("div", { className: "space-y-2" }, formSchemas.inventory.map(f => (React.createElement("div", { key: f.id, className: "flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2" },
@@ -4360,6 +4524,7 @@ function AdminPanel({ onLogout }) {
                         "\"."))),
                 React.createElement("div", { className: "md:col-span-2" }, activeChatStore ? (React.createElement(ChatPanel, { storeId: activeChatStore.id, senderRole: "admin", senderLabel: "Admin", title: `Chat dengan ${activeChatStore.name}`, allowEndSession: true })) : (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center text-slate-600 text-sm" }, "Pilih toko di sebelah kiri untuk mulai chat."))))),
             tab === 'monitoring' && React.createElement(MonitoringTab, { stores: stores }),
+            tab === 'cfusage' && React.createElement(CloudflareUsageTab, null),
             tab === 'webupdate' && (React.createElement("div", { className: "max-w-xl mx-auto space-y-4" },
                 React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4" },
                     React.createElement("div", null,
@@ -5734,7 +5899,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
         setShowMandatoryChecklist(true);
     };
     const [unreadChat, setUnreadChat] = useState(0);
-    const PRINTING_ITEM_OPTIONS = ['FD', 'Toping Taro', 'Coklat', 'Vanila', 'Peach', 'Rasberi', 'Nanas', 'Matcha'];
+    const PRINTING_ITEM_OPTIONS = ['FD', 'Toping Taro', 'Coklat', 'Vanila', 'Peach', 'Rasberi', 'Nanas', 'Matcha', 'Whipping Cream', 'Es Batu'];
     const [printingSubTab, setPrintingSubTab] = useState('premix');
     const SUSU_OPSI = ['PT Global Dairi Alami', 'PT Diamond Cold Storage'];
     const PREMIX_CATALOG = [
@@ -5814,7 +5979,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const bleRef = React.useRef({ device: null, char: null });
     const [stockNoteStore, setStockNoteStore] = useDraftState(storeId, 'stock_store', storeName || '');
     const [stockNoteItems, setStockNoteItems] = useDraftState(storeId, 'stock_items', []);
-    const [stockItemDraft, setStockItemDraft] = useState({ nama: PRINTING_ITEM_OPTIONS[0], jumlah: '', satuan: 'Bag' });
+    const [stockItemDraft, setStockItemDraft] = useState({ nama: PRINTING_ITEM_OPTIONS[0], jumlah: '', satuan: 'Bag', tempat: INV_LOCATIONS[0], ed: '' });
     const [stockPrintData, setStockPrintData] = useState(null);
     const [qrCfg, setQrCfg] = useState({ printerUrl: '', inventoryUrl: '' });
     const [qrPrefs, setQrPrefs] = useState({ enablePrinter: true, enableInventory: false });
@@ -6095,7 +6260,10 @@ function StoreApp({ storeId, storeName, onLogout }) {
         { kv: ['Nama Toko', data.namaToko] },
         { kv: ['Tanggal', data.tanggalCetak.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })] },
         { sep: true },
-        ...data.items.map((it, idx) => ({ row: [`${idx + 1}. ${it.nama}`, `${it.jumlah} ${it.satuan}`] })),
+        ...data.items.flatMap((it, idx) => [
+            { row: [`${idx + 1}. ${it.nama}`, `${it.jumlah} ${it.satuan}`] },
+            ...((it.tempat || it.ed) ? [{ text: `   ${[it.tempat, it.ed ? 'ED ' + it.ed.split('-').reverse().join('/') : ''].filter(Boolean).join(' | ')}` }] : []),
+        ]),
         { sep: true },
         ...(data.qrOn ? [...(data.qrUrl ? [{ qr: data.qrUrl }] : []), { text: STOCK_QR_FOOTER, align: 'center' }] : []),
         { feed: 3 },
@@ -6607,8 +6775,32 @@ function StoreApp({ storeId, storeName, onLogout }) {
             showToast('Isi jumlah yang valid (lebih dari 0) sebelum menambahkan item.');
             return;
         }
-        setStockNoteItems(prev => [...prev, { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, nama: stockItemDraft.nama, jumlah: jumlahNum, satuan: stockItemDraft.satuan }]);
-        setStockItemDraft(prev => ({ ...prev, jumlah: '' }));
+        if (!stockItemDraft.tempat) {
+            showToast('Pilih Tempat penyimpanan dulu.');
+            return;
+        }
+        setStockNoteItems(prev => [...prev, { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, nama: stockItemDraft.nama, jumlah: jumlahNum, satuan: stockItemDraft.satuan, tempat: stockItemDraft.tempat, ed: stockItemDraft.ed || '' }]);
+        setStockItemDraft(prev => ({ ...prev, jumlah: '', ed: '' }));
+    };
+    const STOCK_NAME_ALIAS = { 'FD': 'Frozen Dough', 'Vanila': 'Vanilla' };
+    const syncStockNoteToInvestory = async (items) => {
+        const noPlace = items.find(it => !it.tempat);
+        if (noPlace) {
+            showToast(`"${noPlace.nama}" belum punya Tempat. Hapus lalu tambahkan lagi dengan memilih Tempat.`);
+            return false;
+        }
+        const entries = items.map(it => ({ namaBarang: STOCK_NAME_ALIAS[it.nama] || it.nama, lokasi: it.tempat, jumlah: it.jumlah, satuan: String(it.satuan || '').toLowerCase(), ed: it.ed || '' }));
+        try {
+            await apiFetch('/api/investory/batch', { method: 'POST', body: JSON.stringify({ storeId, entries }) });
+            return true;
+        }
+        catch (err) {
+            if (err && err.isNetworkError) {
+                return window.confirm('Tidak bisa terhubung ke server, jadi stok BELUM tersimpan ke Investory. Tetap cetak saja?');
+            }
+            showToast('Gagal menyimpan ke Investory: ' + ((err && err.message) || 'coba lagi.'));
+            return false;
+        }
     };
     const removeStockNoteItem = (id) => setStockNoteItems(prev => prev.filter(it => it.id !== id));
     const handleStockNotePrint = async () => {
@@ -6622,6 +6814,8 @@ function StoreApp({ storeId, storeName, onLogout }) {
         }
         const now = new Date();
         const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now, qrOn: qrPrefs.enableInventory, qrUrl: qrCfg.inventoryUrl };
+        if (!(await syncStockNoteToInvestory(stockNoteItems)))
+            return;
         const okPrint = await printReceipt(buildStockDoc(dataToPrint));
         if (!okPrint)
             return;
@@ -6629,7 +6823,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
         setStockNoteItems([]);
         setStockNoteStore(storeName || '');
     };
-    const handleStockNotePrintDialog = () => {
+    const handleStockNotePrintDialog = async () => {
         if (!stockNoteStore.trim()) {
             showToast('Isi Nama Toko terlebih dahulu.');
             return;
@@ -6640,6 +6834,8 @@ function StoreApp({ storeId, storeName, onLogout }) {
         }
         const now = new Date();
         const dataToPrint = { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now, qrOn: qrPrefs.enableInventory, qrUrl: qrCfg.inventoryUrl };
+        if (!(await syncStockNoteToInvestory(stockNoteItems)))
+            return;
         setPremixPrintData(null);
         setStockPrintData(dataToPrint);
         saveToPrintHistory('stock', { namaToko: stockNoteStore, items: stockNoteItems, tanggalCetak: now.toISOString() });
@@ -6955,7 +7151,20 @@ function StoreApp({ storeId, storeName, onLogout }) {
         { key: 'kuraflexHijau', label: 'Kuraflex Hijau', unit: 'pack' },
         { key: 'tissueSmall', label: 'Tissue Small', unit: 'pack' },
         { key: 'tissueLarge', label: 'Tissue Large', unit: 'pack' },
+        { key: 'uht', label: 'UHT', unit: 'pcs' },
+        { key: 'coklatPowder', label: 'Coklat Powder', unit: 'pack' },
+        { key: 'cupTrayS', label: 'Cup Tray S', unit: 'pcs' },
+        { key: 'cupTrayM', label: 'Cup Tray M', unit: 'pcs' },
+        { key: 'glovesM', label: 'Gloves M', unit: 'pack' },
+        { key: 'glovesL', label: 'Gloves L', unit: 'pack' },
+        { key: 'glovesXL', label: 'Gloves XL', unit: 'pack' },
+        { key: 'kuraflexPink', label: 'Kuraflex Pink', unit: 'pack' },
+        { key: 'kitchenMask', label: 'Kitchen Mask', unit: 'pack' },
     ];
+    const kedatanganExtraItems = (customInventoryFields || [])
+        .filter(f => f.type !== 'text')
+        .map(f => ({ key: `inv_${f.id}`, label: f.label, unit: f.unit || 'pcs' }));
+    const kedatanganUmumItems = [...KEDATANGAN_BARANG_UMUM_ITEMS, ...kedatanganExtraItems];
     const getEmptyKedatanganForm = (dateStr = todayWIB()) => ({
         tanggal: dateStr,
         noSuratJalan: '',
@@ -7474,7 +7683,9 @@ function StoreApp({ storeId, storeName, onLogout }) {
         const formatCustomFieldLines = (fields, dataObj) => (fields || [])
             .map(f => `${f.label} : ${(dataObj || {})[f.id] || 0}${f.unit ? ' ' + f.unit : ''}`)
             .join('\n');
-        const customSalesLines = formatCustomFieldLines(customSalesFields, sales.custom);
+        const customSalesLines = formatCustomFieldLines(customSalesFields.filter(f => !f.category), sales.custom);
+        const customSalesCategoryBlocks = Object.entries(customSalesFields.filter(f => f.category).reduce((acc, f) => { (acc[f.category] = acc[f.category] || []).push(f); return acc; }, {}))
+            .map(([cat, fs]) => `*${escapeTelegramMarkdown(cat)}* :\n${formatCustomFieldLines(fs, sales.custom)}`).join('\n\n');
         const customDoughLines = formatCustomFieldLines(customInventoryFields.filter(f => f.section === 'dough'), inv.custom);
         const customIngredientsLines = formatCustomFieldLines(customInventoryFields.filter(f => f.section === 'ingredients'), inv.custom);
         const customPackagingLines = formatCustomFieldLines(customInventoryFields.filter(f => f.section === 'packaging'), inv.custom);
@@ -7524,7 +7735,7 @@ Gagal Baking Overnight proofing : ${sales.waste.doughGagalBakingOvernightProofin
 Gagal Baking Reguler proofing : ${sales.waste.doughGagalBakingRegulerProofing || '-'} pcs
 Waste Bun : ${sales.waste.wasteBun || '-'} pcs
 Roti matang : ${sales.waste.rotiMatang || '-'} pcs
-${customSalesLines ? `\n*Data Tambahan Penjualan* :\n${customSalesLines}\n` : ''}
+${customSalesLines ? `\n*Data Tambahan Penjualan* :\n${customSalesLines}\n` : ''}${customSalesCategoryBlocks ? `\n${customSalesCategoryBlocks}\n` : ''}
 ------------------------------------------
 
 *STOK INVENTORY TAROBUN ${escapeTelegramMarkdown(storeName || '-').toUpperCase()}*
@@ -7719,7 +7930,7 @@ Terima Kasih 🙏🏻`;
             text += `(Tidak ada input)\n`;
         text += `\n*Barang Umum* :\n`;
         let anyUmum = false;
-        KEDATANGAN_BARANG_UMUM_ITEMS.forEach(item => {
+        [...KEDATANGAN_BARANG_UMUM_ITEMS, ...(Array.isArray(form.extraItems) ? form.extraItems : kedatanganExtraItems)].forEach(item => {
             const val = form.items[item.key];
             if (val && numVal(val) > 0) {
                 anyUmum = true;
@@ -7742,7 +7953,7 @@ Daily inventory done✅
     };
     const handleSaveKedatangan = async () => {
         const hasKhusus = KEDATANGAN_KOP_KHUSUS_ITEMS.some(item => numVal(getKhususItemValue(kedatanganForm.items, item.key).jumlah) > 0);
-        const hasUmum = KEDATANGAN_BARANG_UMUM_ITEMS.some(item => numVal(kedatanganForm.items[item.key]) > 0);
+        const hasUmum = kedatanganUmumItems.some(item => numVal(kedatanganForm.items[item.key]) > 0);
         const hasTidakSesuai = kedatanganForm.tidakSesuai && kedatanganForm.tidakSesuai.length > 0;
         if (!hasKhusus && !hasUmum && !hasTidakSesuai) {
             showToast('⚠️ Isi minimal satu jumlah barang sebelum menyimpan.');
@@ -7786,6 +7997,7 @@ Daily inventory done✅
                 tanggal: kedatanganForm.tanggal,
                 noSuratJalan: (kedatanganForm.noSuratJalan || '').trim(),
                 items: safeItems,
+                extraItems: kedatanganExtraItems.filter(i => safeItems[i.key]),
                 tidakSesuai: Array.isArray(kedatanganForm.tidakSesuai) ? [...kedatanganForm.tidakSesuai] : [],
                 createdAt: now
             };
@@ -9306,15 +9518,21 @@ Daily inventory done✅
                         React.createElement("div", null,
                             React.createElement("label", { htmlFor: "salesData_waste_rotiMatang", className: "block text-[10px] font-semibold text-slate-600 mb-1" }, "Roti Matang"),
                             React.createElement("input", { id: "salesData_waste_rotiMatang", type: "number", value: salesData.waste.rotiMatang, onChange: (e) => setSalesData({ ...salesData, waste: { ...salesData.waste, rotiMatang: e.target.value } }), className: "w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs", placeholder: "0" })))),
-                customSalesFields.length > 0 && (React.createElement("div", null,
-                    React.createElement("h4", { className: "font-bold text-slate-700 text-sm mb-2 flex items-center gap-1.5" },
-                        React.createElement("i", { "data-lucide": "sparkles", className: "w-3.5 h-3.5 text-purple-600" }),
-                        " Data Tambahan"),
-                    React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" }, customSalesFields.map(f => (React.createElement("div", { key: f.id },
-                        React.createElement("label", { htmlFor: `custom-field-${f.id}`, className: "block text-[10px] font-semibold text-slate-600 mb-1" },
-                            f.label,
-                            f.unit ? ` (${f.unit})` : ''),
-                        React.createElement("input", { id: `custom-field-${f.id}`, type: f.type === 'text' ? 'text' : 'number', value: (salesData.custom || {})[f.id] || '', onChange: (e) => setSalesData({ ...salesData, custom: { ...(salesData.custom || {}), [f.id]: e.target.value } }), className: "w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs", placeholder: "0" }))))))),
+                customSalesFields.length > 0 && (() => {
+                    const groups = {};
+                    customSalesFields.forEach(f => { const k = f.category || ''; (groups[k] = groups[k] || []).push(f); });
+                    const keys = Object.keys(groups).sort((a, b) => (a === '' ? 1 : 0) - (b === '' ? 1 : 0) || a.localeCompare(b));
+                    return keys.map(cat => (React.createElement("div", { key: cat || '_none' },
+                        React.createElement("h4", { className: "font-bold text-slate-700 text-sm mb-2 flex items-center gap-1.5" },
+                            React.createElement("i", { "data-lucide": "sparkles", className: "w-3.5 h-3.5 text-purple-600" }),
+                            " ",
+                            cat || 'Data Tambahan'),
+                        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" }, groups[cat].map(f => (React.createElement("div", { key: f.id },
+                            React.createElement("label", { htmlFor: `custom-field-${f.id}`, className: "block text-[10px] font-semibold text-slate-600 mb-1" },
+                                f.label,
+                                f.unit ? ` (${f.unit})` : ''),
+                            React.createElement("input", { id: `custom-field-${f.id}`, type: f.type === 'text' ? 'text' : 'number', value: (salesData.custom || {})[f.id] || '', onChange: (e) => setSalesData({ ...salesData, custom: { ...(salesData.custom || {}), [f.id]: e.target.value } }), className: "w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs", placeholder: "0" }))))))));
+                })(),
                 emptyReportFieldsPreview.length > 0 && (React.createElement("div", { className: "bg-wheat-50 border border-wheat-500/40 text-wheat-600 text-xs rounded-xl p-3 flex items-start gap-2" },
                     React.createElement("i", { "data-lucide": "alert-triangle", className: "w-4 h-4 shrink-0 mt-0.5" }),
                     React.createElement("div", null,
@@ -9694,7 +9912,7 @@ Daily inventory done✅
                         React.createElement("h4", { className: "text-xs font-extrabold text-indigo-700 uppercase tracking-wider border-b border-indigo-50 pb-2 flex items-center gap-1.5" },
                             React.createElement("i", { "data-lucide": "package", className: "w-3.5 h-3.5" }),
                             React.createElement("span", null, "Barang Umum")),
-                        React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 gap-4" }, KEDATANGAN_BARANG_UMUM_ITEMS.map(item => (React.createElement("div", { key: item.key },
+                        React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 gap-4" }, kedatanganUmumItems.map(item => (React.createElement("div", { key: item.key },
                             React.createElement("label", { htmlFor: `item-field-${item.key}`, className: "block text-xs font-semibold text-slate-600 mb-1" },
                                 item.label,
                                 " (",
@@ -10102,11 +10320,17 @@ Daily inventory done✅
                     React.createElement("div", { className: "border border-slate-200 rounded-xl p-3 space-y-3" },
                         React.createElement("p", { className: "text-xs font-semibold text-slate-600" }, "Tambah Item"),
                         React.createElement("div", { className: "grid grid-cols-2 gap-2" },
+                            React.createElement("select", { value: stockItemDraft.tempat, onChange: (e) => setStockItemDraft(prev => ({ ...prev, tempat: e.target.value })), className: "col-span-2 w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white", "aria-label": "Tempat" }, INV_LOCATIONS.map(loc => React.createElement("option", { key: loc, value: loc },
+                                "\uD83D\uDCCD ",
+                                loc))),
                             React.createElement("select", { value: stockItemDraft.nama, onChange: (e) => setStockItemDraft(prev => ({ ...prev, nama: e.target.value })), className: "col-span-2 w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white" }, PRINTING_ITEM_OPTIONS.map(opt => React.createElement("option", { key: opt, value: opt }, opt))),
                             React.createElement("input", { type: "number", min: "1", value: stockItemDraft.jumlah, onChange: (e) => setStockItemDraft(prev => ({ ...prev, jumlah: e.target.value })), placeholder: "Jumlah", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }),
                             React.createElement("select", { value: stockItemDraft.satuan, onChange: (e) => setStockItemDraft(prev => ({ ...prev, satuan: e.target.value })), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white" },
                                 React.createElement("option", { value: "Bag" }, "Bag"),
-                                React.createElement("option", { value: "Pcs" }, "Pcs"))),
+                                React.createElement("option", { value: "Pcs" }, "Pcs")),
+                            React.createElement("div", { className: "col-span-2" },
+                                React.createElement("label", { className: "block text-[11px] font-semibold text-slate-500 mb-1" }, "Tanggal ED (opsional)"),
+                                React.createElement("input", { type: "date", value: stockItemDraft.ed, onChange: (e) => setStockItemDraft(prev => ({ ...prev, ed: e.target.value })), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }))),
                         React.createElement("button", { type: "button", onClick: addStockNoteItem, className: "w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-100 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5" },
                             React.createElement("i", { "data-lucide": "plus", className: "w-3.5 h-3.5" }),
                             React.createElement("span", null, "Tambah Item"))),
@@ -10116,7 +10340,9 @@ Daily inventory done✅
                             React.createElement("p", { className: "text-xs text-slate-500" },
                                 it.jumlah,
                                 " ",
-                                it.satuan)),
+                                it.satuan,
+                                it.tempat ? ` · 📍 ${it.tempat}` : ' · ⚠️ belum ada Tempat',
+                                it.ed ? ` · ED ${it.ed.split('-').reverse().join('/')}` : '')),
                         React.createElement("button", { onClick: () => removeStockNoteItem(it.id), className: "text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg border border-rose-100 shrink-0" },
                             React.createElement("i", { "data-lucide": "trash-2", className: "w-3.5 h-3.5" }))))))),
                     React.createElement("label", { className: "flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2" },
@@ -10126,7 +10352,8 @@ Daily inventory done✅
                             !qrCfg.inventoryUrl ? ' (URL belum diatur admin — hanya teks keterangan yang tercetak)' : '')),
                     React.createElement("button", { onClick: handleStockNotePrint, disabled: stockNoteItems.length === 0, className: "w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2" },
                         React.createElement("i", { "data-lucide": "printer", className: "w-4 h-4" }),
-                        React.createElement("span", null, "Cetak Catatan Stok")),
+                        React.createElement("span", null, "Cetak & Simpan ke Investory")),
+                    React.createElement("p", { className: "text-[11px] text-slate-400 text-center -mt-1" }, "Saat dicetak, stok otomatis tersimpan ke Investory (tempat & ED ikut tercatat)."),
                     React.createElement("button", { type: "button", onClick: handleStockNotePrintDialog, disabled: stockNoteItems.length === 0, className: "w-full bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2" },
                         React.createElement("i", { "data-lucide": "monitor", className: "w-3.5 h-3.5" }),
                         React.createElement("span", null, "Cetak via Dialog Browser (PDF/printer lain)")))),
@@ -10193,7 +10420,7 @@ Daily inventory done✅
                                         React.createElement("p", null,
                                             (h.data.items || []).length,
                                             " item"),
-                                        React.createElement("p", { className: "truncate text-slate-500" }, (h.data.items || []).map(it => `${it.nama} (${it.jumlah} ${it.satuan})`).join(', '))))),
+                                        React.createElement("p", { className: "truncate text-slate-500" }, (h.data.items || []).map(it => `${it.nama} (${it.jumlah} ${it.satuan}${it.tempat ? ', ' + it.tempat : ''})`).join(', '))))),
                                 React.createElement("button", { onClick: () => setConfirmDeleteHistoryId(h.id), className: "shrink-0 text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg border border-rose-100" },
                                     React.createElement("i", { "data-lucide": "trash-2", className: "w-3.5 h-3.5" }))))))))));
                 })())),
@@ -10241,15 +10468,17 @@ Daily inventory done✅
                         " ",
                         stockPrintData.tanggalCetak.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })),
                     React.createElement("div", { style: { borderTop: '1px dashed #000', margin: '4px 0' } }),
-                    stockPrintData.items.map((it, idx) => (React.createElement("div", { key: it.id, style: { display: 'flex', justifyContent: 'space-between', marginBottom: '3px' } },
-                        React.createElement("span", null,
-                            idx + 1,
-                            ". ",
-                            it.nama),
-                        React.createElement("span", null,
-                            it.jumlah,
-                            " ",
-                            it.satuan)))),
+                    stockPrintData.items.map((it, idx) => (React.createElement("div", { key: it.id, style: { marginBottom: '3px' } },
+                        React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between' } },
+                            React.createElement("span", null,
+                                idx + 1,
+                                ". ",
+                                it.nama),
+                            React.createElement("span", null,
+                                it.jumlah,
+                                " ",
+                                it.satuan)),
+                        (it.tempat || it.ed) && React.createElement("div", { style: { fontSize: '11px', paddingLeft: '14px' } }, [it.tempat, it.ed ? 'ED ' + it.ed.split('-').reverse().join('/') : ''].filter(Boolean).join(' | '))))),
                     React.createElement("div", { style: { borderTop: '1px dashed #000', margin: '4px 0' } }),
                     stockPrintData.qrOn && (React.createElement("div", { style: { textAlign: 'center', marginTop: '6px' } },
                         stockPrintData.qrUrl && makeQrDataUrl(stockPrintData.qrUrl) && (React.createElement("img", { src: makeQrDataUrl(stockPrintData.qrUrl), alt: "QR Inventory", style: { width: '60%', display: 'block', margin: '0 auto 4px' } })),
@@ -11962,6 +12191,26 @@ function LeaderPettyCashTab({ storeId, storeName, showToast, onPendingChange }) 
     const [confirmDelId, setConfirmDelId] = React.useState(null);
     const [zoom, setZoom] = React.useState(null);
     React.useEffect(() => { scheduleLucideIcons(); });
+    const [tg, setTg] = React.useState({ chatId: '', botUsername: '', input: '' });
+    const [tgOpen, setTgOpen] = React.useState(false);
+    const [tgBusy, setTgBusy] = React.useState(false);
+    React.useEffect(() => {
+        pettyApi('/api/petty/tg').then((d) => setTg({ chatId: d.chatId || '', botUsername: d.botUsername || '', input: d.chatId || '' })).catch(() => { });
+    }, [storeId]);
+    const saveTg = async (clear) => {
+        setTgBusy(true);
+        try {
+            const d = await pettyApi('/api/petty/tg', { method: 'POST', body: { chatId: clear ? '' : tg.input.trim() } });
+            setTg((p) => ({ ...p, chatId: d.chatId || '', input: d.chatId || '' }));
+            showToast(clear ? 'ID Telegram dihapus.' : '✅ Tersambung! Cek pesan uji di Telegram kamu.');
+        }
+        catch (err) {
+            showToast(err.message);
+        }
+        finally {
+            setTgBusy(false);
+        }
+    };
     const load = async (silent) => {
         if (!silent)
             setLoading(true);
@@ -12138,6 +12387,43 @@ function LeaderPettyCashTab({ storeId, storeName, showToast, onPendingChange }) 
             editOpening && (React.createElement("div", { className: "mt-3 flex gap-2" },
                 React.createElement("input", { type: "text", inputMode: "numeric", value: openingInput, onChange: (e) => setOpeningInput(e.target.value.replace(/[^\d-]/g, '')), className: "flex-1 px-3 py-2 rounded-lg text-sm text-slate-800 font-bold", placeholder: "Saldo awal (Rp)" }),
                 React.createElement("button", { type: "button", onClick: saveOpening, className: "bg-white text-purple-800 font-bold text-xs px-4 rounded-lg" }, "Simpan")))),
+        React.createElement("div", { className: "bg-white border border-slate-200 rounded-2xl p-4 shadow-sm" },
+            React.createElement("button", { type: "button", onClick: () => setTgOpen((v) => !v), className: "w-full flex items-center justify-between gap-2 text-left" },
+                React.createElement("div", { className: "min-w-0" },
+                    React.createElement("p", { className: "text-sm font-bold text-slate-800" }, "\u2708\uFE0F ACC lewat Telegram"),
+                    React.createElement("p", { className: "text-[11px] text-slate-500" }, tg.chatId ? `Aktif · ID ${tg.chatId}` : 'Belum diatur — pengajuan hanya bisa di-ACC di aplikasi')),
+                React.createElement("span", { className: "text-slate-400 text-xs shrink-0" }, tgOpen ? '▲' : '▼')),
+            tgOpen && (React.createElement("div", { className: "mt-3 space-y-3" },
+                React.createElement("ol", { className: "text-[11px] text-slate-600 space-y-1 list-decimal pl-4" },
+                    React.createElement("li", null,
+                        "Buka bot Telegram pusat",
+                        tg.botUsername ? React.createElement(React.Fragment, null,
+                            " (",
+                            React.createElement("b", null,
+                                "@",
+                                tg.botUsername),
+                            ")") : '',
+                        " lalu tekan ",
+                        React.createElement("b", null, "Start"),
+                        "."),
+                    React.createElement("li", null,
+                        "Ketik ",
+                        React.createElement("b", null, "/id"),
+                        " \u2014 bot membalas ID Telegram kamu (angka)."),
+                    React.createElement("li", null,
+                        "Tempel ID itu di bawah lalu ",
+                        React.createElement("b", null, "Simpan"),
+                        ". Bot akan mengirim pesan uji.")),
+                React.createElement("input", { type: "text", inputMode: "numeric", value: tg.input, onChange: (e) => setTg((p) => ({ ...p, input: e.target.value.replace(/\D/g, '') })), placeholder: "contoh: 123456789", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }),
+                React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("button", { type: "button", disabled: tgBusy || !tg.input, onClick: () => saveTg(false), className: "flex-1 bg-purple-800 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-xl" }, tgBusy ? 'Menyimpan...' : 'Simpan & Kirim Tes'),
+                    tg.chatId && React.createElement("button", { type: "button", disabled: tgBusy, onClick: () => saveTg(true), className: "bg-slate-100 text-rose-600 font-bold text-sm px-4 rounded-xl" }, "Hapus")),
+                React.createElement("p", { className: "text-[11px] text-slate-400" },
+                    "Setiap ada pengajuan petty cash, foto struk + tombol ",
+                    React.createElement("b", null, "ACC"),
+                    " / ",
+                    React.createElement("b", null, "Tolak"),
+                    " dikirim ke Telegram ini. Hanya akun dengan ID di atas yang tombolnya berfungsi.")))),
         React.createElement("div", { className: "grid grid-cols-2 gap-3" },
             React.createElement("button", { type: "button", onClick: () => setFormType(formType === 'in' ? null : 'in'), className: `rounded-2xl py-3 text-sm font-bold border transition-all ${formType === 'in' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}` }, "+ Pemasukan"),
             React.createElement("button", { type: "button", onClick: () => setFormType(formType === 'out' ? null : 'out'), className: `rounded-2xl py-3 text-sm font-bold border transition-all ${formType === 'out' ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 text-rose-700 border-rose-200'}` }, "+ Pengeluaran")),
@@ -12685,7 +12971,8 @@ function AdminTelegramCentralCard({ showAdminToast }) {
                 " Secret webhook"),
             React.createElement("p", null,
                 status.webhook && status.webhook.url ? '✅ Webhook aktif' : '❌ Webhook belum dipasang',
-                status.webhook && status.webhook.lastError ? ` — error terakhir: ${status.webhook.lastError}` : '')))),
+                status.webhook && status.webhook.lastError ? ` — error terakhir: ${status.webhook.lastError}` : ''),
+            status.webhook && status.webhook.url && !(status.webhook.allowed || []).includes('callback_query') && (React.createElement("p", { className: "text-amber-700 font-semibold" }, "\u26A0\uFE0F Tombol ACC/Tolak Petty Cash di Telegram belum aktif. Tekan \u201CAktifkan / Perbarui Webhook\u201D di bawah."))))),
         React.createElement("button", { onClick: setup, disabled: busy === 'hook', className: "w-full bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg" }, busy === 'hook' ? 'Memasang...' : 'Aktifkan / Perbarui Webhook'),
         React.createElement("div", null,
             React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" }, "ID Grup Telegram Operasional"),
@@ -14077,11 +14364,15 @@ function LeaderInvestoryTab({ storeId, storeName }) {
         React.createElement("div", { className: "bg-white px-3 py-2 border-b border-slate-100 overflow-x-auto" },
             React.createElement("div", { className: "flex gap-1.5 min-w-max" }, ['Semua', ...INV_LOCATIONS].map(l => (React.createElement("button", { key: l, onClick: () => setFilterLoc(l), className: `text-[10px] font-bold px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${filterLoc === l ? 'bg-purple-800 text-white' : 'bg-slate-100 text-slate-600'}` }, l))))),
         React.createElement("div", { className: "p-4 space-y-3 pb-24" },
+            React.createElement("p", { className: "text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2" },
+                "Halaman ini hanya untuk memeriksa stok. Pengisian stok dilakukan staf toko lewat menu ",
+                React.createElement("b", null, "Printing \u2192 Catatan Stok"),
+                "."),
             loading && React.createElement("p", { className: "text-sm text-slate-400 text-center py-8" }, "Memuat data..."),
             !loading && err && React.createElement("p", { className: "text-sm text-rose-500 text-center py-6" }, err),
             !loading && !err && tab === 'list' && (React.createElement(React.Fragment, null,
                 React.createElement(InvAlertPanel, { entries: filtered }),
-                filtered.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "Belum ada catatan stok. Tap + untuk tambah.")) : filtered.map(e => (React.createElement("div", { key: e.id, className: `bg-white rounded-2xl border ${invIsExpired(e.ed) || invIsExpiringSoon(e.ed) ? 'border-amber-300' : invIsLow(e) ? 'border-orange-300' : 'border-slate-200'} p-3.5 space-y-1.5` },
+                filtered.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "Belum ada catatan stok. Stok diisi lewat menu Printing \u2192 Catatan Stok.")) : filtered.map(e => (React.createElement("div", { key: e.id, className: `bg-white rounded-2xl border ${invIsExpired(e.ed) || invIsExpiringSoon(e.ed) ? 'border-amber-300' : invIsLow(e) ? 'border-orange-300' : 'border-slate-200'} p-3.5 space-y-1.5` },
                     React.createElement("div", { className: "flex items-start justify-between gap-2" },
                         React.createElement("div", null,
                             React.createElement("p", { className: "font-bold text-slate-800 text-sm" }, e.namaBarang),
@@ -14098,8 +14389,6 @@ function LeaderInvestoryTab({ storeId, storeName }) {
                             "Dicatat: ",
                             invFmtDate(e.updatedAt)),
                         React.createElement("div", { className: "flex gap-1" },
-                            React.createElement("button", { onClick: () => { setEditEntry({ namaBarang: e.namaBarang, itemKey: e.itemKey || '', lokasi: e.lokasi, jumlah: String(e.jumlah), satuan: e.satuan, ed: e.ed || '', entryId: e.id }); setShowForm(true); }, className: "p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-purple-50 hover:text-purple-700" },
-                                React.createElement("i", { "data-lucide": "pencil", className: "w-3.5 h-3.5" })),
                             React.createElement("button", { onClick: () => setDelConfirm(e), className: "p-1.5 rounded-lg bg-slate-100 text-rose-500 hover:bg-rose-50" },
                                 React.createElement("i", { "data-lucide": "trash-2", className: "w-3.5 h-3.5" }))))))))),
             !loading && !err && tab === 'history' && (React.createElement(React.Fragment, null,
@@ -14119,9 +14408,6 @@ function LeaderInvestoryTab({ storeId, storeName }) {
                             "ED: ",
                             invFmtDateShort(e.ed))),
                     React.createElement("p", { className: "text-[10px] text-slate-400" }, invFmtDate(e.updatedAt))))))))),
-        React.createElement("button", { onClick: () => { setEditEntry(null); setShowForm(true); }, className: "fixed bottom-6 right-4 z-30 bg-purple-800 text-white w-14 h-14 rounded-2xl shadow-lg flex items-center justify-center" },
-            React.createElement("i", { "data-lucide": "plus", className: "w-6 h-6" })),
-        showForm && React.createElement(InvForm, { initial: editEntry, storeId: storeId, onSaved: () => { setShowForm(false); setTick(x => x + 1); toast('Catatan tersimpan! ✅'); }, onCancel: () => setShowForm(false) }),
         delConfirm && (React.createElement("div", { className: "fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-5 animate-fadeIn" },
             React.createElement("div", { className: "bg-white rounded-2xl p-5 w-full max-w-xs space-y-3 animate-scaleIn" },
                 React.createElement("h3", { className: "font-bold text-slate-800" }, "Hapus Catatan?"),

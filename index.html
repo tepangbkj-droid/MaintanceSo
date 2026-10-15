@@ -405,7 +405,7 @@
   </style>
   <!-- Gaya utama (Tailwind statis). Diletakkan PALING AKHIR di <head> supaya urutannya sama seperti dulu
        (Tailwind CDN menyisipkan <style>-nya setelah style inline halaman). -->
-  <link rel="stylesheet" href="tailwind.css?v=20261017" onerror="window.__tbLoadTailwindCDN&&window.__tbLoadTailwindCDN()">
+  <link rel="stylesheet" href="tailwind.css?v=20261019" onerror="window.__tbLoadTailwindCDN&&window.__tbLoadTailwindCDN()">
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
 
@@ -481,7 +481,7 @@
   function did() { try { var d = localStorage.getItem('tbmon_did'); if (!d) { d = (Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 24); localStorage.setItem('tbmon_did', d); } return d; } catch (e) { return 'nols' + Date.now().toString(36); } }
   function rep(msg, stack) {
     if (sent[msg]) return; sent[msg] = 1;
-    try { fetch(API + '/api/monitor/report', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, keepalive: true, body: JSON.stringify({ events: [{ kind: 'boot', message: msg, stack: stack || '', path: location.pathname, deviceId: did(), appVer: '20261017', ua: navigator.userAgent.slice(0, 160) }] }) }).catch(function () {}); } catch (e) {}
+    try { fetch(API + '/api/monitor/report', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, keepalive: true, body: JSON.stringify({ events: [{ kind: 'boot', message: msg, stack: stack || '', path: location.pathname, deviceId: did(), appVer: '20261019', ua: navigator.userAgent.slice(0, 160) }] }) }).catch(function () {}); } catch (e) {}
   }
   window.addEventListener('error', function (e) {
     if (!document.getElementById('boot-splash')) return;
@@ -497,7 +497,7 @@
   }, 20000);
 })();
 </script>
-<script src="app.js?v=20261017" defer></script>
+<script src="app.js?v=20261019" defer></script>
   <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {

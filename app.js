@@ -45,7 +45,7 @@ catch (e) { } };
         return nativeFetch(input, init);
     };
 })();
-const __APP_VER = '20261019';
+const __APP_VER = '20261020';
 const __monDeviceId = () => {
     try {
         let d = localStorage.getItem('tbmon_did');
@@ -3149,6 +3149,7 @@ function AdminPanel({ onLogout }) {
     const [newCatItems, setNewCatItems] = useState('');
     const [newCatUnit, setNewCatUnit] = useState('pcs');
     const [newCatStoreIds, setNewCatStoreIds] = useState([]);
+    const [newCatPlacement, setNewCatPlacement] = useState('bottom');
     const [savingCat, setSavingCat] = useState(false);
     const toggleNewCatStore = (storeId) => {
         setNewCatStoreIds(prev => prev.includes(storeId) ? prev.filter(id => id !== storeId) : [...prev, storeId]);
@@ -3413,6 +3414,8 @@ function AdminPanel({ onLogout }) {
             return;
         }
         setSavingCat(true);
+        const existingCat = (formSchemas.sales || []).find(f => f.category === category);
+        const placement = existingCat ? (existingCat.placement || 'bottom') : newCatPlacement;
         try {
             const added = [];
             for (const line of lines) {
@@ -3420,7 +3423,7 @@ function AdminPanel({ onLogout }) {
                 const label = parts[0];
                 if (!label)
                     continue;
-                const fieldData = { label, unit: parts[1] || newCatUnit.trim(), type: 'number', category };
+                const fieldData = { label, unit: parts[1] || newCatUnit.trim(), type: 'number', category, placement };
                 if (newCatStoreIds.length > 0)
                     fieldData.storeIds = newCatStoreIds;
                 const result = await restPush(db.ref('formSchemas/sales'), fieldData);
@@ -3438,6 +3441,20 @@ function AdminPanel({ onLogout }) {
         }
         finally {
             setSavingCat(false);
+        }
+    };
+    const PLACEMENT_LABEL = { food: 'di bawah Penjualan Makanan', beverage: 'di bawah Minuman', bottom: 'di bagian bawah (Data Tambahan)' };
+    const handleSetCategoryPlacement = async (category, placement) => {
+        const list = (formSchemas.sales || []).filter(f => f.category === category);
+        try {
+            for (const f of list) {
+                await restSet(db.ref(`formSchemas/sales/${f.id}/placement`), placement);
+            }
+            setFormSchemas(prev => ({ ...prev, sales: (prev.sales || []).map(f => f.category === category ? { ...f, placement } : f) }));
+            showAdminToast(`Kategori "${category}" dipindah ${PLACEMENT_LABEL[placement]}.`);
+        }
+        catch (err) {
+            showAdminToast('Gagal memindah kategori: ' + ((err && err.message) || 'coba lagi.'));
         }
     };
     const handleDeleteCategory = async (category) => {
@@ -4394,6 +4411,13 @@ function AdminPanel({ onLogout }) {
                         React.createElement("datalist", { id: "catNameList" }, Array.from(new Set((formSchemas.sales || []).map(f => f.category).filter(Boolean))).map(c => React.createElement("option", { key: c, value: c }))),
                         React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Pilih nama kategori yang sudah ada untuk menambah barang ke dalamnya.")),
                     React.createElement("div", null,
+                        React.createElement("label", { htmlFor: "newCatPlacement", className: "block text-[10px] font-semibold text-slate-600 mb-1" }, "Letak di Form Penjualan"),
+                        React.createElement("select", { id: "newCatPlacement", value: newCatPlacement, onChange: (e) => setNewCatPlacement(e.target.value), className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white" },
+                            React.createElement("option", { value: "food" }, "Di bawah Penjualan Makanan"),
+                            React.createElement("option", { value: "beverage" }, "Di bawah Minuman"),
+                            React.createElement("option", { value: "bottom" }, "Di bagian bawah (Data Tambahan)")),
+                        React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Letak yang sama dipakai di laporan Telegram. Kalau nama kategori sudah ada, barang baru ikut letak kategori itu.")),
+                    React.createElement("div", null,
                         React.createElement("label", { htmlFor: "newCatItems", className: "block text-[10px] font-semibold text-slate-600 mb-1" }, "Barang yang dijual (satu barang per baris)"),
                         React.createElement("textarea", { id: "newCatItems", rows: 5, value: newCatItems, onChange: (e) => setNewCatItems(e.target.value), placeholder: "Es Teh\nKopi Susu | cup\nBrownies | box", className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-xs" }),
                         React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" },
@@ -4419,6 +4443,10 @@ function AdminPanel({ onLogout }) {
                                 React.createElement("div", { className: "flex items-center justify-between" },
                                     React.createElement("p", { className: "text-[11px] font-bold text-indigo-700" }, cat ? `📂 ${cat}` : 'Tanpa kategori'),
                                     cat && React.createElement("button", { onClick: () => handleDeleteCategory(cat), className: "text-[10px] text-rose-500 font-semibold" }, "Hapus kategori")),
+                                cat && (React.createElement("select", { value: groups[cat][0].placement || 'bottom', onChange: (e) => handleSetCategoryPlacement(cat, e.target.value), className: "w-full px-2 py-1.5 border border-slate-200 rounded-lg text-[11px] bg-white text-slate-600", "aria-label": `Letak kategori ${cat}` },
+                                    React.createElement("option", { value: "food" }, "Letak: di bawah Penjualan Makanan"),
+                                    React.createElement("option", { value: "beverage" }, "Letak: di bawah Minuman"),
+                                    React.createElement("option", { value: "bottom" }, "Letak: di bagian bawah (Data Tambahan)"))),
                                 groups[cat].map(f => (React.createElement("div", { key: f.id, className: "flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2" },
                                     React.createElement("div", { className: "min-w-0" },
                                         React.createElement("span", { className: "text-xs font-semibold text-slate-700 block truncate" },
@@ -5902,6 +5930,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const PRINTING_ITEM_OPTIONS = ['FD', 'Toping Taro', 'Coklat', 'Vanila', 'Peach', 'Rasberi', 'Nanas', 'Matcha', 'Whipping Cream', 'Es Batu'];
     const [printingSubTab, setPrintingSubTab] = useState('premix');
     const SUSU_OPSI = ['PT Global Dairi Alami', 'PT Diamond Cold Storage'];
+    const PREMIX_FOOD_SAFETY_DEFAULT = 'Simpan sesuai SOP Food Safety. Gunakan sebelum tanggal ED.';
     const PREMIX_CATALOG = [
         { id: 'taro_latte', nama: 'Taro Latte', hari: 1, bahan: [
                 { label: 'Taro Powder', opsi: ['PT Agrinesia'] },
@@ -5935,8 +5964,8 @@ function StoreApp({ storeId, storeName, onLogout }) {
                 { label: 'Susu', opsi: SUSU_OPSI },
             ] },
     ];
-    const emptyPremixForm = () => ({ namaToko: storeName || '', itemId: '', timeMode: 'auto', kpManual: '', edManual: '', choices: {}, copies: 1 });
-    const [premixForm, setPremixForm] = useDraftState(storeId, 'premix', emptyPremixForm, { omit: ['timeMode', 'kpManual', 'edManual'] });
+    const emptyPremixForm = () => ({ namaToko: storeName || '', itemId: '', timeMode: 'auto', kpManual: '', edManual: '', choices: {}, copies: 1, dataMode: 'daftar', manualNama: '', manualKp: '', manualEd: '', manualAsal: '', foodSafety: PREMIX_FOOD_SAFETY_DEFAULT });
+    const [premixForm, setPremixForm] = useDraftState(storeId, 'premix', emptyPremixForm, { omit: ['timeMode', 'kpManual', 'edManual', 'manualKp', 'manualEd'] });
     const [premixPrintData, setPremixPrintData] = useState(null);
     const [premixNow, setPremixNow] = useState(() => new Date());
     const QR_WA_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAiQAAAIkAQAAAAAGiA3dAAAHqElEQVR42u2dvZKbSBDH/wOqheDqROjoxCM4vOCqxJvcPcKFzhhnF/oR7k3MOrpw38Csq65qs0MuB8hG9AXzwaBFDAZqrbWbZLUS+mlgpnu6//OBICw/DgHWOJjCFKYwhSlMYcp1U07COTYA7kUGEQA4igTAa/VJDOBWyIHz+e4yhSlXQ9kMv30roBKEg7DvHcVlDBE1iEgfDUIiIpKAICKiUp0lqAYA7Kl/fouQiCquI6Yw5VooxqaV7VKDkCrzUagN+fwbDSJ9ksem90Z+2FKBnLiOmMKUZ+0ZdiTVJ+YAtMfYUc8z5N7efjDOSPv/Sq4jpjDleXgGfaiYISebBwA5fZVnmHKwZ2AKU56kt3fzAOGkBCN5wM7EBr0jMnIBEGmPYfMD93yuI6Yw5VooSju8JAse4211m+mXwL3YF4PnXyxL3nYvSbuJkuuIKUx5Hp5h/CgAEqOjChsA4WNtMM8BAiICgAx02oTNIQEAGjqf64gpTLnObAKwI4V56+QBWjAojULgfJl4pJApTPlePQMA7DsPoJJ/arQSoEWHSicF+v1C6Q80Y1SB64gpTHkCm7a9vdYOhX5fC4kXTLaz6bAbIxhUCAA9wLAzQ4/UyZRcR0xhytUqBK9fAzid98/3AhCiBQBl+jiJqFbvPy7LXjmVGtsutTiTCxMA1HIdMYUpzyBm2BIRtdR0hiyIqMaWCuwpb6zhw51YPDiHQHmM+PyHMsgL5Zc/hN8dPvbEbffxkaxCKdeghKtc0U+rUJJVKH9M9wxElasQmLkCejWBxI6o7icLEZFSCDBx3uFR4oPXULyt7i+AUt9p4x+/AEkADxByASXFRwA4AtkCSoY7/TddQJG6DHeehjNKMUtTUD926dMpAT6rF589VR2Mu9Ma2BJAnisf/TTGHUSFGsjEfEqCAj8DEVBCzqakkPgTQIlqvMGMUjJSjfYF6vEGM37XWtwAwA2aqTFDYUSBrVl/1FCtZx1JYRUCmwfsiMivHQLCXkhG8206sDf1JeRm/n0ptUeIUSywxiIwjbgMFtj0pru2BR4ztj5YzKaQdSuyHjWBYLzRmRabNUuuKLMWNWpIo5TGXkbSzi9LLYB/zC1KF/RqlA1H0l9BqQK0jW52cqpNnyf0VEZUhXrtYF4paz8zWFc7JDMbkUh1GirILYHK3NbCjWZMzGDcRDDmGBCbuE6M3xpvzDBpT5ZRSpFYjyDLmZSgnwNt5pZFdi0tq5bEUtLj5Z4oD9goOy61UQczy9Kr5PpbZzZyYijvr6N0YVla12k2vhz2tInq+9SJ2nu9iOyM08qFdqIRBWGDvnZILbohBuMshOOJSujlCc4Qw5RIFVmACS7TW9MbXIMFqJbfXE9ZPJ3i0/ldf6c4+b7IFSiblTxmuQLFFxdOiusgtKusJykEW3fzAbspARHJkCoiqsw0QZssTFMIOl9VZb6G4+0fMkJ557Ntb1lSZMWnxX1AglKesCyCB2L861MZxilCNd4GKD0G5cls9AkVSrRLrkisZ9PJEoosrUxWJMvKksDfxY7n9pX2dqkb4s0qy83iu1sDEFJl5bXXMxBRpxB0iUIZ6dmG1CKvIirVDiVmQoFEPmneYaNEO4F22JLkJBWnBYAIN07uN7uHrX5ddHdj9em2QC1G+4LAV0U291shZigx2rsF0wKpYrNGWWQ8X2eonO6N5pcltn1SssIVNUjb5ZSHJVpz2b2QzRTKvTj/NRIpEp2RFAI1jiIFYLYgw72QkDS4H5mZQ7AnapEChwcAIKnCmB0Vwza9Ge+OEgH4pWbP3T2Y8YAY5XxKBbwBkCIZDxIDn7T1ETgqvXh2rwaAEsRAQQvb7kFAOd7FbdcnNgeTYvfYE6l6FIJQVc3LZRHZby918ysXJJeRqpsI87Vm0eKVGQ8gOf+KIgm8AkTpqWi9U2HcuYMYB2FilVeK9IsJgR67DydmaLQWmJO7m0EbOolFiZCoixlUjGH/mbpW4e9V8mm5BuW0SCN70C8/YUFZyFTWmyWUD6Y0cgGFUuC4NLeP3/klNj/llAHAIVtG+bRebr+OivOUlEfrj4CzEUEM7EfmjAecKQRD8w7tT5kpzo7j3POMZKYw5ao9Q29Ngu3I/6P3aq7AFy0w5q02fBqcQ5BeUF/SLuhKVNcUcB0xhSnPJGawG5npXYzNHqb99UdmIyOJKbOLuI6YwpRvaNOO5COcWUfWps+lD23TAwoB9dcqkLuWuUfZE3sGpjDl2igDaqjaXQikR4NvMzswvOsn/bcCJMJG+5ez42xfw6KvP6Bb0CAB8BMRmMKUq3/+0ZZuhRB6QsFB/E4S+YlqRFTiVsAdhcjVWsZpU/kuKtaS64gpTLnSbMJ5/lGljL7LD6B69ar7BnUnEe97zhSm/EhPURLdfMRuJkFv8f1XzyHgOmIKU74hhewjUZ3noJ4ddhLisGfYm8chOuOQUfdAJUdGYIWAKUx5NrvrPNq97D7dFzAbnw3vauYJLGo3xnDGLBquI6Yw5ToVgvf0thsptE9CLrGjt+aZiXZL4y8XFYL04goL+35iyr9hhYApTLlqz+AcZo/k3IgCO5Jw5xbAmVvAcwiYwpTvkyJoBciB7y5TmMIUpjCFKd875X/7NjShTEcdbwAAAABJRU5ErkJggg==';
@@ -6100,10 +6129,23 @@ function StoreApp({ storeId, storeName, onLogout }) {
         const ed = kp && !isNaN(kp) && it ? toLocalInput(addDays(kp, it.hari)) : prev.edManual;
         return { ...prev, kpManual: val, edManual: ed };
     });
+    const premixFoodSafetyText = () => (premixForm.foodSafety === undefined ? PREMIX_FOOD_SAFETY_DEFAULT : String(premixForm.foodSafety)).trim();
     const resolvePremixData = (nowDate) => {
         const outletName = (storeName || premixForm.namaToko || '').trim();
         if (!outletName)
             return { error: 'Isi Nama Outlet terlebih dahulu.' };
+        if (premixForm.dataMode === 'manual') {
+            const nama = (premixForm.manualNama || '').trim();
+            if (!nama)
+                return { error: 'Isi Nama Barang terlebih dahulu.' };
+            const kpM = premixForm.manualKp ? new Date(premixForm.manualKp) : null;
+            const edM = premixForm.manualEd ? new Date(premixForm.manualEd) : null;
+            if (!kpM || !edM || isNaN(kpM.getTime()) || isNaN(edM.getTime()))
+                return { error: 'Isi KP dan ED (tanggal & jam) terlebih dahulu.' };
+            if (edM.getTime() <= kpM.getTime())
+                return { error: 'ED harus setelah KP.' };
+            return { data: { namaToko: outletName, namaBarang: nama, kp: fmtDateTimeLabel(kpM), ed: fmtDateTimeLabel(edM), bahan: [], diproduksi: (premixForm.manualAsal || '').trim(), foodSafety: premixFoodSafetyText(), copies: Math.min(10, Math.max(1, Number(premixForm.copies) || 1)) } };
+        }
         if (!premixItem)
             return { error: 'Pilih Nama Barang terlebih dahulu.' };
         const bahan = [];
@@ -6124,7 +6166,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
             return { error: 'Isi KP dan ED (tanggal & jam) terlebih dahulu.' };
         if (ed.getTime() <= kp.getTime())
             return { error: 'ED harus setelah KP.' };
-        return { data: { namaToko: outletName, namaBarang: premixItem.nama, kp: fmtDateTimeLabel(kp), ed: fmtDateTimeLabel(ed), bahan, copies: Math.min(10, Math.max(1, Number(premixForm.copies) || 1)) } };
+        return { data: { namaToko: outletName, namaBarang: premixItem.nama, kp: fmtDateTimeLabel(kp), ed: fmtDateTimeLabel(ed), bahan, foodSafety: premixFoodSafetyText(), copies: Math.min(10, Math.max(1, Number(premixForm.copies) || 1)) } };
     };
     const RECEIPT_WIDTH = printerCfg.paper === '80' ? 48 : 32;
     const wrapText = (str, width, first = '', rest = '') => {
@@ -6243,9 +6285,10 @@ function StoreApp({ storeId, storeName, onLogout }) {
             { kv: ['Nama Barang', d.namaBarang], w: 11 },
             { kv: ['KP / Jam', d.kp], w: 11 },
             { kv: ['ED / Jam', d.ed], w: 11 },
-            { sep: true },
-            { text: 'Bahan yang digunakan:', bold: true },
-            ...d.bahan.map(b => ({ item: [b.label, b.value] })),
+            ...(d.diproduksi ? [{ kv: ['Diproduksi', d.diproduksi], w: 11 }] : []),
+            ...(((d.bahan || []).length > 0 || d.foodSafety) ? [{ sep: true }] : []),
+            ...((d.bahan || []).length > 0 ? [{ text: 'Bahan yang digunakan:', bold: true }, ...d.bahan.map(b => ({ item: [b.label, b.value] }))] : []),
+            ...(d.foodSafety ? [...((d.bahan || []).length > 0 ? [{ sep: true }] : []), { text: 'FOOD SAFETY', align: 'center', bold: true }, { text: d.foodSafety }] : []),
             { sep: true, ch: '=' },
             { feed: 3 },
         ];
@@ -7015,6 +7058,27 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const [inventoryData, setInventoryData] = useDraftState(storeId, 'inventory', () => getEmptyInventoryState(), { dateField: 'tanggal' });
     const [historyList, setHistoryList] = useState([]);
     const [customSalesFields, setCustomSalesFields] = useState([]);
+    const salesPlacementOf = (f) => (f.category && (f.placement === 'food' || f.placement === 'beverage')) ? f.placement : 'bottom';
+    const renderSalesFieldGroups = (placement) => {
+        const list = (customSalesFields || []).filter(f => salesPlacementOf(f) === placement);
+        if (list.length === 0)
+            return null;
+        const groups = {};
+        list.forEach(f => { const k = f.category || ''; (groups[k] = groups[k] || []).push(f); });
+        const keys = Object.keys(groups).sort((a, b) => (a === '' ? 1 : 0) - (b === '' ? 1 : 0) || a.localeCompare(b));
+        return keys.map(cat => (React.createElement("div", { key: `${placement}-${cat || '_none'}`, className: "space-y-4" },
+            placement === 'bottom'
+                ? React.createElement("h4", { className: "font-bold text-slate-700 text-sm flex items-center gap-1.5" },
+                    React.createElement("i", { "data-lucide": "sparkles", className: "w-3.5 h-3.5 text-purple-600" }),
+                    " ",
+                    cat || 'Data Tambahan')
+                : React.createElement("h4", { className: "text-xs font-extrabold text-purple-800 uppercase tracking-wider border-b border-purple-50 pb-2" }, cat),
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4" }, groups[cat].map(f => (React.createElement("div", { key: f.id },
+                React.createElement("label", { htmlFor: `custom-field-${f.id}`, className: "block text-xs font-semibold text-slate-600 mb-1" },
+                    f.label,
+                    f.unit ? ` (${f.unit})` : ''),
+                React.createElement("input", { id: `custom-field-${f.id}`, type: f.type === 'text' ? 'text' : 'number', value: (salesData.custom || {})[f.id] || '', onChange: (e) => setSalesData({ ...salesData, custom: { ...(salesData.custom || {}), [f.id]: e.target.value } }), className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-sm", placeholder: "0" }))))))));
+    };
     const [customInventoryFields, setCustomInventoryFields] = useState([]);
     const humanizeFieldKey = (key) => {
         const spaced = String(key).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
@@ -7165,6 +7229,15 @@ function StoreApp({ storeId, storeName, onLogout }) {
         .filter(f => f.type !== 'text')
         .map(f => ({ key: `inv_${f.id}`, label: f.label, unit: f.unit || 'pcs' }));
     const kedatanganUmumItems = [...KEDATANGAN_BARANG_UMUM_ITEMS, ...kedatanganExtraItems];
+    const KEDATANGAN_KODE_PRODUKSI = {
+        frozenDough: ['DGH-S1', 'DGH-S2', 'DGH-S3'],
+        fillingCoklat: ['FIL CKL-S1', 'FIL CKL-S2', 'FIL CKL-S3'],
+        fillingVanilla: ['FIL VNL-S1', 'FIL VNL-S2', 'FIL VNL-S3'],
+        fillingRaspberry: ['FIL RAS-S1', 'FIL RAS-S2', 'FIL RAS-S3'],
+        fillingPeach: ['FIL PCH-S1', 'FIL PCH-S2', 'FIL PCH-S3'],
+        fillingMatcha: ['FIL Match-S1', 'FIL Match-S2', 'FIL Match-S3'],
+    };
+    const fmtEdId = (iso) => /^\d{4}-\d{2}-\d{2}$/.test(iso || '') ? iso.split('-').reverse().join('/') : (iso || '');
     const getEmptyKedatanganForm = (dateStr = todayWIB()) => ({
         tanggal: dateStr,
         noSuratJalan: '',
@@ -7684,8 +7757,11 @@ function StoreApp({ storeId, storeName, onLogout }) {
             .map(f => `${f.label} : ${(dataObj || {})[f.id] || 0}${f.unit ? ' ' + f.unit : ''}`)
             .join('\n');
         const customSalesLines = formatCustomFieldLines(customSalesFields.filter(f => !f.category), sales.custom);
-        const customSalesCategoryBlocks = Object.entries(customSalesFields.filter(f => f.category).reduce((acc, f) => { (acc[f.category] = acc[f.category] || []).push(f); return acc; }, {}))
+        const customCatBlocksFor = (placement) => Object.entries(customSalesFields.filter(f => f.category && salesPlacementOf(f) === placement).reduce((acc, f) => { (acc[f.category] = acc[f.category] || []).push(f); return acc; }, {}))
             .map(([cat, fs]) => `*${escapeTelegramMarkdown(cat)}* :\n${formatCustomFieldLines(fs, sales.custom)}`).join('\n\n');
+        const customSalesCategoryBlocks = customCatBlocksFor('bottom');
+        const customFoodBlock = customCatBlocksFor('food');
+        const customBeverageBlock = customCatBlocksFor('beverage');
         const customDoughLines = formatCustomFieldLines(customInventoryFields.filter(f => f.section === 'dough'), inv.custom);
         const customIngredientsLines = formatCustomFieldLines(customInventoryFields.filter(f => f.section === 'ingredients'), inv.custom);
         const customPackagingLines = formatCustomFieldLines(customInventoryFields.filter(f => f.section === 'packaging'), inv.custom);
@@ -7705,14 +7781,14 @@ Raspberry : ${sales.soldBuns.raspberry || 0} pcs
 Nanas : ${sales.soldBuns.nanas || 0} pcs
 Matcha : ${sales.soldBuns.matcha || 0} pcs
 Family box : ${sales.soldBuns.familyBox || 0} box (${numVal(sales.soldBuns.familyBox) * 6} pcs)
-*Total : ${totalBuns} pcs*
+*Total : ${totalBuns} pcs*${customFoodBlock ? `\n\n${customFoodBlock}` : ''}
 
 *Beverage* :
 Taro latte : ${sales.soldBeverages.taroLatte || 0} cup
 Chocolate iced : ${sales.soldBeverages.chocolateIced || 0} cup
 Tarolatte strawberry cheese : ${sales.soldBeverages.taroStrawberryCheese || 0} cup
 Tarolatte blueberry : ${sales.soldBeverages.taroBlueberry || 0} cup
-*Total : ${totalBeverages} cup*
+*Total : ${totalBeverages} cup*${customBeverageBlock ? `\n\n${customBeverageBlock}` : ''}
 
 *Financials & Transaksi* :
 Value : Rp. ${numVal(sales.financials.value).toLocaleString('id-ID')}
@@ -7863,7 +7939,7 @@ Terima Kasih 🙏🏻`;
     };
     const handleKedatanganKhususChange = (key, field, value) => {
         setKedatanganForm(prev => {
-            const current = prev.items[key] && typeof prev.items[key] === 'object' ? prev.items[key] : { jumlah: '', tanggalProduksi: '' };
+            const current = prev.items[key] && typeof prev.items[key] === 'object' ? prev.items[key] : { jumlah: '', ed: '', kodeProduksi: '' };
             return {
                 ...prev,
                 items: {
@@ -7877,7 +7953,7 @@ Terima Kasih 🙏🏻`;
         const val = items[key];
         if (val && typeof val === 'object')
             return val;
-        return { jumlah: val || '', tanggalProduksi: '' };
+        return { jumlah: val || '', ed: '', kodeProduksi: '' };
     };
     const handleAddTidakSesuai = () => {
         if (!tidakSesuaiInput.nama || !tidakSesuaiInput.jumlah) {
@@ -7922,7 +7998,8 @@ Terima Kasih 🙏🏻`;
             const val = getKhususItemValue(form.items, item.key);
             if (val.jumlah && numVal(val.jumlah) > 0) {
                 anyKhusus = true;
-                const tgl = val.tanggalProduksi ? ` (Produksi: ${val.tanggalProduksi})` : '';
+                const extra = [val.ed ? `ED: ${fmtEdId(val.ed)}` : (val.tanggalProduksi ? `Produksi: ${val.tanggalProduksi}` : ''), val.kodeProduksi ? `Kode: ${val.kodeProduksi}` : ''].filter(Boolean).join(' | ');
+                const tgl = extra ? ` (${extra})` : '';
                 text += `${item.label} : ${val.jumlah} ${item.unit}${tgl}\n`;
             }
         });
@@ -7978,7 +8055,7 @@ Daily inventory done✅
                 if (v && typeof v === 'object') {
                     const jumlahNum = numVal(v.jumlah);
                     if (jumlahNum > 0) {
-                        safeItems[k] = { jumlah: jumlahNum, tanggalProduksi: String(v.tanggalProduksi || '').trim() };
+                        safeItems[k] = { jumlah: jumlahNum, ed: String(v.ed || '').trim(), kodeProduksi: String(v.kodeProduksi || '').trim(), ...(v.tanggalProduksi ? { tanggalProduksi: String(v.tanggalProduksi).trim() } : {}) };
                     }
                 }
                 else {
@@ -9425,6 +9502,7 @@ Daily inventory done✅
                             React.createElement("span", { className: "text-lg font-black text-purple-900" },
                                 totalBunsSold,
                                 " pcs")))),
+                renderSalesFieldGroups('food'),
                 React.createElement("div", { className: "space-y-4" },
                     React.createElement("h4", { className: "text-xs font-extrabold text-purple-800 uppercase tracking-wider border-b border-purple-50 pb-2" }, "Minuman (cup)"),
                     React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4" },
@@ -9440,6 +9518,7 @@ Daily inventory done✅
                         React.createElement("div", null,
                             React.createElement("label", { htmlFor: "salesData_soldBeverages_taroBlueberry", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Taro Blueberry"),
                             React.createElement("input", { id: "salesData_soldBeverages_taroBlueberry", type: "number", value: salesData.soldBeverages.taroBlueberry, onChange: (e) => setSalesData({ ...salesData, soldBeverages: { ...salesData.soldBeverages, taroBlueberry: e.target.value } }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })))),
+                renderSalesFieldGroups('beverage'),
                 React.createElement("div", { className: "space-y-4" },
                     React.createElement("h4", { className: "text-xs font-extrabold text-purple-800 uppercase tracking-wider border-b border-purple-50 pb-2" }, "Financials & Transaksi"),
                     React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4" },
@@ -9518,21 +9597,7 @@ Daily inventory done✅
                         React.createElement("div", null,
                             React.createElement("label", { htmlFor: "salesData_waste_rotiMatang", className: "block text-[10px] font-semibold text-slate-600 mb-1" }, "Roti Matang"),
                             React.createElement("input", { id: "salesData_waste_rotiMatang", type: "number", value: salesData.waste.rotiMatang, onChange: (e) => setSalesData({ ...salesData, waste: { ...salesData.waste, rotiMatang: e.target.value } }), className: "w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs", placeholder: "0" })))),
-                customSalesFields.length > 0 && (() => {
-                    const groups = {};
-                    customSalesFields.forEach(f => { const k = f.category || ''; (groups[k] = groups[k] || []).push(f); });
-                    const keys = Object.keys(groups).sort((a, b) => (a === '' ? 1 : 0) - (b === '' ? 1 : 0) || a.localeCompare(b));
-                    return keys.map(cat => (React.createElement("div", { key: cat || '_none' },
-                        React.createElement("h4", { className: "font-bold text-slate-700 text-sm mb-2 flex items-center gap-1.5" },
-                            React.createElement("i", { "data-lucide": "sparkles", className: "w-3.5 h-3.5 text-purple-600" }),
-                            " ",
-                            cat || 'Data Tambahan'),
-                        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" }, groups[cat].map(f => (React.createElement("div", { key: f.id },
-                            React.createElement("label", { htmlFor: `custom-field-${f.id}`, className: "block text-[10px] font-semibold text-slate-600 mb-1" },
-                                f.label,
-                                f.unit ? ` (${f.unit})` : ''),
-                            React.createElement("input", { id: `custom-field-${f.id}`, type: f.type === 'text' ? 'text' : 'number', value: (salesData.custom || {})[f.id] || '', onChange: (e) => setSalesData({ ...salesData, custom: { ...(salesData.custom || {}), [f.id]: e.target.value } }), className: "w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs", placeholder: "0" }))))))));
-                })(),
+                renderSalesFieldGroups('bottom'),
                 emptyReportFieldsPreview.length > 0 && (React.createElement("div", { className: "bg-wheat-50 border border-wheat-500/40 text-wheat-600 text-xs rounded-xl p-3 flex items-start gap-2" },
                     React.createElement("i", { "data-lucide": "alert-triangle", className: "w-4 h-4 shrink-0 mt-0.5" }),
                     React.createElement("div", null,
@@ -9905,8 +9970,13 @@ Daily inventory done✅
                                         ")")),
                                 React.createElement("input", { id: `item-field-${item.key}`, type: "number", value: khususVal.jumlah, onChange: (e) => handleKedatanganKhususChange(item.key, 'jumlah', e.target.value), className: "w-full px-3 py-1.5 border border-purple-200 bg-white rounded-lg text-sm", placeholder: "Jumlah" }),
                                 React.createElement("div", null,
-                                    React.createElement("label", { htmlFor: "tanggal-produksi", className: "block text-[10px] font-semibold text-purple-600 mb-0.5" }, "Tanggal Produksi"),
-                                    React.createElement("input", { id: "tanggal-produksi", type: "text", value: khususVal.tanggalProduksi, onChange: (e) => handleKedatanganKhususChange(item.key, 'tanggalProduksi', e.target.value), placeholder: "Contoh: 20-06-2026", className: "w-full px-2.5 py-1.5 border border-purple-200 bg-white rounded-lg text-xs" }))));
+                                    React.createElement("label", { htmlFor: `ed-${item.key}`, className: "block text-[10px] font-semibold text-purple-600 mb-0.5" }, "ED (tanggal kedaluwarsa)"),
+                                    React.createElement("input", { id: `ed-${item.key}`, type: "date", value: khususVal.ed || '', onChange: (e) => handleKedatanganKhususChange(item.key, 'ed', e.target.value), className: "w-full px-2.5 py-1.5 border border-purple-200 bg-white rounded-lg text-xs" })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { htmlFor: `kode-${item.key}`, className: "block text-[10px] font-semibold text-purple-600 mb-0.5" }, "Kode Produksi"),
+                                    KEDATANGAN_KODE_PRODUKSI[item.key] ? (React.createElement("select", { id: `kode-${item.key}`, value: khususVal.kodeProduksi || '', onChange: (e) => handleKedatanganKhususChange(item.key, 'kodeProduksi', e.target.value), className: "w-full px-2.5 py-1.5 border border-purple-200 bg-white rounded-lg text-xs" },
+                                        React.createElement("option", { value: "" }, "\u2014 pilih kode \u2014"),
+                                        KEDATANGAN_KODE_PRODUKSI[item.key].map(k => React.createElement("option", { key: k, value: k }, k)))) : (React.createElement("input", { id: `kode-${item.key}`, type: "text", value: khususVal.kodeProduksi || '', onChange: (e) => handleKedatanganKhususChange(item.key, 'kodeProduksi', e.target.value), placeholder: "Opsional", className: "w-full px-2.5 py-1.5 border border-purple-200 bg-white rounded-lg text-xs" })))));
                         }))),
                     React.createElement("div", { className: "space-y-3" },
                         React.createElement("h4", { className: "text-xs font-extrabold text-indigo-700 uppercase tracking-wider border-b border-indigo-50 pb-2 flex items-center gap-1.5" },
@@ -10193,27 +10263,67 @@ Daily inventory done✅
                     const chip = (active) => `px-3 py-2 rounded-xl text-xs font-bold border transition-all ${active ? 'bg-purple-800 text-white border-purple-800' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`;
                     const times = getPremixTimes(premixNow);
                     const prevRes = resolvePremixData(premixNow);
+                    const isManual = premixForm.dataMode === 'manual';
+                    const fsText = premixFoodSafetyText();
                     const previewData = (() => {
+                        if (isManual) {
+                            const kpM = premixForm.manualKp ? new Date(premixForm.manualKp) : null;
+                            const edM = premixForm.manualEd ? new Date(premixForm.manualEd) : null;
+                            return { namaToko: storeName || premixForm.namaToko || '[Nama Outlet]', namaBarang: (premixForm.manualNama || '').trim() || '...', kp: kpM && !isNaN(kpM.getTime()) ? fmtDateTimeLabel(kpM) : '-', ed: edM && !isNaN(edM.getTime()) ? fmtDateTimeLabel(edM) : '-', bahan: [], diproduksi: (premixForm.manualAsal || '').trim(), foodSafety: fsText, copies: 1 };
+                        }
                         if (!premixItem)
                             return null;
                         const bahan = premixItem.bahan.map(b => ({ label: b.label, value: (b.opsi.length === 1 ? b.opsi[0] : (premixForm.choices[b.label] || '').trim()) || '...' }));
-                        return { namaToko: storeName || premixForm.namaToko || '[Nama Outlet]', namaBarang: premixItem.nama, kp: times.kp ? fmtDateTimeLabel(times.kp) : '-', ed: times.ed ? fmtDateTimeLabel(times.ed) : '-', bahan, copies: 1 };
+                        return { namaToko: storeName || premixForm.namaToko || '[Nama Outlet]', namaBarang: premixItem.nama, kp: times.kp ? fmtDateTimeLabel(times.kp) : '-', ed: times.ed ? fmtDateTimeLabel(times.ed) : '-', bahan, foodSafety: fsText, copies: 1 };
                     })();
                     const previewLines = previewData ? renderDoc(buildPremixDoc(previewData), RECEIPT_WIDTH).slice(0, -3) : [];
+                    const previewBlock = (React.createElement(React.Fragment, null,
+                        React.createElement("div", null,
+                            React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" }, "Bacaan Food Safety (dicetak di bawah label)"),
+                            React.createElement("textarea", { rows: 2, maxLength: 160, value: premixForm.foodSafety === undefined ? PREMIX_FOOD_SAFETY_DEFAULT : premixForm.foodSafety, onChange: (e) => handlePremixFormChange('foodSafety', e.target.value), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm", placeholder: "Kosongkan kalau tidak perlu dicetak" })),
+                        React.createElement("div", null,
+                            React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" },
+                                "Pratinjau Label (",
+                                printerCfg.paper,
+                                " mm)"),
+                            React.createElement("div", { className: "overflow-x-auto bg-slate-50 border border-slate-200 rounded-xl p-3" },
+                                React.createElement("div", { style: { fontFamily: "'Courier New', monospace", fontSize: '11px', lineHeight: 1.35, color: '#111', width: `${RECEIPT_WIDTH}ch`, minWidth: `${RECEIPT_WIDTH}ch`, margin: '0 auto' } }, previewLines.map((l, i) => l.logo ? (React.createElement("div", { key: i, style: { textAlign: 'center', margin: '2px 0 4px' } },
+                                    React.createElement("img", { src: LOGO_DATA_URL, alt: "tarobun", style: { width: '66%', display: 'inline-block' } }))) : (React.createElement("div", { key: i, style: { whiteSpace: 'pre', textAlign: l.align === 'center' ? 'center' : 'left', fontWeight: l.bold ? 700 : 400, fontSize: l.big ? '22px' : undefined, lineHeight: l.big ? 1.2 : undefined } }, l.text || '\u00A0')))))),
+                        React.createElement("div", { className: "flex items-center gap-3" },
+                            React.createElement("label", { className: "text-xs font-semibold text-slate-600" }, "Jumlah label"),
+                            React.createElement("input", { type: "number", min: "1", max: "10", value: premixForm.copies, onChange: (e) => handlePremixFormChange('copies', e.target.value), className: "w-20 px-3 py-2 border border-slate-300 rounded-xl text-sm" }))));
                     return (React.createElement("form", { onSubmit: handlePremixPrint, className: "bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4" },
                         React.createElement("div", null,
                             React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" },
                                 "Nama Outlet",
                                 storeName ? ' (otomatis sesuai outlet Anda)' : ''),
                             React.createElement("input", { type: "text", value: storeName || premixForm.namaToko, readOnly: !!storeName, onChange: (e) => handlePremixFormChange('namaToko', e.target.value), className: `w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm ${storeName ? 'bg-slate-50 text-slate-600' : ''}`, required: true })),
-                        React.createElement("div", null,
+                        React.createElement("div", { className: "flex bg-slate-100 rounded-xl p-1 gap-1" },
+                            React.createElement("button", { type: "button", onClick: () => handlePremixFormChange('dataMode', 'daftar'), className: `flex-1 text-xs font-bold py-2 rounded-lg ${!isManual ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}` }, "Pilih dari Daftar"),
+                            React.createElement("button", { type: "button", onClick: () => handlePremixFormChange('dataMode', 'manual'), className: `flex-1 text-xs font-bold py-2 rounded-lg ${isManual ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}` }, "Isi Manual")),
+                        isManual && (React.createElement(React.Fragment, null,
+                            React.createElement("div", null,
+                                React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" }, "Nama Barang"),
+                                React.createElement("input", { type: "text", maxLength: 60, value: premixForm.manualNama || '', onChange: (e) => handlePremixFormChange('manualNama', e.target.value), placeholder: "Ketik nama barang", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" })),
+                            React.createElement("div", { className: "grid grid-cols-1 gap-2" },
+                                React.createElement("div", null,
+                                    React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" }, "KP (tanggal & jam)"),
+                                    React.createElement("input", { type: "datetime-local", value: premixForm.manualKp || '', onChange: (e) => handlePremixFormChange('manualKp', e.target.value), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" }, "ED / Exp (tanggal & jam)"),
+                                    React.createElement("input", { type: "datetime-local", value: premixForm.manualEd || '', onChange: (e) => handlePremixFormChange('manualEd', e.target.value), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }))),
+                            React.createElement("div", null,
+                                React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" }, "Diproduksi di / oleh"),
+                                React.createElement("input", { type: "text", maxLength: 80, value: premixForm.manualAsal || '', onChange: (e) => handlePremixFormChange('manualAsal', e.target.value), placeholder: "Contoh: Dapur outlet / nama pemasok", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" })),
+                            previewBlock)),
+                        !isManual && (React.createElement("div", null,
                             React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" }, "Nama Barang"),
                             React.createElement("div", { className: "flex flex-wrap gap-2" }, PREMIX_CATALOG.map(it => (React.createElement("button", { key: it.id, type: "button", onClick: () => selectPremixItem(it.id), className: chip(premixForm.itemId === it.id) }, it.nama)))),
                             premixItem && React.createElement("p", { className: "text-[11px] text-slate-500 mt-1.5" },
                                 "Tahan ",
                                 premixItem.hari,
-                                " hari.")),
-                        premixItem && (React.createElement(React.Fragment, null,
+                                " hari."))),
+                        !isManual && premixItem && (React.createElement(React.Fragment, null,
                             React.createElement("div", null,
                                 React.createElement("div", { className: "flex items-center justify-between mb-1" },
                                     React.createElement("label", { className: "block text-xs font-semibold text-slate-600" }, "KP / Jam & ED / Jam"),
@@ -10244,21 +10354,11 @@ Daily inventory done✅
                                 React.createElement("div", { className: "space-y-3" }, premixItem.bahan.map(b => (React.createElement("div", { key: b.label },
                                     React.createElement("p", { className: "text-[11px] font-semibold text-slate-500 mb-1" }, b.label),
                                     b.manual ? (React.createElement("input", { type: "text", value: premixForm.choices[b.label] || '', onChange: (e) => setPremixChoice(b.label, e.target.value), placeholder: "Ketik nama pemasok", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" })) : b.opsi.length === 1 ? (React.createElement("div", { className: "px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700" }, b.opsi[0])) : (React.createElement("div", { className: "flex flex-wrap gap-2" }, b.opsi.map(o => (React.createElement("button", { key: o, type: "button", onClick: () => setPremixChoice(b.label, o), className: chip(premixForm.choices[b.label] === o) }, o)))))))))),
-                            React.createElement("div", null,
-                                React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" },
-                                    "Pratinjau Label (",
-                                    printerCfg.paper,
-                                    " mm)"),
-                                React.createElement("div", { className: "overflow-x-auto bg-slate-50 border border-slate-200 rounded-xl p-3" },
-                                    React.createElement("div", { style: { fontFamily: "'Courier New', monospace", fontSize: '11px', lineHeight: 1.35, color: '#111', width: `${RECEIPT_WIDTH}ch`, minWidth: `${RECEIPT_WIDTH}ch`, margin: '0 auto' } }, previewLines.map((l, i) => l.logo ? (React.createElement("div", { key: i, style: { textAlign: 'center', margin: '2px 0 4px' } },
-                                        React.createElement("img", { src: LOGO_DATA_URL, alt: "tarobun", style: { width: '66%', display: 'inline-block' } }))) : (React.createElement("div", { key: i, style: { whiteSpace: 'pre', textAlign: l.align === 'center' ? 'center' : 'left', fontWeight: l.bold ? 700 : 400, fontSize: l.big ? '22px' : undefined, lineHeight: l.big ? 1.2 : undefined } }, l.text || '\u00A0')))))),
-                            React.createElement("div", { className: "flex items-center gap-3" },
-                                React.createElement("label", { className: "text-xs font-semibold text-slate-600" }, "Jumlah label"),
-                                React.createElement("input", { type: "number", min: "1", max: "10", value: premixForm.copies, onChange: (e) => handlePremixFormChange('copies', e.target.value), className: "w-20 px-3 py-2 border border-slate-300 rounded-xl text-sm" })))),
-                        React.createElement("button", { type: "submit", disabled: !premixItem || bleStatus === 'connecting', className: "w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2" },
+                            previewBlock)),
+                        React.createElement("button", { type: "submit", disabled: !(premixItem || isManual) || bleStatus === 'connecting', className: "w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2" },
                             React.createElement("i", { "data-lucide": "printer", className: "w-4 h-4" }),
                             React.createElement("span", null, printerCfg.mode === 'ble' && bleStatus !== 'connected' ? 'Hubungkan & Cetak' : 'Cetak Label')),
-                        React.createElement("button", { type: "button", onClick: handlePremixPrintDialog, disabled: !premixItem, className: "w-full bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2" },
+                        React.createElement("button", { type: "button", onClick: handlePremixPrintDialog, disabled: !(premixItem || isManual), className: "w-full bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2" },
                             React.createElement("i", { "data-lucide": "monitor", className: "w-3.5 h-3.5" }),
                             React.createElement("span", null, "Cetak via Dialog Browser (PDF/printer lain)"))));
                 })(),
@@ -12787,6 +12887,12 @@ const OJT_STAGE_DEFS = [
 ];
 const ojtMdEsc = (t) => String(t === null || t === undefined ? '' : t).replace(/([_*`\[])/g, '\\$1');
 const ojtFmtDate = (ms) => ms ? new Date(ms).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+const ojtMdNorm = (t) => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const ojtTgDisplay = (p) => p && (p.telegramUsername ? '@' + p.telegramUsername : (p && p.telegramId) || '');
+const ojtSendTelegram = async (personId, telegram) => {
+    const d = await pettyApi(`/api/ojt/people/${personId}/send-telegram`, { method: 'POST', body: telegram ? { telegram } : {} });
+    return d.telegram || { sent: false, reason: 'Tidak ada respons dari server.' };
+};
 const ojtCopy = async (text) => {
     try {
         await navigator.clipboard.writeText(text);
@@ -13347,10 +13453,49 @@ function LeaderOjtStatusPanel({ storeName, showToast, sendToStoreTelegram }) {
             React.createElement("input", { value: newName, onChange: e => setNewName(e.target.value), onKeyDown: e => { if (e.key === 'Enter')
                     add(); }, placeholder: "Nama OJT baru", className: "flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm" }),
             React.createElement("button", { onClick: add, disabled: adding || !newName.trim(), className: "bg-purple-800 disabled:opacity-50 text-white text-xs font-bold px-4 rounded-xl" }, adding ? '...' : 'Tambah')),
+        !loading && !err && React.createElement(OjtQuickSend, { people: people, showToast: showToast, onSent: load }),
         loading ? (React.createElement("div", { className: "text-center text-slate-400 text-sm py-8" },
             React.createElement("i", { "data-lucide": "loader", className: "w-6 h-6 animate-spin mx-auto" }))) : err ? (React.createElement("div", { className: "bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center space-y-2" },
             React.createElement("p", { className: "text-xs text-rose-700 font-semibold" }, err),
             React.createElement("button", { onClick: () => { setLoading(true); load(); }, className: "bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl" }, "Coba Lagi"))) : people.length === 0 ? (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm" }, "Belum ada OJT. Tambahkan nama OJT di atas untuk mulai menilai.")) : (people.map(p => React.createElement(OjtPersonCard, { key: p.id, p: p, storeName: storeName, onChanged: load, showToast: showToast, sendToStoreTelegram: sendToStoreTelegram })))));
+}
+function OjtQuickSend({ people, showToast, onSent }) {
+    const [pid, setPid] = useState('');
+    const [tg, setTg] = useState('');
+    const [busy, setBusy] = useState(false);
+    const pick = (id) => {
+        setPid(id);
+        const p = people.find(x => x.id === id);
+        setTg(p ? ojtTgDisplay(p) : '');
+    };
+    const send = async () => {
+        if (!pid || !tg.trim())
+            return;
+        setBusy(true);
+        try {
+            const r = await ojtSendTelegram(pid, tg.trim());
+            const p = people.find(x => x.id === pid);
+            showToast(r.sent ? `📨 Hasil terkirim ke Telegram ${p ? p.name : 'OJT'}` : '⚠️ ' + r.reason);
+            if (r.sent)
+                await onSent();
+        }
+        catch (e) {
+            showToast('⚠️ ' + e.message);
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    if (people.length === 0)
+        return null;
+    return (React.createElement("div", { className: "bg-sky-50 border border-sky-200 rounded-2xl p-3 space-y-2" },
+        React.createElement("p", { className: "text-xs font-bold text-sky-800" }, "Kirim Hasil Tes ke Telegram OJT"),
+        React.createElement("select", { value: pid, onChange: e => pick(e.target.value), className: "w-full border border-sky-200 rounded-lg px-2.5 py-2 text-xs bg-white" },
+            React.createElement("option", { value: "" }, "Pilih OJT..."),
+            people.map(p => React.createElement("option", { key: p.id, value: p.id }, p.name + (p.tes && p.tes.score !== null && p.tes.score !== undefined ? ` • skor tes ${p.tes.score}` : '')))),
+        React.createElement("input", { value: tg, onChange: e => setTg(e.target.value.replace(/[^A-Za-z0-9_@]/g, '')), maxLength: 33, placeholder: "ID (angka) atau @username Telegram OJT", className: "w-full border border-sky-200 rounded-lg px-2.5 py-2 text-xs bg-white" }),
+        React.createElement("button", { onClick: send, disabled: busy || !pid || !tg.trim(), className: "w-full bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-xs font-bold py-2.5 rounded-xl" }, busy ? 'Mengirim...' : 'Kirim ke Telegram OJT'),
+        React.createElement("p", { className: "text-[10px] text-sky-700" }, "ID / username tersimpan otomatis. OJT cukup menekan Start di bot Telegram perusahaan sekali saja.")));
 }
 function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram }) {
     const [open, setOpen] = useState(false);
@@ -13360,7 +13505,7 @@ function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram
         return f;
     });
     const [finalNote, setFinalNote] = useState(p.finalNote || '');
-    const [tgId, setTgId] = useState(p.telegramId || '');
+    const [tgId, setTgId] = useState(ojtTgDisplay(p));
     const [busy, setBusy] = useState('');
     const st = p.status || {};
     const setF = (k, patch) => setForms(prev => ({ ...prev, [k]: { ...prev[k], ...patch } }));
@@ -13469,15 +13614,15 @@ function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram
             }),
             React.createElement("div", { className: "bg-white rounded-xl border border-slate-200 p-3 space-y-2" },
                 React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "Evaluasi Akhir & Selesai OJT"),
-                React.createElement("input", { type: "text", inputMode: "numeric", value: tgId, onChange: e => setTgId(e.target.value.replace(/\D/g, '')), maxLength: 16, placeholder: "ID Telegram pribadi peserta (angka)", className: "w-full border border-slate-200 rounded-lg px-2.5 py-2 text-xs" }),
-                React.createElement("p", { className: "text-[10px] text-slate-400" }, "Minta peserta membuka bot Telegram perusahaan lalu menekan Start \u2014 bot akan membalas ID-nya. Hasil OJT dikirim otomatis ke chat pribadinya saat ditandai Selesai."),
+                React.createElement("input", { type: "text", inputMode: "numeric", value: tgId, onChange: e => setTgId(e.target.value.replace(/[^A-Za-z0-9_@]/g, '')), maxLength: 33, placeholder: "ID (angka) atau @username Telegram peserta", className: "w-full border border-slate-200 rounded-lg px-2.5 py-2 text-xs" }),
+                React.createElement("p", { className: "text-[10px] text-slate-400" }, "Isi ID angka atau @username peserta. Peserta harus pernah membuka bot Telegram perusahaan dan menekan Start (sekali saja). Hasil OJT otomatis masuk ke chat pribadinya saat ditandai Selesai atau saat tombol Kirim ditekan."),
                 React.createElement("textarea", { value: finalNote, onChange: e => setFinalNote(e.target.value), rows: 3, maxLength: 500, placeholder: "Evaluasi keseluruhan Store Leader (sikap, kecepatan, kesiapan naik tahap)", className: "w-full border border-slate-200 rounded-lg px-2.5 py-2 text-xs" }),
                 React.createElement("div", { className: "flex gap-2" },
                     React.createElement("button", { onClick: () => saveFinish(!!p.finished, 'Evaluasi akhir tersimpan'), disabled: busy === 'fin', className: "flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg" }, "Simpan Evaluasi"),
                     p.finished
                         ? React.createElement("button", { onClick: () => saveFinish(false, 'Status selesai dibatalkan'), disabled: busy === 'fin', className: "flex-1 bg-amber-100 text-amber-800 text-xs font-bold py-2 rounded-lg" }, "Batalkan Selesai")
                         : React.createElement("button", { onClick: () => saveFinish(true, '✅ Ditandai Sudah Selesai OJT'), disabled: busy === 'fin' || !st.allPassed, className: "flex-1 bg-indigo-700 disabled:opacity-40 text-white text-xs font-bold py-2 rounded-lg" }, "Tandai Sudah Selesai OJT")),
-                React.createElement("button", { onClick: () => run('fin', () => pettyApi(`/api/ojt/people/${p.id}/finish`, { method: 'POST', body: { finished: !!p.finished, finalNote, telegramId: tgId, notify: true } })), disabled: busy === 'fin' || !tgId, className: "w-full bg-sky-50 text-sky-700 disabled:opacity-40 text-xs font-bold py-2 rounded-lg" }, "Kirim Hasil ke Telegram Pribadi"),
+                React.createElement("button", { onClick: () => run('send', async () => { const r = await ojtSendTelegram(p.id, tgId); if (!r.sent) throw new Error(r.reason); showToast('📨 Hasil OJT terkirim ke Telegram ' + p.name); return null; }), disabled: busy === 'send' || !tgId, className: "w-full bg-sky-50 text-sky-700 disabled:opacity-40 text-xs font-bold py-2 rounded-lg" }, busy === 'send' ? 'Mengirim...' : 'Kirim Hasil ke Telegram Pribadi'),
                 !p.finished && !st.allPassed && React.createElement("p", { className: "text-[10px] text-slate-400" }, "Tombol Selesai OJT aktif setelah Bakery, Filler, dan Kasir semuanya Lolos.")),
             React.createElement("div", { className: "flex gap-2" },
                 React.createElement("button", { onClick: share, disabled: busy === 'tg', className: "flex-1 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl flex items-center justify-center gap-1.5" },
@@ -13577,13 +13722,19 @@ function LeaderOjtQuestionsPanel({ showToast }) {
 }
 function OjtLinksBox({ test, showToast }) {
     const [links, setLinks] = useState([]);
+    const [people, setPeople] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [name, setName] = useState('');
+    const [personId, setPersonId] = useState('');
     const [busy, setBusy] = useState(false);
+    const [sending, setSending] = useState('');
     const load = async () => {
         try {
-            const d = await pettyApi(`/api/ojt/tests/${test.id}/links`);
+            const [d, pp] = await Promise.all([
+                pettyApi(`/api/ojt/tests/${test.id}/links`),
+                pettyApi('/api/ojt/people'),
+            ]);
             setLinks(d.links || []);
+            setPeople(pp.people || []);
         }
         catch (e) {
             showToast('⚠️ ' + e.message);
@@ -13594,15 +13745,19 @@ function OjtLinksBox({ test, showToast }) {
     };
     useEffect(() => { load(); }, [test.id]);
     const mk = (token) => `${PUBLIC_APP_BASE}/psikotes.html?ojt=${token}`;
+    // Hanya OJT terdaftar yang belum punya link di paket ini.
+    const linked = new Set(links.map(l => l.person_id).filter(Boolean));
+    const linkedNames = new Set(links.map(l => ojtMdNorm(l.ojt_name)));
+    const available = people.filter(p => !linked.has(p.id) && !linkedNames.has(ojtMdNorm(p.name)));
     const add = async () => {
-        if (!name.trim())
+        if (!personId)
             return;
         setBusy(true);
         try {
-            const d = await pettyApi(`/api/ojt/tests/${test.id}/links`, { method: 'POST', body: { ojtName: name.trim() } });
-            setName('');
+            const d = await pettyApi(`/api/ojt/tests/${test.id}/links`, { method: 'POST', body: { personId } });
+            setPersonId('');
             const ok = await ojtCopy(mk(d.linkToken));
-            showToast(ok ? '✅ Link dibuat & disalin' : '✅ Link dibuat (salin dari daftar)');
+            showToast(ok ? `✅ Link ${d.ojtName || ''} dibuat & disalin` : '✅ Link dibuat (salin dari daftar)');
             await load();
         }
         catch (e) {
@@ -13624,16 +13779,48 @@ function OjtLinksBox({ test, showToast }) {
             showToast('⚠️ ' + e.message);
         }
     };
+    // Kirim hasil tes ke japri OJT. Kalau Telegram OJT belum tersimpan, tanya ID/@username sekali saja.
+    const sendTg = async (l) => {
+        const person = people.find(p => p.id === l.person_id) || people.find(p => ojtMdNorm(p.name) === ojtMdNorm(l.ojt_name));
+        if (!person) {
+            showToast('⚠️ OJT ini tidak ada lagi di Status OJT.');
+            return;
+        }
+        let tg = '';
+        if (!person.telegramId && !person.telegramUsername) {
+            tg = (window.prompt(`ID Telegram (angka) atau @username milik ${person.name}:`) || '').trim();
+            if (!tg)
+                return;
+        }
+        setSending(l.id);
+        try {
+            const r = await ojtSendTelegram(person.id, tg);
+            showToast(r.sent ? `📨 Hasil tes terkirim ke Telegram ${person.name}` : '⚠️ ' + r.reason);
+            await load();
+        }
+        catch (e) {
+            showToast('⚠️ ' + e.message);
+        }
+        finally {
+            setSending('');
+        }
+    };
     return (React.createElement("div", { className: "bg-slate-50 rounded-xl border border-slate-200 p-3 space-y-2" },
-        test.keys_ready === 0 ? (React.createElement("p", { className: "text-[11px] text-amber-700 font-semibold" }, "Link OJT bisa dibuat setelah semua soal pilihan ganda punya kunci jawaban.")) : (React.createElement("div", { className: "flex gap-2" },
-            React.createElement("input", { value: name, onChange: e => setName(e.target.value), placeholder: "Nama OJT", className: "flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-xs bg-white" }),
-            React.createElement("button", { onClick: add, disabled: busy || !name.trim(), className: "bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold px-3 rounded-lg" }, busy ? '...' : 'Buat Link'))),
-        loading ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "Memuat...") : links.length === 0 ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "Belum ada link.") : links.map(l => (React.createElement("div", { key: l.id, className: "flex items-center gap-2 bg-white rounded-lg border border-slate-200 px-2.5 py-2" },
-            React.createElement("div", { className: "min-w-0 flex-1" },
-                React.createElement("p", { className: "text-xs font-semibold text-slate-800 truncate" }, l.ojt_name),
-                React.createElement("p", { className: "text-[10px] text-slate-400" }, l.status === 'used' ? (l.attempt_status === 'completed' ? `Selesai • skor ${l.auto_score ?? '-'}` : 'Sudah dibuka') : 'Belum dipakai')),
-            React.createElement("button", { onClick: () => copy(l), className: "text-[11px] font-bold text-indigo-700 px-2 py-1 bg-indigo-50 rounded-md" }, "Salin"),
-            l.status === 'unused' && React.createElement("button", { onClick: () => del(l), className: "text-[11px] font-bold text-rose-600 px-2 py-1 bg-rose-50 rounded-md" }, "Hapus"))))));
+        test.keys_ready === 0 ? (React.createElement("p", { className: "text-[11px] text-amber-700 font-semibold" }, "Link OJT bisa dibuat setelah semua soal pilihan ganda punya kunci jawaban.")) : loading ? null : people.length === 0 ? (React.createElement("p", { className: "text-[11px] text-amber-700 font-semibold" }, "Belum ada OJT terdaftar. Daftarkan dulu namanya di tab Status OJT, lalu pilih di sini.")) : available.length === 0 ? (React.createElement("p", { className: "text-[11px] text-slate-500" }, "Semua OJT terdaftar sudah punya link di paket ini.")) : (React.createElement("div", { className: "flex gap-2" },
+            React.createElement("select", { value: personId, onChange: e => setPersonId(e.target.value), className: "flex-1 min-w-0 border border-slate-200 rounded-lg px-2.5 py-2 text-xs bg-white" },
+                React.createElement("option", { value: "" }, "Pilih OJT terdaftar..."),
+                available.map(p => React.createElement("option", { key: p.id, value: p.id }, p.name))),
+            React.createElement("button", { onClick: add, disabled: busy || !personId, className: "bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold px-3 rounded-lg" }, busy ? '...' : 'Buat Link'))),
+        loading ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "Memuat...") : links.length === 0 ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "Belum ada link.") : links.map(l => {
+            const done = l.status === 'used' && l.attempt_status === 'completed';
+            return (React.createElement("div", { key: l.id, className: "flex items-center gap-2 bg-white rounded-lg border border-slate-200 px-2.5 py-2" },
+                React.createElement("div", { className: "min-w-0 flex-1" },
+                    React.createElement("p", { className: "text-xs font-semibold text-slate-800 truncate" }, l.ojt_name),
+                    React.createElement("p", { className: "text-[10px] text-slate-400" }, l.status === 'used' ? (done ? `Selesai • skor ${l.auto_score ?? '-'}` : 'Sudah dibuka') : 'Belum dipakai')),
+                done && React.createElement("button", { onClick: () => sendTg(l), disabled: sending === l.id, className: "text-[11px] font-bold text-sky-700 px-2 py-1 bg-sky-50 disabled:opacity-50 rounded-md" }, sending === l.id ? 'Kirim...' : 'Kirim Telegram'),
+                !done && React.createElement("button", { onClick: () => copy(l), className: "text-[11px] font-bold text-indigo-700 px-2 py-1 bg-indigo-50 rounded-md" }, "Salin"),
+                l.status === 'unused' && React.createElement("button", { onClick: () => del(l), className: "text-[11px] font-bold text-rose-600 px-2 py-1 bg-rose-50 rounded-md" }, "Hapus")));
+        })));
 }
 function LeaderOjtQuestionEditor({ test, onBack, showToast }) {
     const [qs, setQs] = useState([]);

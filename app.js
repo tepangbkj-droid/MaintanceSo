@@ -4592,6 +4592,7 @@ function AdminPanel({ onLogout }) {
                             webUpdateReport.failed.join(', ')))))),
                 React.createElement(AdminQrCard, { stores: stores, showAdminToast: showAdminToast }),
                 React.createElement(AdminTelegramCentralCard, { showAdminToast: showAdminToast }),
+                React.createElement(AdminVoiceCard, { showAdminToast: showAdminToast }),
                 React.createElement(AdminBirthdayCard, { stores: stores, showAdminToast: showAdminToast }),
                 React.createElement(AdminEmployeesCard, { stores: stores, showAdminToast: showAdminToast }))),
             tab === 'devices' && (React.createElement("div", { className: "max-w-3xl mx-auto space-y-4" },
@@ -13023,13 +13024,45 @@ function EmployeeBirthdayPanel({ storeId, showToast }) {
                     e.telegram_id ? '✅ ID Telegram terisi' : '⚠️ ID Telegram kosong')),
             React.createElement("button", { onClick: () => remove(e.id, e.name), className: "text-rose-600 text-xs font-bold px-2" }, "Hapus"))))))));
 }
+function AdminVoiceCard({ showAdminToast }) {
+    const [enabled, setEnabled] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const supported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    useEffect(() => { (async () => { try {
+        const d = await pettyApi('/api/voice/config');
+        setEnabled(!!d.enabled);
+    }
+    catch (e) {
+        setEnabled(false);
+    } })(); }, []);
+    const toggle = async () => {
+        setBusy(true);
+        try {
+            const d = await pettyApi('/api/voice/config', { method: 'POST', body: { enabled: !enabled } });
+            setEnabled(!!d.enabled);
+            if (window.__voiceRefresh)
+                window.__voiceRefresh();
+            showAdminToast(d.enabled ? '✅ Input suara DIAKTIFKAN untuk semua pengguna.' : '✅ Input suara dinonaktifkan.');
+        }
+        catch (e) {
+            showAdminToast('⚠️ ' + e.message);
+        }
+        setBusy(false);
+    };
+    return (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3" },
+        React.createElement("div", null,
+            React.createElement("h3", { className: "font-bold text-slate-800 text-sm" }, "🎙️ Input Suara"),
+            React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Tombol mikrofon muncul di setiap kolom isian (teks, catatan, angka) di semua menu. Ucapan diubah menjadi tulisan; angka seperti \"dua puluh ribu\" otomatis jadi 20000. Perubahan berlaku ±1,5 menit di perangkat pengguna.")),
+        React.createElement("button", { onClick: toggle, disabled: busy || enabled === null, className: `w-full font-bold py-2.5 rounded-xl text-sm disabled:opacity-50 ${enabled ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700'}` }, enabled === null ? 'Memuat...' : busy ? 'Menyimpan...' : enabled ? '✅ Aktif — ketuk untuk menonaktifkan' : 'Nonaktif — ketuk untuk mengaktifkan'),
+        !supported && React.createElement("p", { className: "text-[10px] text-amber-700" }, "Browser ini tidak mendukung input suara (pakai Chrome/Edge di Android atau Safari terbaru). Pengaturan tetap tersimpan untuk pengguna lain.")));
+}
 function AdminTelegramCentralCard({ showAdminToast }) {
-    const [cfg, setCfg] = useState({ opsChatId: '', birthdayEnabled: true });
+    const [cfg, setCfg] = useState({ opsChatId: '', birthdayEnabled: true, supportEnabled: false, supportChatId: '' });
     const [status, setStatus] = useState(null);
     const [busy, setBusy] = useState('');
     useEffect(() => bindLiveValue(db.ref('systemSettings/telegram'), (snap) => {
         const v = snap.val() || {};
-        setCfg({ opsChatId: v.opsChatId || '', birthdayEnabled: v.birthdayEnabled !== false });
+        setCfg({ opsChatId: v.opsChatId || '', birthdayEnabled: v.birthdayEnabled !== false, supportEnabled: v.supportEnabled === true, supportChatId: v.supportChatId || '' });
     }), []);
     const loadStatus = async () => { try {
         setStatus(await pettyApi('/api/telegram/central/status'));
@@ -13041,7 +13074,13 @@ function AdminTelegramCentralCard({ showAdminToast }) {
     const save = async () => {
         setBusy('save');
         try {
-            await restSet(db.ref('systemSettings/telegram'), { opsChatId: cfg.opsChatId.trim(), birthdayEnabled: cfg.birthdayEnabled });
+            const sc = String(cfg.supportChatId || '').trim();
+            if (cfg.supportEnabled && !/^-?\d{5,16}$/.test(sc)) {
+                showAdminToast('⚠️ ID Telegram penerima keluhan harus angka (kirim /id ke bot dari akun admin).');
+                setBusy('');
+                return;
+            }
+            await restSet(db.ref('systemSettings/telegram'), { opsChatId: cfg.opsChatId.trim(), birthdayEnabled: cfg.birthdayEnabled, supportEnabled: !!cfg.supportEnabled, supportChatId: sc });
             showAdminToast('✅ Pengaturan bot tersimpan.');
         }
         catch (e) {
@@ -13087,6 +13126,12 @@ function AdminTelegramCentralCard({ showAdminToast }) {
         React.createElement("label", { className: "flex items-center gap-2 text-xs text-slate-600" },
             React.createElement("input", { type: "checkbox", checked: cfg.birthdayEnabled, onChange: e => setCfg(c => ({ ...c, birthdayEnabled: e.target.checked })) }),
             " Aktifkan fitur ucapan ulang tahun"),
+        React.createElement("div", { className: "border-t border-slate-200 pt-3 space-y-2" },
+            React.createElement("label", { className: "flex items-center gap-2 text-xs font-semibold text-slate-700" },
+                React.createElement("input", { type: "checkbox", checked: cfg.supportEnabled, onChange: e => setCfg(c => ({ ...c, supportEnabled: e.target.checked })) }),
+                " Aktifkan Chat Admin lewat Bot (jembatan keluhan)"),
+            React.createElement("input", { type: "text", inputMode: "numeric", value: cfg.supportChatId, onChange: e => setCfg(c => ({ ...c, supportChatId: e.target.value.replace(/[^\d-]/g, '') })), placeholder: "ID Telegram admin / grup admin penerima keluhan", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }),
+            React.createElement("p", { className: "text-[10px] text-slate-400" }, "Isi dengan ID akun Telegram Anda (kirim /id ke bot) atau ID grup admin. Pesan pengguna ke bot diteruskan ke sana; cukup Balas (reply) pesan itu untuk menjawab. Untuk memulai chat: /kirim <ID> <pesan>. Anda harus sudah menekan Start di bot.")),
         React.createElement("button", { onClick: save, disabled: busy === 'save', className: "w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm" }, busy === 'save' ? 'Menyimpan...' : 'Simpan Pengaturan Bot')));
 }
 function QrThumb({ url }) {
@@ -14897,6 +14942,250 @@ class AppErrorBoundary extends React.Component {
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Tarobun App - Promise ditolak tanpa ditangani:', event.reason);
 });
+// ============================================================================
+// INPUT SUARA (2026-10) — tombol mikrofon muncul di setiap kolom isian teks/angka/catatan.
+// Dinyalakan/dimatikan admin (GET /api/voice/config). Memakai Web Speech API bawaan browser (gratis,
+// bahasa Indonesia). Teks hasil suara dimasukkan ke kolom lewat event 'input' sehingga React ikut terisi.
+// TITIK SAMBUNG AI: definisikan window.__voiceAiHook = async (transkrip, elemenKolom) => teks/objek
+// untuk mengolah ucapan (mis. mengisi beberapa kolom sekaligus) sebelum dimasukkan.
+// ============================================================================
+// ---- (A) konversi angka lisan Indonesia -> angka (dipisah supaya bisa diuji) ----
+function __idSpokenToNumber(raw) {
+    let t = String(raw || '').toLowerCase().replace(/rupiah|rp\.?/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!t)
+        return null;
+    // sudah berupa angka: "20.000", "20000", "1.250.000", "20 ribu", "1,5 juta"
+    const m = t.match(/^(\d+(?:[.,]\d+)*)\s*(ribu|rb|k|juta|jt)?$/);
+    if (m) {
+        let numStr = m[1];
+        const mult = m[2] ? ((m[2] === 'juta' || m[2] === 'jt') ? 1000000 : 1000) : 1;
+        if (/^\d{1,3}(\.\d{3})+$/.test(numStr))
+            numStr = numStr.replace(/\./g, '');
+        else if (/^\d{1,3}(,\d{3})+$/.test(numStr))
+            numStr = numStr.replace(/,/g, '');
+        else
+            numStr = numStr.replace(',', '.');
+        const v = parseFloat(numStr) * mult;
+        return isNaN(v) ? null : Math.round(v * 100) / 100;
+    }
+    // kata-kata: "dua puluh ribu", "seratus lima puluh ribu", "satu juta dua ratus ribu"
+    const unit = { nol: 0, satu: 1, se: 1, dua: 2, tiga: 3, empat: 4, lima: 5, enam: 6, tujuh: 7, delapan: 8, sembilan: 9 };
+    let total = 0, group = 0, cur = 0, seen = false;
+    const words = t.replace(/\bse(ratus|puluh|ribu|juta|belas)\b/g, 'se $1').split(' ');
+    for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (w === 'dan')
+            continue;
+        if (w in unit) {
+            cur = unit[w];
+            seen = true;
+            if (w === 'se' && !/^(ratus|puluh|ribu|juta|belas)$/.test(words[i + 1] || ''))
+                return null;
+        }
+        else if (w === 'sepuluh') { group += 10; cur = 0; seen = true; }
+        else if (w === 'belas') { group += cur + 10; cur = 0; seen = true; }
+        else if (w === 'puluh') { group += (cur || 1) * 10; cur = 0; seen = true; }
+        else if (w === 'ratus') { group += (cur || 1) * 100; cur = 0; seen = true; }
+        else if (w === 'ribu') { total += ((group + cur) || 1) * 1000; group = 0; cur = 0; seen = true; }
+        else if (w === 'juta') { total += ((group + cur) || 1) * 1000000; group = 0; cur = 0; seen = true; }
+        else if (/^\d+$/.test(w)) { cur = parseInt(w, 10); seen = true; }
+        else
+            return null;
+    }
+    return seen ? total + group + cur : null;
+}
+// ---- (B) antarmuka mikrofon ----
+function __initVoiceInput() {
+    if (window.__voiceInit)
+        return;
+    window.__voiceInit = true;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let enabled = false;
+    let target = null;
+    let rec = null;
+    let listening = false;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'Isi dengan suara');
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>';
+    Object.assign(btn.style, { position: 'fixed', zIndex: '99998', width: '34px', height: '34px', borderRadius: '9999px', border: 'none', background: '#6b21a8', color: '#fff', display: 'none', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,.3)', padding: '0', cursor: 'pointer' });
+    const bubble = document.createElement('div');
+    Object.assign(bubble.style, { position: 'fixed', zIndex: '99998', maxWidth: '240px', background: '#1e293b', color: '#fff', fontSize: '12px', padding: '6px 10px', borderRadius: '10px', display: 'none', pointerEvents: 'none' });
+    document.body.appendChild(btn);
+    document.body.appendChild(bubble);
+    const say = (txt, ms) => { bubble.textContent = txt; bubble.style.display = 'block'; place(); if (ms)
+        setTimeout(() => { if (bubble.textContent === txt)
+            bubble.style.display = 'none'; }, ms); };
+    const isFillable = (el) => {
+        if (!el || el.disabled || el.readOnly)
+            return false;
+        if (el.tagName === 'TEXTAREA')
+            return true;
+        if (el.tagName !== 'INPUT')
+            return false;
+        return ['text', 'search', 'tel', 'number', 'email', 'url', ''].includes((el.getAttribute('type') || '').toLowerCase()) && el.autocomplete !== 'one-time-code' && !/pass|otp|pin/i.test(el.name || el.id || '');
+    };
+    const place = () => {
+        if (!target || !enabled) {
+            btn.style.display = 'none';
+            bubble.style.display = bubble.style.display === 'block' && listening ? 'block' : 'none';
+            return;
+        }
+        const r = target.getBoundingClientRect();
+        if (r.bottom < 0 || r.top > window.innerHeight) {
+            btn.style.display = 'none';
+            return;
+        }
+        btn.style.display = 'flex';
+        const isArea = target.tagName === 'TEXTAREA';
+        btn.style.left = Math.max(4, Math.min(window.innerWidth - 38, r.right - 38)) + 'px';
+        btn.style.top = Math.max(4, isArea ? r.top + 4 : r.top + (r.height - 34) / 2) + 'px';
+        bubble.style.left = Math.max(4, Math.min(window.innerWidth - 250, r.left)) + 'px';
+        bubble.style.top = Math.max(4, r.top - 34) + 'px';
+    };
+    const setValue = (el, v) => {
+        const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const isNumericField = (el) => el.tagName === 'INPUT' && ((el.getAttribute('type') || '') === 'number' || /numeric|decimal/.test(el.getAttribute('inputmode') || ''));
+    const insert = async (el, spoken) => {
+        let text = spoken.trim();
+        if (typeof window.__voiceAiHook === 'function') {
+            try {
+                const out = await window.__voiceAiHook(text, el);
+                if (typeof out === 'string')
+                    text = out;
+            }
+            catch (e) { /* AI gagal -> pakai teks apa adanya */ }
+        }
+        if (isNumericField(el)) {
+            const n = __idSpokenToNumber(text);
+            if (n === null) {
+                say('Tidak dikenali sebagai angka: "' + text + '"', 3500);
+                return;
+            }
+            setValue(el, String(n));
+            return;
+        }
+        const cur = el.value || '';
+        let s = cur.length, e2 = cur.length;
+        try {
+            if (typeof el.selectionStart === 'number') {
+                s = el.selectionStart;
+                e2 = el.selectionEnd;
+            }
+        }
+        catch (_) { /* tipe input tertentu tidak punya selection */ }
+        const before = cur.slice(0, s), after = cur.slice(e2);
+        const sepL = before && !/\s$/.test(before) ? ' ' : '';
+        const sepR = after && !/^\s/.test(after) ? ' ' : '';
+        setValue(el, before + sepL + text + sepR + after);
+    };
+    const stop = () => { try {
+        rec && rec.stop();
+    }
+    catch (_) { } };
+    const start = () => {
+        if (!target)
+            return;
+        const el = target;
+        rec = new SR();
+        rec.lang = 'id-ID';
+        rec.interimResults = true;
+        rec.continuous = false;
+        rec.maxAlternatives = 1;
+        let finalText = '';
+        rec.onstart = () => { listening = true; btn.style.background = '#dc2626'; say('🎙️ Silakan bicara…'); };
+        rec.onresult = (ev) => {
+            let interim = '';
+            for (let i = ev.resultIndex; i < ev.results.length; i++) {
+                const r = ev.results[i];
+                if (r.isFinal)
+                    finalText += r[0].transcript;
+                else
+                    interim += r[0].transcript;
+            }
+            say('🎙️ ' + (finalText + interim));
+        };
+        rec.onerror = (ev) => {
+            const msg = { 'not-allowed': 'Izin mikrofon ditolak. Aktifkan izin mikrofon untuk situs/aplikasi ini.', 'service-not-allowed': 'Izin mikrofon ditolak.', 'no-speech': 'Suara tidak terdengar. Coba lagi.', 'audio-capture': 'Mikrofon tidak ditemukan.', 'network': 'Butuh koneksi internet untuk input suara.' }[ev.error] || 'Input suara gagal: ' + ev.error;
+            finalText = '';
+            say(msg, 4000);
+        };
+        rec.onend = async () => {
+            listening = false;
+            btn.style.background = '#6b21a8';
+            const t = finalText.trim();
+            finalText = '';
+            if (t) {
+                bubble.style.display = 'none';
+                await insert(el, t);
+                try {
+                    el.focus();
+                }
+                catch (_) { }
+            }
+            else if (bubble.textContent.startsWith('🎙️')) {
+                say('Suara tidak terdengar. Coba lagi.', 3000);
+            }
+        };
+        try {
+            rec.start();
+        }
+        catch (e) {
+            say('Input suara tidak bisa dimulai.', 3000);
+        }
+    };
+    // Tombol jangan merebut fokus dari kolom (kalau fokus hilang, tombol ikut hilang).
+    ['mousedown', 'touchstart'].forEach(ev => btn.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+    btn.addEventListener('click', () => { if (listening)
+        stop();
+    else
+        start(); });
+    document.addEventListener('focusin', (e) => { if (isFillable(e.target)) {
+        target = e.target;
+        place();
+    } }, true);
+    document.addEventListener('focusout', () => { setTimeout(() => { if (!listening && !(document.activeElement && isFillable(document.activeElement))) {
+        target = null;
+        place();
+    } }, 150); }, true);
+    ['scroll', 'resize'].forEach(ev => window.addEventListener(ev, place, true));
+    document.addEventListener('input', () => { if (target)
+        place(); }, true);
+    // Saklar dari admin; dicek berkala (±90 dtk) & saat tab kembali aktif. Gagal/401 (belum login) -> nonaktif.
+    const refresh = async () => {
+        if (!SR) {
+            enabled = false;
+            place();
+            return;
+        }
+        try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/voice/config`, { headers: __authHeaders() });
+            const d = res.ok ? await res.json() : null;
+            enabled = !!(d && d.enabled);
+        }
+        catch (_) {
+            enabled = false;
+        }
+        if (!enabled && listening)
+            stop();
+        place();
+    };
+    window.__voiceRefresh = refresh;
+    refresh();
+    setInterval(refresh, 90000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden)
+        refresh(); });
+}
+window.addEventListener('load', () => { try {
+    __initVoiceInput();
+}
+catch (e) {
+    console.error('Input suara gagal dimulai:', e);
+} });
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(React.createElement(AppErrorBoundary, null,
     React.createElement(AppRoot, null)));

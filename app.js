@@ -170,7 +170,7 @@ function __diagPush(entry) {
     }
     catch (e) { }
 }
-const __apiFetch = (url, opts = {}) => {
+const __apiFetchBase = (url, opts = {}) => {
     const startedAt = Date.now();
     const mergedHeaders = { ...(opts.headers || {}), ...__authHeaders() };
     return fetch(url, { ...opts, headers: mergedHeaders, credentials: 'include' }).then(res => {
@@ -236,6 +236,53 @@ const __authHeaders = () => ({
     ...(__sessionTokenFallback ? { 'X-Session-Token': __sessionTokenFallback } : {}),
     ...(__getAccessKey() ? { 'X-Access-Key': __getAccessKey() } : {}),
 });
+// ===== Turnstile (anti-bot login) — aktif HANYA jika admin mengisi TURNSTILE_SITEKEY & TURNSTILE_SECRET di Worker =====
+let __tsCfg = null, __tsLoad = null;
+const __tsSiteKey = async () => {
+    if (__tsCfg !== null)
+        return __tsCfg;
+    try {
+        const r = await fetch(`${WORKER_BASE}/api/turnstile/config`, { credentials: 'include' });
+        const d = r.ok ? await r.json() : {};
+        __tsCfg = d.siteKey || '';
+    }
+    catch (e) {
+        __tsCfg = '';
+    }
+    return __tsCfg;
+};
+const __tsToken = async () => {
+    const key = await __tsSiteKey();
+    if (!key)
+        return null;
+    try {
+        if (!__tsLoad)
+            __tsLoad = new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; sc.async = true; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+        await __tsLoad;
+        return await new Promise((resolve) => {
+            const box = document.createElement('div');
+            box.style.cssText = 'position:fixed;left:50%;top:40%;transform:translateX(-50%);z-index:100000';
+            document.body.appendChild(box);
+            const done = (t) => { try {
+                window.turnstile.remove(id);
+            }
+            catch (_) { } box.remove(); resolve(t); };
+            const to = setTimeout(() => done(null), 15000);
+            const id = window.turnstile.render(box, { sitekey: key, appearance: 'interaction-only', callback: (t) => { clearTimeout(to); done(t); }, 'error-callback': () => { clearTimeout(to); done(null); } });
+        });
+    }
+    catch (e) {
+        return null;
+    }
+};
+const __apiFetch = async (url, opts = {}) => {
+    if (String(url).includes('/api/login/')) {
+        const t = await __tsToken();
+        if (t)
+            opts = { ...opts, headers: { ...(opts.headers || {}), 'X-Turnstile-Token': t } };
+    }
+    return __apiFetchBase(url, opts);
+};
 const DEVICE_ID_KEY = 'tarobun_device_id';
 const getDeviceId = () => {
     try {
@@ -4593,6 +4640,8 @@ function AdminPanel({ onLogout }) {
                 React.createElement(AdminQrCard, { stores: stores, showAdminToast: showAdminToast }),
                 React.createElement(AdminTelegramCentralCard, { showAdminToast: showAdminToast }),
                 React.createElement(AdminVoiceCard, { stores: stores, showAdminToast: showAdminToast }),
+                React.createElement(AdminSecurityCard, { showAdminToast: showAdminToast }),
+                React.createElement(AdminOpsCard, { showAdminToast: showAdminToast }),
                 React.createElement(AdminBirthdayCard, { stores: stores, showAdminToast: showAdminToast }),
                 React.createElement(AdminEmployeesCard, { stores: stores, showAdminToast: showAdminToast }))),
             tab === 'devices' && (React.createElement("div", { className: "max-w-3xl mx-auto space-y-4" },
@@ -13080,6 +13129,169 @@ function AdminVoiceCard({ stores, showAdminToast }) {
                     React.createElement("p", { className: "text-[10px] text-slate-400" }, `${cfg.stores.length} toko dipilih`)))),
         React.createElement("button", { onClick: save, disabled: busy, className: "w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm" }, busy ? 'Menyimpan...' : 'Simpan Pengaturan Suara')));
 }
+function AdminSecurityCard({ showAdminToast }) {
+    const [ov, setOv] = useState(null);
+    const [mode, setMode] = useState('monitor');
+    const [alertChat, setAlertChat] = useState('');
+    const [allow, setAllow] = useState('');
+    const [busy, setBusy] = useState('');
+    const [ai, setAi] = useState(null);
+    const [showEv, setShowEv] = useState(false);
+    const load = async () => {
+        try {
+            const d = await pettyApi('/api/security/overview');
+            setOv(d);
+            setMode(d.config.mode);
+            setAlertChat(d.config.alertChatId || '');
+            setAllow(d.config.allowIps || '');
+        }
+        catch (e) {
+            showAdminToast('⚠️ ' + e.message);
+        }
+    };
+    useEffect(() => { load(); }, []);
+    const act = async (key, fn, okMsg) => {
+        setBusy(key);
+        try {
+            await fn();
+            if (okMsg)
+                showAdminToast(okMsg);
+            await load();
+        }
+        catch (e) {
+            showAdminToast('⚠️ ' + e.message);
+        }
+        setBusy('');
+    };
+    const save = () => act('save', () => pettyApi('/api/security/config', { method: 'POST', body: { mode, alertChatId: alertChat, allowIps: allow } }), '✅ Pengaturan keamanan tersimpan.');
+    const block = (ip, minutes) => act('b' + ip, () => pettyApi('/api/security/block', { method: 'POST', body: { ip, minutes, reason: 'diblokir admin' } }), `✅ ${ip} diblokir ${minutes >= 60 ? minutes / 60 + ' jam' : minutes + ' menit'}.`);
+    const unblock = (ip) => act('u' + ip, () => pettyApi('/api/security/unblock', { method: 'POST', body: { ip } }), `✅ Blokir ${ip} dibuka.`);
+    const analyze = async () => {
+        setBusy('ai');
+        try {
+            setAi(await pettyApi('/api/security/analyze', { method: 'POST', body: {} }));
+        }
+        catch (e) {
+            showAdminToast('⚠️ ' + e.message);
+        }
+        setBusy('');
+    };
+    if (!ov)
+        return React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-5 text-xs text-slate-400" }, "Memuat Agen Keamanan...");
+    const chip = (on) => `flex-1 px-2 py-2 rounded-xl text-[11px] font-bold border ${on ? 'bg-purple-700 text-white border-purple-700' : 'bg-white text-slate-600 border-slate-200'}`;
+    const lvl = { aman: 'bg-emerald-100 text-emerald-800', waspada: 'bg-amber-100 text-amber-800', bahaya: 'bg-rose-100 text-rose-800' };
+    const typeLabel = { scanner_probe: 'Pemindaian jalur (wp-login, .env, dll)', injection_probe: 'Upaya injeksi (SQL/XSS/traversal)', scanner_ua: 'Alat peretas (sqlmap, nikto)', rate_limited: 'Kebanjiran request', bad_origin: 'Asal request tidak sah', unauthorized: 'Akses tanpa login', no_user_agent: 'Tanpa identitas browser', blocked_request: 'Request dari IP terblokir', flood_dropped: 'Kejadian diringkas (serangan besar)' };
+    const mins = (u) => Math.max(1, Math.round((u - Date.now()) / 60000));
+    const modeHelp = { off: 'Agen mati sepenuhnya.', monitor: 'Hanya mencatat & memperingatkan. Tidak ada yang diblokir. Mulai dari sini beberapa hari.', enforce: 'Mencatat, memperingatkan, DAN memblokir IP penyerang sementara.' };
+    return (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3" },
+        React.createElement("div", { className: "flex items-start justify-between gap-2" },
+            React.createElement("div", null,
+                React.createElement("h3", { className: "font-bold text-slate-800 text-sm" }, "🛡️ Agen Keamanan"),
+                React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Mendeteksi pemindai, injeksi, alat peretas, dan banjir request. Pengguna sah yang sudah login tidak ikut terblokir.")),
+            React.createElement("button", { onClick: load, className: "text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1.5 rounded-lg" }, "Segarkan")),
+        React.createElement("div", { className: "grid grid-cols-3 gap-2 text-center" },
+            [['Kejadian 24 jam', ov.total24h], ['IP terblokir', ov.blocks.length], ['IP Anda', ov.yourIp || '-']].map(([l, v], i) => React.createElement("div", { key: i, className: "bg-slate-50 rounded-xl p-2" },
+                React.createElement("p", { className: `font-bold text-slate-800 ${i === 2 ? 'text-[10px] break-all' : 'text-lg'}` }, v),
+                React.createElement("p", { className: "text-[10px] text-slate-500" }, l)))),
+        React.createElement("div", { className: "space-y-1.5" },
+            React.createElement("div", { className: "flex gap-1.5" }, [['off', 'Nonaktif'], ['monitor', 'Pantau'], ['enforce', 'Aktif']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setMode(k), className: chip(mode === k) }, l))),
+            React.createElement("p", { className: "text-[10px] text-slate-500" }, modeHelp[mode])),
+        React.createElement("input", { type: "text", inputMode: "numeric", value: alertChat, onChange: e => setAlertChat(e.target.value.replace(/[^\d-]/g, '')), placeholder: "ID Telegram penerima peringatan (kosong = pakai ID chat admin)", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs" }),
+        React.createElement("input", { type: "text", value: allow, onChange: e => setAllow(e.target.value.replace(/[^0-9a-fA-F:.,\s]/g, '')), placeholder: "IP aman (tidak pernah diblokir), pisahkan dengan koma", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs" }),
+        ov.yourIp && !allow.includes(ov.yourIp) && React.createElement("button", { onClick: () => setAllow(a => (a ? a + ',' : '') + ov.yourIp), className: "text-[11px] font-semibold text-indigo-700" }, `+ Tambahkan IP saya (${ov.yourIp}) ke daftar aman`),
+        React.createElement("button", { onClick: save, disabled: busy === 'save', className: "w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm" }, busy === 'save' ? 'Menyimpan...' : 'Simpan Pengaturan Keamanan'),
+        ov.byType.length > 0 && React.createElement("div", { className: "space-y-1" },
+            React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "Jenis kejadian (24 jam)"),
+            ov.byType.map(t => React.createElement("p", { key: t.type, className: "text-[11px] text-slate-600 flex justify-between gap-2" }, React.createElement("span", null, typeLabel[t.type] || t.type), React.createElement("b", null, t.n)))),
+        ov.topIps.length > 0 && React.createElement("div", { className: "space-y-1.5" },
+            React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "IP paling mencurigakan"),
+            ov.topIps.map(x => React.createElement("div", { key: x.ip, className: "flex items-center gap-2 bg-slate-50 rounded-lg px-2.5 py-2" },
+                React.createElement("div", { className: "min-w-0 flex-1" },
+                    React.createElement("p", { className: "text-xs font-semibold text-slate-800 break-all" }, x.ip),
+                    React.createElement("p", { className: "text-[10px] text-slate-500 truncate" }, `${x.n}x • ${(x.types || '').split(',').map(t => typeLabel[t] || t).join(', ')}`)),
+                (/^[0-9a-fA-F:.]{3,45}$/.test(x.ip) && x.ip !== ov.yourIp) ? React.createElement("button", { onClick: () => block(x.ip, 60), disabled: busy === 'b' + x.ip, className: "text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-1 rounded-md" }, "Blokir 1 jam") : null))),
+        ov.blocks.length > 0 && React.createElement("div", { className: "space-y-1.5" },
+            React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "Sedang diblokir"),
+            ov.blocks.map(b => React.createElement("div", { key: b.ip, className: "flex items-center gap-2 bg-rose-50 rounded-lg px-2.5 py-2" },
+                React.createElement("div", { className: "min-w-0 flex-1" },
+                    React.createElement("p", { className: "text-xs font-semibold text-slate-800 break-all" }, b.ip),
+                    React.createElement("p", { className: "text-[10px] text-slate-500 truncate" }, `${b.manual ? 'manual' : 'otomatis'} • ${b.reason} • sisa ${mins(b.until)} mnt`)),
+                React.createElement("button", { onClick: () => unblock(b.ip), disabled: busy === 'u' + b.ip, className: "text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md" }, "Buka")))),
+        React.createElement("button", { onClick: analyze, disabled: busy === 'ai', className: "w-full bg-slate-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm" }, busy === 'ai' ? 'Menganalisis...' : '🤖 Analisis AI 24 jam terakhir'),
+        ai && React.createElement("div", { className: "space-y-2 border border-slate-200 rounded-xl p-3" },
+            React.createElement("span", { className: `inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ${lvl[ai.level] || lvl.aman}` }, `Status: ${String(ai.level).toUpperCase()}${ai.ai ? ' • AI' : ' • aturan bawaan'}`),
+            React.createElement("p", { className: "text-xs text-slate-700" }, ai.ringkasan),
+            (ai.temuan || []).map((t, i) => React.createElement("p", { key: 't' + i, className: "text-[11px] text-slate-600" }, '• ' + t)),
+            (ai.saran || []).length > 0 && React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "Saran"),
+            (ai.saran || []).map((t, i) => React.createElement("p", { key: 's' + i, className: "text-[11px] text-slate-600" }, '✓ ' + t)),
+            (ai.ip_berbahaya || []).filter(ip => ip !== ov.yourIp).map(ip => React.createElement("div", { key: ip, className: "flex items-center justify-between gap-2 bg-rose-50 rounded-lg px-2.5 py-1.5" },
+                React.createElement("span", { className: "text-xs font-semibold break-all" }, ip),
+                React.createElement("button", { onClick: () => block(ip, 1440), className: "text-[11px] font-bold text-rose-700 bg-white px-2 py-1 rounded-md" }, "Blokir 24 jam"))),
+            React.createElement("p", { className: "text-[10px] text-slate-400" }, "AI hanya menyarankan. Pemblokiran selalu lewat aturan otomatis atau tombol Anda.")),
+        React.createElement("button", { onClick: () => setShowEv(v => !v), className: "text-[11px] font-semibold text-slate-500" }, showEv ? 'Sembunyikan kejadian terbaru' : 'Lihat kejadian terbaru'),
+        showEv && ov.recent.map((e, i) => React.createElement("p", { key: i, className: "text-[10px] text-slate-600 break-all" }, `${new Date(e.ts).toLocaleString('id-ID')} • ${e.ip} • ${typeLabel[e.type] || e.type} • ${e.path} (${e.cnt}x)`))));
+}
+function AdminOpsCard({ showAdminToast }) {
+    const [cfg, setCfg] = useState(null);
+    const [busy, setBusy] = useState('');
+    const [audit, setAudit] = useState(null);
+    const load = async () => {
+        try {
+            setCfg(await pettyApi('/api/ops/config'));
+        }
+        catch (e) {
+            showAdminToast('⚠️ ' + e.message);
+        }
+    };
+    useEffect(() => { load(); }, []);
+    const saveCfg = async (patch) => {
+        const next = { ...cfg, ...patch };
+        setCfg(next);
+        try {
+            await pettyApi('/api/ops/config', { method: 'POST', body: { digestEnabled: next.digestEnabled, backupDays: next.backupDays } });
+            showAdminToast('✅ Tersimpan.');
+        }
+        catch (e) {
+            showAdminToast('⚠️ ' + e.message);
+            load();
+        }
+    };
+    const run = async (key, fn, okMsg) => {
+        setBusy(key);
+        try {
+            const d = await fn();
+            if (okMsg)
+                showAdminToast(typeof okMsg === 'function' ? okMsg(d) : okMsg);
+            await load();
+        }
+        catch (e) {
+            showAdminToast('⚠️ ' + e.message);
+        }
+        setBusy('');
+    };
+    if (!cfg)
+        return React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-5 text-xs text-slate-400" }, "Memuat Operasional...");
+    const chip = (on) => `flex-1 px-2 py-2 rounded-xl text-[11px] font-bold border ${on ? 'bg-purple-700 text-white border-purple-700' : 'bg-white text-slate-600 border-slate-200'}`;
+    const lb = cfg.lastBackup;
+    return (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3" },
+        React.createElement("div", null,
+            React.createElement("h3", { className: "font-bold text-slate-800 text-sm" }, "🧰 Operasional & Cadangan"),
+            React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Dikirim ke Telegram admin (ID di kartu Agen Keamanan atau Chat Admin).")),
+        React.createElement("div", { className: "space-y-1.5" },
+            React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "📊 Ringkasan operasional harian (±08.00 WIB)"),
+            React.createElement("div", { className: "flex gap-1.5" }, [[false, 'Nonaktif'], [true, 'Aktif']].map(([v, l]) => React.createElement("button", { key: l, onClick: () => saveCfg({ digestEnabled: v }), className: chip(!!cfg.digestEnabled === v) }, l))),
+            React.createElement("p", { className: "text-[10px] text-slate-500" }, "Isi: total omset kemarin, tertinggi/terendah, toko yang belum lapor, petty cash menunggu ACC."),
+            React.createElement("button", { onClick: () => run('digest', () => pettyApi('/api/ops/digest/send', { method: 'POST', body: {} }), '✅ Ringkasan dikirim ke Telegram.'), disabled: busy === 'digest', className: "w-full bg-slate-100 text-slate-700 font-bold py-2 rounded-xl text-xs" }, busy === 'digest' ? 'Mengirim...' : 'Kirim ringkasan sekarang (uji)')),
+        React.createElement("div", { className: "space-y-1.5" },
+            React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "💾 Cadangan data otomatis"),
+            React.createElement("div", { className: "flex gap-1.5" }, [[0, 'Mati'], [1, 'Harian'], [7, 'Mingguan']].map(([v, l]) => React.createElement("button", { key: v, onClick: () => saveCfg({ backupDays: v }), className: chip(cfg.backupDays === v) }, l))),
+            React.createElement("p", { className: "text-[10px] text-slate-500" }, `File dikirim ke Telegram admin${cfg.r2 ? ' dan disimpan di R2' : ''}. Berisi data sensitif: simpan di tempat aman.`),
+            lb && React.createElement("p", { className: `text-[11px] font-semibold ${lb.ok ? 'text-emerald-700' : 'text-rose-700'}` }, `${lb.ok ? '✅' : '⚠️'} Terakhir: ${new Date(lb.ts).toLocaleString('id-ID')}${lb.size ? ` • ${(lb.size / 1024).toFixed(0)} KB • ${lb.rows} baris` : ''}${lb.error ? ' • ' + lb.error : ''}${lb.warn ? ' • ' + lb.warn : ''}`),
+            React.createElement("button", { onClick: () => run('backup', () => pettyApi('/api/ops/backup/run', { method: 'POST', body: {} }), (d) => d.ok ? '✅ Cadangan selesai & terkirim.' : '⚠️ ' + (d.error || d.warn || 'Cadangan gagal')), disabled: busy === 'backup', className: "w-full bg-slate-100 text-slate-700 font-bold py-2 rounded-xl text-xs" }, busy === 'backup' ? 'Mencadangkan...' : 'Cadangkan sekarang')),
+        React.createElement("div", { className: "space-y-1.5" },
+            React.createElement("button", { onClick: async () => { if (audit) { setAudit(null); return; } try { const d = await pettyApi('/api/ops/audit?limit=60'); setAudit(d.items || []); } catch (e) { showAdminToast('⚠️ ' + e.message); } }, className: "w-full bg-slate-100 text-slate-700 font-bold py-2 rounded-xl text-xs" }, audit ? 'Sembunyikan riwayat aktivitas' : '🕵️ Lihat riwayat aktivitas pengguna'),
+            audit && (audit.length === 0 ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "Belum ada aktivitas tercatat.") : audit.map((a, i) => React.createElement("p", { key: i, className: "text-[10px] text-slate-600 break-all" }, `${new Date(a.ts).toLocaleString('id-ID')} • ${a.role}${a.store_id ? ' (' + a.store_id + ')' : ''} • ${a.method} ${a.path}`))))));
+}
 function AdminTelegramCentralCard({ showAdminToast }) {
     const [cfg, setCfg] = useState({ opsChatId: '', birthdayEnabled: true, supportEnabled: false, supportChatId: '' });
     const [status, setStatus] = useState(null);
@@ -15154,6 +15366,109 @@ function __voiceCleanLabel(t) {
     return String(t || '').replace(/\s+/g, ' ').replace(/[*:]+\s*$/g, '').replace(/\s*\((kg|pcs|pc|gr|gram|ltr|liter|ml|rp|pack|box|bks|btl|botol|dus)\)\s*$/i, '').replace(/\b(kg|pcs|gr|gram|ltr|liter|ml|rp)\b\s*$/i, '').trim();
 }
 
+// ---- (D0) pembersih transkrip: buang pengulangan/halusinasi ----
+function __voiceCleanTranscript(t) {
+    let words = String(t || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+    if (__voiceIsHallucinationPhrase(words.join(' ')))
+        return '';
+    if (words.length >= 6 && new Set(words.map(w => w.toLowerCase())).size / words.length < 0.4)
+        return '';
+    // kata yang sama berulang >=3x berturut-turut -> satu saja (angka dibiarkan)
+    const out = [];
+    for (let i = 0; i < words.length; i++) {
+        let j = i;
+        while (j + 1 < words.length && words[j + 1].toLowerCase() === words[i].toLowerCase())
+            j++;
+        const run = j - i + 1;
+        out.push(words[i]);
+        if (run < 3 || /^\d/.test(words[i]))
+            for (let k = 1; k < run; k++)
+                out.push(words[i]);
+        i = j;
+    }
+    words = out;
+    // keragaman kata sangat rendah (mis. "update update 1944 update 1945") = halusinasi, bukan perintah
+    if (words.length >= 6) {
+        const uniq = new Set(words.map(w => w.toLowerCase())).size;
+        if (uniq / words.length < 0.4)
+            return '';
+    }
+    return words.join(' ');
+}
+// ---- (D1) PCM float -> WAV 16-bit mono (dipakai merekam di perangkat tanpa pengenalan suara bawaan) ----
+function __voiceEncodeWav(samples, sampleRate) {
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const v = new DataView(buf);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++)
+        v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF');
+    v.setUint32(4, 36 + samples.length * 2, true);
+    w(8, 'WAVE');
+    w(12, 'fmt ');
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, sampleRate, true);
+    v.setUint32(28, sampleRate * 2, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    w(36, 'data');
+    v.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) {
+        const x = Math.max(-1, Math.min(1, samples[i]));
+        v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+    }
+    return buf;
+}
+// puncak amplitudo & normalisasi volume (suara pelan sering memicu halusinasi)
+function __voicePeak(samples) {
+    let m = 0;
+    for (let i = 0; i < samples.length; i++) {
+        const a = Math.abs(samples[i]);
+        if (a > m)
+            m = a;
+    }
+    return m;
+}
+
+// pangkas bagian sunyi di awal/akhir rekaman (sunyi = pemicu utama halusinasi Whisper). samples: Float32Array 16 kHz
+function __voiceTrimSilence(samples, sr) {
+    const fl = Math.max(1, Math.round(sr * 0.02));
+    const n = Math.floor(samples.length / fl);
+    const rms = [];
+    let mx = 0;
+    for (let f = 0; f < n; f++) {
+        let sum = 0;
+        for (let i = 0; i < fl; i++) {
+            const x = samples[f * fl + i];
+            sum += x * x;
+        }
+        const r = Math.sqrt(sum / fl);
+        rms.push(r);
+        if (r > mx)
+            mx = r;
+    }
+    const thr = Math.max(0.012, 0.08 * mx);
+    let first = -1, last = -1, active = 0;
+    for (let f = 0; f < n; f++)
+        if (rms[f] >= thr) {
+            if (first < 0)
+                first = f;
+            last = f;
+            active++;
+        }
+    if (first < 0)
+        return { samples: new Float32Array(0), speechMs: 0 };
+    const pad = 8; // 160 ms
+    const a = Math.max(0, first - pad) * fl, b = Math.min(n, last + 1 + pad) * fl;
+    return { samples: samples.slice(a, b), speechMs: active * 20 };
+}
+// frasa khas halusinasi Whisper pada audio kosong (perintah asli selalu pendek & berisi angka/nama kolom)
+function __voiceIsHallucinationPhrase(t) {
+    const s = String(t || '').toLowerCase();
+    return /terima kasih (telah|sudah|atas) menonton|subtitle|amara\.org|subscribe|thanks for watching|thank you for watching|sampai jumpa di video|jangan lupa (like|subscribe)/.test(s);
+}
+
 // ---- (D) kolom isian di layar ----
 const __VOICE_SKIP_TYPES = ['password', 'hidden', 'file', 'checkbox', 'radio', 'date', 'time', 'datetime-local', 'month', 'week', 'color', 'range', 'button', 'submit', 'reset', 'image', 'email', 'url'];
 function __voiceIsFillable(el) {
@@ -15237,8 +15552,10 @@ function __initVoiceInput() {
     tab.type = 'button';
     tab.setAttribute('aria-label', 'Asisten suara');
     const sheet = mk('div', { position: 'fixed', left: '0', right: '0', bottom: '0', zIndex: '99999', background: '#fff', borderRadius: '18px 18px 0 0', boxShadow: '0 -6px 24px rgba(0,0,0,.25)', padding: '14px 14px calc(14px + env(safe-area-inset-bottom, 0px))', display: 'none', fontFamily: 'inherit', maxHeight: '58vh', overflowY: 'auto' });
-    sheet.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><b style="font-size:14px;color:#1e293b">🎙️ Asisten Suara</b><button type="button" data-x="close" style="border:none;background:#f1f5f9;border-radius:9999px;width:28px;height:28px;font-size:16px">×</button></div>'
-        + '<p style="font-size:11px;color:#64748b;margin:0 0 6px">Contoh: <i>“Masukkan filling coklat 10, filling matcha 10, susu UHT 10”</i>. Kolom di layar ini akan terisi otomatis. Periksa hasilnya sebelum menyimpan.</p>'
+    sheet.innerHTML = '<div style="display:flex;gap:6px;margin-bottom:8px"><button type="button" data-x="mFill" style="flex:1;border:none;border-radius:10px;padding:7px;font-weight:700;font-size:12px">✏️ Isi Kolom</button><button type="button" data-x="mAsk" style="flex:1;border:none;border-radius:10px;padding:7px;font-weight:700;font-size:12px">💬 Tanya Data</button></div>'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><b data-x="ttl" style="font-size:14px;color:#1e293b">🎙️ Asisten Suara</b><button type="button" data-x="close" style="border:none;background:#f1f5f9;border-radius:9999px;width:28px;height:28px;font-size:16px">×</button></div>'
+        + '<p data-x="hint" style="font-size:11px;color:#64748b;margin:0 0 6px"></p>'
+        + '<p data-x="eng" style="font-size:10px;color:#94a3b8;margin:0 0 4px"></p>'
         + '<textarea data-x="cmd" rows="2" placeholder="Ucapkan atau ketik perintah…" style="width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:12px;padding:8px 10px;font-size:14px;resize:none"></textarea>'
         + '<div style="display:flex;gap:8px;margin-top:8px"><button type="button" data-x="mic" style="flex:1;border:none;border-radius:12px;padding:10px;font-weight:700;font-size:13px;background:#6b21a8;color:#fff">🎙️ Bicara</button><button type="button" data-x="go" style="flex:1;border:none;border-radius:12px;padding:10px;font-weight:700;font-size:13px;background:#0f766e;color:#fff">✨ Isi Otomatis</button></div>'
         + '<div data-x="out" style="margin-top:8px;font-size:12px;color:#334155"></div>';
@@ -15246,7 +15563,22 @@ function __initVoiceInput() {
     document.body.appendChild(tab);
     document.body.appendChild(sheet);
     const q = (n) => sheet.querySelector('[data-x="' + n + '"]');
-    const cmdEl = q('cmd'), outEl = q('out'), micEl = q('mic'), goEl = q('go');
+    const cmdEl = q('cmd'), outEl = q('out'), micEl = q('mic'), goEl = q('go'), engEl = q('eng'), hintEl = q('hint'), mFill = q('mFill'), mAsk = q('mAsk');
+    let mode = 'fill';
+    const setMode = (m) => {
+        mode = m;
+        const on = 'background:#6b21a8;color:#fff', off = 'background:#f1f5f9;color:#475569';
+        mFill.style.cssText += ';' + (m === 'fill' ? on : off);
+        mAsk.style.cssText += ';' + (m === 'ask' ? on : off);
+        hintEl.innerHTML = m === 'fill' ? 'Contoh: <i>“Masukkan filling coklat 10, filling matcha 10, susu UHT 10”</i>. Kolom di layar ini akan terisi setelah Anda menekan Terapkan.' : 'Tanyakan data toko, mis. <i>“omset kemarin berapa?”</i>, <i>“toko mana yang belum lapor?”</i>, <i>“petty cash yang menunggu ACC?”</i>. Hanya membaca, tidak mengubah data.';
+        goEl.textContent = m === 'fill' ? '✨ Isi Otomatis' : '💬 Tanya';
+        cmdEl.placeholder = m === 'fill' ? 'Ucapkan atau ketik perintah…' : 'Ucapkan atau ketik pertanyaan…';
+        outEl.innerHTML = '';
+    };
+    mFill.addEventListener('click', () => setMode('fill'));
+    mAsk.addEventListener('click', () => setMode('ask'));
+    setMode('fill');
+    engEl.textContent = SR ? 'Mesin suara: Google (bawaan browser) — paling akurat' : 'Mesin suara: Whisper (server) — kurang akurat dari Google. Untuk hasil terbaik buka lewat Chrome, atau pakai tombol 🎤 di keyboard HP.';
     const show = (html) => { outEl.innerHTML = html; };
     const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const tabAllowed = () => cfg.enabled && (cfg.allTabs || cfg.tabs.includes(String(window.__voiceTab || '')));
@@ -15277,31 +15609,29 @@ function __initVoiceInput() {
         rec = new SR();
         rec.lang = 'id-ID';
         rec.interimResults = true;
-        rec.continuous = true;
-        let finalText = '';
-        const bump = () => { clearTimeout(silenceTimer); silenceTimer = setTimeout(stopListening, 2500); };
-        rec.onstart = () => { setMic(true); show('🎙️ Silakan bicara…'); bump(); };
+        rec.continuous = false; // continuous=true di Chrome Android menggandakan hasil -> teks ngelantur
+        rec.maxAlternatives = 1;
+        let heard = '';
+        let failed = false;
+        cmdEl.value = '';
+        rec.onstart = () => { setMic(true); show('🎙️ Silakan bicara… (sebut semuanya sekaligus)'); };
         rec.onresult = (ev) => {
-            let interim = '';
-            for (let i = ev.resultIndex; i < ev.results.length; i++) {
-                const r = ev.results[i];
-                if (r.isFinal)
-                    finalText += r[0].transcript + ' ';
-                else
-                    interim += r[0].transcript;
-            }
-            cmdEl.value = (finalText + interim).trim();
-            bump();
+            // bangun ulang dari seluruh hasil, bukan menambahkan -> tidak bisa menggandakan
+            heard = Array.from(ev.results).map(r => r[0].transcript).join(' ');
+            cmdEl.value = __voiceCleanTranscript(heard) || heard.trim();
         };
         rec.onerror = (ev) => {
-            const msg = { 'not-allowed': 'Izin mikrofon ditolak. Aktifkan izin mikrofon, atau ketik/dikte lewat keyboard.', 'service-not-allowed': 'Izin mikrofon ditolak.', 'no-speech': 'Suara tidak terdengar. Coba lagi.', 'audio-capture': 'Mikrofon tidak ditemukan.', 'network': 'Butuh internet untuk pengenalan suara.' }[ev.error] || 'Pengenalan suara gagal (' + ev.error + '). Ketik perintah di kolom.';
-            finalText = '';
-            show('⚠️ ' + esc(msg));
+            failed = true;
+            const msg = { 'not-allowed': 'Izin mikrofon ditolak. Aktifkan izin mikrofon, atau ketik/dikte lewat keyboard.', 'service-not-allowed': 'Izin mikrofon ditolak.', 'no-speech': 'Suara tidak terdengar. Coba lagi lebih dekat ke mikrofon.', 'audio-capture': 'Mikrofon tidak ditemukan.', 'network': 'Butuh internet untuk pengenalan suara.', 'aborted': '' }[ev.error];
+            if (msg !== '')
+                show('⚠️ ' + esc(msg || 'Pengenalan suara gagal (' + ev.error + '). Ketik perintah di kolom.'));
         };
-        rec.onend = () => { setMic(false); clearTimeout(silenceTimer); const t = (finalText || cmdEl.value).trim(); if (t && !/^⚠/.test(outEl.textContent)) {
+        rec.onend = () => { setMic(false); const t = __voiceCleanTranscript(heard); if (!failed && t) {
             cmdEl.value = t;
-            runFill();
-        } };
+            runAction();
+        }
+        else if (!failed)
+            show('⚠️ Suara tidak terdengar jelas. Coba lagi, atau ketik perintah.'); };
         try {
             rec.start();
         }
@@ -15312,37 +15642,64 @@ function __initVoiceInput() {
     // Cadangan untuk WebView/APK: rekam -> server (Whisper) -> teks
     const startRecorder = async () => {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Nama kolom yang tampil di layar dikirim sebagai petunjuk kosakata supaya Whisper tidak menebak asal.
+            const hint = __voiceCollectFields(document).map(f => f.label).join(', ').slice(0, 450);
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
             const chunks = [];
             mediaRec = new MediaRecorder(stream);
             mediaRec.ondataavailable = (e) => { if (e.data && e.data.size)
                 chunks.push(e.data); };
-            mediaRec.onstart = () => { setMic(true); show('🎙️ Merekam… ketuk “Selesai” bila sudah (maks 15 detik).'); silenceTimer = setTimeout(stopListening, 15000); };
+            mediaRec.onstart = () => { setMic(true); show('🎙️ Merekam… bicara dekat mikrofon, lalu ketuk “Selesai” (maks 15 detik).'); silenceTimer = setTimeout(stopListening, 15000); };
             mediaRec.onstop = async () => {
                 setMic(false);
                 clearTimeout(silenceTimer);
                 stream.getTracks().forEach(t => t.stop());
-                const blob = new Blob(chunks, { type: mediaRec.mimeType || 'audio/webm' });
-                show('⏳ Mengubah suara menjadi teks…');
+                show('⏳ Memproses suara…');
                 try {
-                    const res = await __apiFetch(`${WORKER_BASE}/api/voice/transcribe`, { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob });
+                    const raw = await new Blob(chunks, { type: mediaRec.mimeType || 'audio/webm' }).arrayBuffer();
+                    const Ctx = window.AudioContext || window.webkitAudioContext;
+                    const ctx = new Ctx();
+                    const decoded = await ctx.decodeAudioData(raw);
+                    ctx.close && ctx.close();
+                    // resample ke 16 kHz mono (format yang paling disukai Whisper)
+                    const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * 16000)), 16000);
+                    const src = off.createBufferSource();
+                    src.buffer = decoded;
+                    src.connect(off.destination);
+                    src.start();
+                    const pcm = (await off.startRendering()).getChannelData(0);
+                    if (decoded.duration < 0.8)
+                        throw new Error('Rekaman terlalu pendek.');
+                    const peak = __voicePeak(pcm);
+                    if (peak < 0.02)
+                        throw new Error('Suara terlalu pelan / tidak terekam. Coba lebih dekat ke mikrofon.');
+                    const gain = Math.min(8, 0.8 / peak); // naikkan volume suara yang pelan
+                    const norm = new Float32Array(pcm.length);
+                    for (let i = 0; i < pcm.length; i++)
+                        norm[i] = pcm[i] * gain;
+                    const tr = __voiceTrimSilence(norm, 16000);
+                    if (tr.speechMs < 400)
+                        throw new Error('Suara tidak terdengar. Bicara lebih keras & dekat ke mikrofon.');
+                    const wav = __voiceEncodeWav(tr.samples, 16000);
+                    const res = await __apiFetch(`${WORKER_BASE}/api/voice/transcribe?hint=${encodeURIComponent(hint)}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: new Blob([wav], { type: 'audio/wav' }) });
                     const d = await res.json().catch(() => ({}));
                     if (!res.ok)
                         throw new Error(d.error || 'Gagal mengubah suara.');
-                    cmdEl.value = d.text || '';
-                    if (d.text)
-                        runFill();
+                    const t = __voiceCleanTranscript(d.text);
+                    cmdEl.value = t;
+                    if (t)
+                        runAction();
                     else
-                        show('⚠️ Suara tidak terdengar jelas. Coba lagi.');
+                        show('⚠️ Suara tidak terdengar jelas. Coba lagi, atau ketik perintah / pakai tombol 🎤 di keyboard HP.');
                 }
                 catch (e) {
-                    show('⚠️ ' + esc(e.message) + ' Anda bisa mengetik perintah, atau pakai tombol mikrofon di keyboard.');
+                    show('⚠️ ' + esc(e.message) + ' Anda bisa mengetik perintah, atau pakai tombol 🎤 di keyboard HP.');
                 }
             };
             mediaRec.start();
         }
         catch (e) {
-            show('⚠️ Mikrofon tidak bisa dipakai (' + esc(e.name || 'error') + '). Ketik perintah di kolom, atau pakai tombol mikrofon di keyboard HP.');
+            show('⚠️ Mikrofon tidak bisa dipakai (' + esc(e.name || 'error') + '). Ketik perintah di kolom, atau pakai tombol 🎤 di keyboard HP.');
         }
     };
     micEl.addEventListener('click', () => {
@@ -15357,12 +15714,34 @@ function __initVoiceInput() {
         else
             show('Perangkat ini tidak mendukung pengenalan suara. Ketik perintah di kolom (atau pakai tombol 🎤 di keyboard HP), lalu tekan “Isi Otomatis”.');
     });
-    goEl.addEventListener('click', () => runFill());
-    // ----- teks -> isian -----
-    let busy = false;
+    goEl.addEventListener('click', () => runAction());
+    async function runAsk() {
+        const question = cmdEl.value.trim();
+        if (!question) {
+            show('Ucapkan atau ketik pertanyaan dulu.');
+            return;
+        }
+        goEl.disabled = true;
+        show('⏳ Mencari data…');
+        try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/ai/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok)
+                throw new Error(d.error || 'Gagal mengambil data.');
+            show('<div style="background:#f8fafc;border-radius:12px;padding:10px;font-size:13px;color:#0f172a">' + esc(d.answer || '-') + '</div><p style="margin:6px 0 0;color:#94a3b8;font-size:10px">Data dibaca langsung dari laporan toko' + (d.period ? ' • periode: ' + esc(d.period) : '') + '.</p>');
+        }
+        catch (e) {
+            show('⚠️ ' + esc(e.message));
+        }
+        goEl.disabled = false;
+    }
+    const runAction = () => (mode === 'ask' ? runAsk() : runFill());
+    // ----- teks -> isian: PRATINJAU dulu, kolom baru terisi setelah ditekan "Terapkan" -----
+    let busy = false, plan = null;
     async function runFill() {
         if (busy)
             return;
+        plan = null;
         const command = cmdEl.value.trim();
         if (!command) {
             show('Ucapkan atau ketik perintah dulu.');
@@ -15390,12 +15769,10 @@ function __initVoiceInput() {
             }
             catch (_) { /* AI gagal/lambat -> pakai pencocok lokal */ }
         }
-        // gabungkan: AI diutamakan, sisanya dilengkapi pencocok lokal
         const byIdx = new Map();
-        local.assignments.forEach(a => byIdx.set(a.i, { value: a.value, via: 'lokal' }));
-        ai.forEach(a => byIdx.set(a.i, { value: a.value, via: 'AI' }));
-        const lines = [];
-        let first = null;
+        local.assignments.forEach(a => byIdx.set(a.i, { value: a.value }));
+        ai.forEach(a => byIdx.set(a.i, { value: a.value }));
+        const items = [], warn = [];
         byIdx.forEach((a, i) => {
             const f = fields[i];
             if (!f)
@@ -15404,13 +15781,38 @@ function __initVoiceInput() {
             if (f.type === 'number') {
                 const n = typeof v === 'number' ? v : __idSpokenToNumber(String(v));
                 if (n === null || n === undefined) {
-                    lines.push('⚠️ ' + esc(f.label) + ': “' + esc(v) + '” bukan angka');
+                    warn.push('⚠️ ' + esc(f.label) + ': “' + esc(v) + '” bukan angka');
                     return;
                 }
                 v = String(n);
             }
             else
                 v = String(v);
+            items.push({ f, v });
+        });
+        if (!ai.length)
+            local.unmatched.forEach(u => warn.push('❓ “' + esc(u.heard) + '” ' + esc(u.value) + ' — ' + esc(u.reason)));
+        busy = false;
+        goEl.disabled = false;
+        if (!items.length) {
+            show((warn.join('<br>') || '') + '<p style="margin:6px 0 0">⚠️ Tidak ada kolom yang cocok. Sebutkan nama kolom + angka, mis. “filling coklat 10”. Salah dengar? Ubah teks di atas lalu tekan “Isi Otomatis”.</p>');
+            return;
+        }
+        plan = items;
+        show('<p style="margin:0 0 4px;font-weight:700">Akan diisi (periksa):</p>' + items.map(it => '• <b>' + esc(it.f.label) + '</b> ← ' + esc(it.v)).join('<br>') + (warn.length ? '<br>' + warn.join('<br>') : '')
+            + '<div style="display:flex;gap:8px;margin-top:8px"><button type="button" data-act="apply" style="flex:2;border:none;border-radius:12px;padding:10px;font-weight:700;font-size:13px;background:#16a34a;color:#fff">✅ Terapkan</button><button type="button" data-act="cancel" style="flex:1;border:none;border-radius:12px;padding:10px;font-weight:700;font-size:13px;background:#e2e8f0;color:#334155">Batal</button></div>'
+            + '<p style="margin:6px 0 0;color:#64748b;font-size:11px">Salah dengar? Ubah teks di atas lalu tekan “Isi Otomatis”, atau ucapkan ulang.</p>');
+    }
+    function applyPlan() {
+        if (!plan)
+            return;
+        const lines = [];
+        let first = null;
+        plan.forEach(({ f, v }) => {
+            if (f.el.isConnected === false) {
+                lines.push('⚠️ ' + esc(f.label) + ': kolom sudah berubah, ucapkan ulang');
+                return;
+            }
             __voiceSetValue(f.el, v);
             f.el.style.outline = '3px solid #10b981';
             setTimeout(() => { f.el.style.outline = ''; }, 2500);
@@ -15418,18 +15820,23 @@ function __initVoiceInput() {
                 first = f.el;
             lines.push('✅ <b>' + esc(f.label) + '</b> ← ' + esc(v));
         });
-        const covered = new Set(Array.from(byIdx.keys()).map(i => fields[i] && fields[i].label.toLowerCase()));
-        local.unmatched.forEach(u => { if (!ai.length)
-            lines.push('❓ “' + esc(u.heard) + '” ' + esc(u.value) + ' — ' + esc(u.reason)); });
+        plan = null;
         if (first)
             try {
                 first.scrollIntoView({ block: 'center', behavior: 'smooth' });
             }
             catch (_) { }
-        show(lines.length ? lines.join('<br>') + '<p style="margin:6px 0 0;color:#64748b">Periksa dulu, lalu simpan seperti biasa.</p>' : '⚠️ Tidak ada kolom yang cocok dengan perintah. Sebutkan nama kolom + angka, mis. “filling coklat 10”.');
-        busy = false;
-        goEl.disabled = false;
+        show(lines.join('<br>') + '<p style="margin:6px 0 0;color:#64748b">Terisi. Periksa lalu simpan seperti biasa.</p>');
     }
+    outEl.addEventListener('click', (e) => {
+        const act = e && e.target && e.target.getAttribute ? e.target.getAttribute('data-act') : (e && e.target && e.target.dataset && e.target.dataset.act);
+        if (act === 'apply')
+            applyPlan();
+        else if (act === 'cancel') {
+            plan = null;
+            show('Dibatalkan.');
+        }
+    });
     // ----- saklar dari admin -----
     const refresh = async () => {
         try {
@@ -15452,6 +15859,7 @@ function __initVoiceInput() {
     document.addEventListener('visibilitychange', () => { if (!document.hidden)
         refresh(); });
 }
+
 const __startVoiceAssistant = () => { try {
     __initVoiceInput();
 }

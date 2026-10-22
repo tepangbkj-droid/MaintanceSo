@@ -1,0 +1,12 @@
+sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z  react.production.min.js
+sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1  react-dom.production.min.js
+sha384-wHFvAtjmgnkA2PJcMsDaCgdipf7X7YV44X/igbLHpvGiq6T5/PvFKl93grpvtbQT  lucide.min.js
+sha384-mZT2gIty7ZDdOGkxfP6joZcYdMW1Jvj9dRlfpTmaJAKKXTqzygtB22k7FLe+KZC1  qrcode.min.js
+sha384-fh/R5bWIGwMIs5kzn3aCWuUjbYvaxfc2SGWUTGTtkedhrySWrY8datYfSK2QcZHL  fonts/inter/inter-latin-400-normal.woff2
+sha384-bmY8Mk7UhDawrNp59u16B96u04iptz/+70zPty92nccGcofwIcQVXyWaPCdBEYtv  fonts/inter/inter-latin-500-normal.woff2
+sha384-lI+hrOImxNsIljMZ+LxBmjTPRJCqvHKeOmTiKCfLU1X6p6NCfvF38SRH8pIuu2XO  fonts/inter/inter-latin-600-normal.woff2
+sha384-sxRqFgC2MfDiNRsjm+DT9hNxQ6zU+YTnvNvdXSy1zZ9WRePjwuJCXdwD6kUXHtc/  fonts/inter/inter-latin-700-normal.woff2
+sha384-vbskZJFfMwM5wvfYmJB1db3XrrvvZI/RsdFPHbTsTLtc85FRVEnuvItBZGGSPFt+  fonts/plus-jakarta-sans/plus-jakarta-sans-latin-600-normal.woff2
+sha384-zHQSSAyuSDZRar8NhU8SpZ+CDOAS9DeuNmwrnwM+SeZKPB43ie92BePrdClb+a/N  fonts/plus-jakarta-sans/plus-jakarta-sans-latin-700-normal.woff2
+sha384-mBWA0b9cXJEX4w9Kppj86ltzEw1Oj5qV7h6p7AH+RAFYlSnpOnempMcpQiASqCQd  fonts/plus-jakarta-sans/plus-jakarta-sans-latin-800-normal.woff2
+sha384-VVZRgUY2GqalaVjdIoo3xXD9InhS+e4xJrhbsna+N0OWa3JYMvl1S2p1oy0gpqr0  fonts.css

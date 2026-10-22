@@ -2103,6 +2103,8 @@ function PsikotesQuestionEditor({ test, onBack }) {
     const [loadError, setLoadError] = useState('');
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState('');
+    const [bulk, setBulk] = useState('');
+    const [showBulk, setShowBulk] = useState(false);
     useEffect(() => {
         (async () => {
             try {
@@ -2124,6 +2126,16 @@ function PsikotesQuestionEditor({ test, onBack }) {
         })();
     }, [test.id]);
     const [uploadingImg, setUploadingImg] = useState(null);
+    const addBulk = () => {
+        const parsed = ojtParseBulk(bulk);
+        if (parsed.length === 0) {
+            alert('Format tidak terbaca. Pakai "1. Soal" lalu "A. Pilihan" dan "Kunci: B".');
+            return;
+        }
+        setQuestions(prev => [...prev, ...parsed.map(q => ({ ...q, image_url: null }))]);
+        setBulk('');
+        setShowBulk(false);
+    };
     const addQuestion = (type) => {
         setQuestions(prev => [...prev, type === 'esai' ? { type: 'esai', text: '', image_url: null } : { type: 'pilihan_ganda', text: '', options: ['', ''], correctIndex: 0, image_url: null }]);
     };
@@ -2212,6 +2224,11 @@ function PsikotesQuestionEditor({ test, onBack }) {
             React.createElement("h2", { className: "font-bold text-slate-700 text-base" },
                 "Kelola Soal \u2014 ",
                 test.title)),
+        React.createElement("button", { onClick: () => setShowBulk(v => !v), className: "w-full border border-dashed border-purple-300 text-purple-700 text-xs font-bold py-2.5 rounded-xl" }, showBulk ? 'Tutup' : '📋 Tempel Banyak Soal Sekaligus'),
+        showBulk && (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-3 space-y-2" },
+            React.createElement("textarea", { value: bulk, onChange: e => setBulk(e.target.value), rows: 10, placeholder: '1. Berapa suhu oven untuk croissant?\nA. 150°C\nB. 180°C\nC. 220°C\nKunci: B\n\n2. Apa yang dilakukan sebelum membuka kasir?\nA. ...\nB. ...\nKunci: A\n\n3. Soal tanpa pilihan otomatis jadi Esai', className: "w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono" }),
+            React.createElement("p", { className: "text-[10px] text-slate-400" }, "Soal ditambahkan di bawah soal yang sudah ada. Soal tanpa pilihan A/B dibuat sebagai Esai. Periksa dulu, lalu klik Simpan Semua Soal."),
+            React.createElement("button", { onClick: addBulk, disabled: !bulk.trim(), className: "w-full bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-xl" }, "Buat Soal Otomatis"))),
         React.createElement("div", { className: "space-y-3" }, questions.map((q, qi) => (React.createElement("div", { key: qi, className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3" },
             React.createElement("div", { className: "flex items-center justify-between" },
                 React.createElement("span", { className: "text-xs font-bold text-slate-400" },
@@ -13987,7 +14004,7 @@ function LeaderOjtQuestionsPanel({ showToast }) {
         React.createElement("div", { className: "flex items-start justify-between gap-2" },
             React.createElement("div", null,
                 React.createElement("h2", { className: "font-bold text-slate-700 text-base" }, "Soal OJT Outlet"),
-                React.createElement("p", { className: "text-xs text-slate-500 mt-0.5" }, "Isi soal, pilihan, dan kunci jawabannya. Paket tes otomatis dibuat dan hanya berlaku di outlet ini.")),
+                React.createElement("p", { className: "text-xs text-slate-500 mt-0.5" }, "Isi soal, pilihan, dan kunci jawabannya. Paket buatan Admin juga muncul di sini dan bisa langsung dibuatkan link untuk OJT outlet ini.")),
             React.createElement("button", { onClick: () => setShowCreate(v => !v), className: "shrink-0 bg-purple-800 text-white text-xs font-bold px-3 py-2 rounded-xl" }, "+ Paket Baru")),
         showCreate && (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-3 space-y-2 animate-fadeIn" },
             React.createElement("input", { value: title, onChange: e => setTitle(e.target.value), placeholder: "Judul, mis. Tes Bakery OJT", className: "w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" }),
@@ -13996,7 +14013,7 @@ function LeaderOjtQuestionsPanel({ showToast }) {
         loading ? (React.createElement("div", { className: "text-center text-slate-400 text-sm py-8" },
             React.createElement("i", { "data-lucide": "loader", className: "w-6 h-6 animate-spin mx-auto" }))) : err ? (React.createElement("div", { className: "bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center space-y-2" },
             React.createElement("p", { className: "text-xs text-rose-700 font-semibold" }, err),
-            React.createElement("button", { onClick: () => { setLoading(true); load(); }, className: "bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl" }, "Coba Lagi"))) : tests.length === 0 ? (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm" }, "Belum ada paket soal OJT untuk outlet ini.")) : tests.map(t => (React.createElement("div", { key: t.id, className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3" },
+            React.createElement("button", { onClick: () => { setLoading(true); load(); }, className: "bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl" }, "Coba Lagi"))) : tests.length === 0 ? (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm" }, "Belum ada paket soal OJT (dari Admin maupun outlet ini).")) : tests.map(t => (React.createElement("div", { key: t.id, className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3" },
             React.createElement("div", { className: "flex items-start justify-between gap-2" },
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("h3", { className: "font-bold text-slate-800 text-sm" }, t.title),
@@ -14005,14 +14022,17 @@ function LeaderOjtQuestionsPanel({ showToast }) {
                         " soal \u2022 ",
                         t.attempt_count,
                         " OJT sudah isi",
-                        t.timer_minutes ? ` • ${t.timer_minutes} mnt` : '')),
-                t.keys_ready === 0
+                        t.timer_minutes ? ` • ${t.timer_minutes} mnt` : ''),
+                    t.from_admin ? React.createElement("span", { className: "inline-block mt-1 text-[10px] bg-sky-100 text-sky-700 font-bold px-2 py-0.5 rounded-md" }, "Soal dari Admin") : null),
+                t.locked ? React.createElement("span", { className: "shrink-0 text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-1 rounded-md" }, "Dikunci Admin") : t.keys_ready === 0
                     ? React.createElement("span", { className: "shrink-0 text-[10px] bg-amber-100 text-amber-700 font-bold px-2 py-1 rounded-md" }, "Kunci belum lengkap")
                     : React.createElement("span", { className: "shrink-0 text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md" }, "Siap dipakai")),
             React.createElement("div", { className: "flex flex-wrap gap-2" },
-                t.attempt_count === 0 && React.createElement("button", { onClick: () => setEditing({ id: t.id, title: t.title }), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700" }, "Edit Soal"),
+                t.from_admin
+                    ? React.createElement("button", { onClick: () => setEditing({ id: t.id, title: t.title, readOnly: true }), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700" }, "Lihat Soal")
+                    : t.attempt_count === 0 && React.createElement("button", { onClick: () => setEditing({ id: t.id, title: t.title }), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700" }, "Edit Soal"),
                 React.createElement("button", { onClick: () => setLinksOpen(linksOpen === t.id ? null : t.id), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700" }, "Link OJT"),
-                React.createElement("button", { onClick: () => remove(t), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 ml-auto" }, "Hapus")),
+                !t.from_admin && React.createElement("button", { onClick: () => remove(t), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 ml-auto" }, "Hapus")),
             linksOpen === t.id && React.createElement(OjtLinksBox, { test: t, showToast: showToast }))))));
 }
 function OjtLinksBox({ test, showToast }) {
@@ -14181,12 +14201,13 @@ function LeaderOjtQuestionEditor({ test, onBack, showToast }) {
             React.createElement("h2", { className: "font-bold text-slate-700 text-base truncate" },
                 "Soal \u2014 ",
                 test.title)),
-        React.createElement("div", { className: "bg-purple-50 border border-purple-100 rounded-xl px-3 py-2 text-[11px] text-purple-800" },
+        test.readOnly && React.createElement("div", { className: "bg-sky-50 border border-sky-200 rounded-xl px-3 py-2 text-[11px] text-sky-800 font-semibold" }, "Soal ini dibuat Admin, hanya bisa dilihat. Untuk mengubah soal, hubungi Admin."),
+        !test.readOnly && React.createElement("div", { className: "bg-purple-50 border border-purple-100 rounded-xl px-3 py-2 text-[11px] text-purple-800" },
             "Isi soal & pilihan jawaban, lalu ",
             React.createElement("b", null, "klik bulatan di samping jawaban yang benar"),
             " sebagai kunci. Link OJT baru bisa dibuat kalau semua soal pilihan ganda sudah punya kunci. Kunci tidak bisa diubah lagi setelah ada OJT yang mengerjakan."),
-        React.createElement("button", { onClick: () => setShowBulk(v => !v), className: "w-full border border-dashed border-purple-300 text-purple-700 text-xs font-bold py-2.5 rounded-xl" }, showBulk ? 'Tutup' : '📋 Tempel Banyak Soal Sekaligus'),
-        showBulk && (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-3 space-y-2 animate-fadeIn" },
+        !test.readOnly && React.createElement("button", { onClick: () => setShowBulk(v => !v), className: "w-full border border-dashed border-purple-300 text-purple-700 text-xs font-bold py-2.5 rounded-xl" }, showBulk ? 'Tutup' : '📋 Tempel Banyak Soal Sekaligus'),
+        !test.readOnly && showBulk && (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-3 space-y-2 animate-fadeIn" },
             React.createElement("textarea", { value: bulk, onChange: e => setBulk(e.target.value), rows: 8, placeholder: '1. Berapa suhu oven untuk croissant?\nA. 150°C\nB. 180°C\nC. 220°C\nKunci: B\n\n2. Apa yang dilakukan sebelum membuka kasir?\nA. ...\nB. ...\nKunci: A', className: "w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono" }),
             React.createElement("button", { onClick: addBulk, disabled: !bulk.trim(), className: "w-full bg-purple-800 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-xl" }, "Buat Soal Otomatis"))),
         qs.map((q, i) => (React.createElement("div", { key: i, className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-3 space-y-2" },
@@ -14196,20 +14217,20 @@ function LeaderOjtQuestionEditor({ test, onBack, showToast }) {
                     i + 1,
                     " \u2022 ",
                     q.type === 'esai' ? 'Esai' : 'Pilihan Ganda'),
-                React.createElement("button", { onClick: () => setQs(prev => prev.filter((_, k) => k !== i)), className: "text-rose-500 text-xs font-semibold" }, "Hapus")),
-            React.createElement("textarea", { value: q.text, onChange: e => upd(i, { text: e.target.value }), rows: 2, placeholder: "Tulis pertanyaan...", className: "w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" }),
+                !test.readOnly && React.createElement("button", { onClick: () => setQs(prev => prev.filter((_, k) => k !== i)), className: "text-rose-500 text-xs font-semibold" }, "Hapus")),
+            React.createElement("textarea", { value: q.text, readOnly: !!test.readOnly, onChange: e => upd(i, { text: e.target.value }), rows: 2, placeholder: "Tulis pertanyaan...", className: "w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" }),
             q.type === 'pilihan_ganda' && (React.createElement("div", { className: "space-y-1.5" },
                 q.options.map((o, oi) => (React.createElement("div", { key: oi, className: "flex items-center gap-2" },
-                    React.createElement("input", { type: "radio", name: `kunci-${i}`, checked: q.correctIndex === oi, onChange: () => upd(i, { correctIndex: oi }), title: "Tandai sebagai kunci jawaban" }),
+                    React.createElement("input", { type: "radio", name: `kunci-${i}`, disabled: !!test.readOnly, checked: q.correctIndex === oi, onChange: () => upd(i, { correctIndex: oi }), title: "Tandai sebagai kunci jawaban" }),
                     React.createElement("span", { className: "w-4 text-center text-[11px] font-bold text-slate-400" }, String.fromCharCode(65 + oi)),
-                    React.createElement("input", { value: o, onChange: e => updOpt(i, oi, e.target.value), placeholder: `Pilihan ${String.fromCharCode(65 + oi)}`, className: "flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs" }),
-                    q.options.length > 2 && React.createElement("button", { onClick: () => delOpt(i, oi), className: "text-slate-400 text-sm px-1" }, "\u2715")))),
-                q.options.length < 6 && React.createElement("button", { onClick: () => addOpt(i), className: "text-[11px] font-semibold text-purple-700" }, "+ Tambah pilihan"),
-                !Number.isInteger(q.correctIndex) && React.createElement("p", { className: "text-[10px] text-amber-600 font-semibold" }, "Pilih bulatan di samping jawaban yang benar (kunci).")))))),
-        React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("input", { value: o, readOnly: !!test.readOnly, onChange: e => updOpt(i, oi, e.target.value), placeholder: `Pilihan ${String.fromCharCode(65 + oi)}`, className: "flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs" }),
+                    q.options.length > 2 && !test.readOnly && React.createElement("button", { onClick: () => delOpt(i, oi), className: "text-slate-400 text-sm px-1" }, "\u2715")))),
+                q.options.length < 6 && !test.readOnly && React.createElement("button", { onClick: () => addOpt(i), className: "text-[11px] font-semibold text-purple-700" }, "+ Tambah pilihan"),
+                !test.readOnly && !Number.isInteger(q.correctIndex) && React.createElement("p", { className: "text-[10px] text-amber-600 font-semibold" }, "Pilih bulatan di samping jawaban yang benar (kunci).")))))),
+        !test.readOnly && React.createElement("div", { className: "flex gap-2" },
             React.createElement("button", { onClick: () => setQs(prev => [...prev, { type: 'pilihan_ganda', text: '', options: ['', ''], correctIndex: null }]), className: "flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl" }, "+ Pilihan Ganda"),
             React.createElement("button", { onClick: () => setQs(prev => [...prev, { type: 'esai', text: '', options: [] }]), className: "flex-1 border border-dashed border-slate-300 text-slate-600 text-xs font-semibold py-2.5 rounded-xl" }, "+ Esai")),
-        React.createElement("button", { onClick: save, disabled: saving || qs.length === 0, className: "w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm" }, saving ? 'Menyimpan...' : 'Simpan Soal')));
+        !test.readOnly && React.createElement("button", { onClick: save, disabled: saving || qs.length === 0, className: "w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm" }, saving ? 'Menyimpan...' : 'Simpan Soal')));
 }
 const ojtChip = (key, cls, text) => React.createElement("span", { key: key, className: `text-[10px] font-bold px-2 py-1 rounded-md ${cls}` }, text);
 function OjtReadonlyCard({ p, showStore }) {

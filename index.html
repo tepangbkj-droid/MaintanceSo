@@ -1,2329 +1,290 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Buku Kas — Catatan Keuangan &amp; Tabungan Emas</title>
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#6D4AFF">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Buku Kas">
+  <meta charset="UTF-8">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <title>Tarobun SO Mandiri Hub</title>
+
+  <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
+
+  <!-- KEAMANAN: CSP, X-Frame-Options, nosniff, dll sekarang dikirim sebagai HEADER HTTP lewat vercel.json
+       (frame-ancestors & X-Frame-Options diabaikan browser bila hanya lewat tag <meta>). -->
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <!-- KEAMANAN (hardening, 2026-08): cegah web ini muncul di hasil pencarian Google/Bing dkk.
+       Ini aplikasi internal toko, bukan halaman publik -- tidak perlu (dan tidak boleh)
+       ke-index search engine. Dipasangkan juga dengan file robots.txt terpisah. -->
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noodp, noydir">
+
+ <!-- React core -->
+  <link rel="manifest" href="manifest.json?v=20261022">
+<meta name="theme-color" content="#6D28D9">
+
+<!-- Logo / Ikon Aplikasi (Tarobun) -->
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg-1:#F5F2FF;
-    --bg-2:#EAF3FF;
-    --ink:#221A3D;
-    --ink-soft:#726C93;
-    --card:#FFFFFF;
-    --line:#E8E3F7;
+<link rel="apple-touch-icon" href="icon-512.png">
 
-    --violet:#6D4AFF;
-    --violet-dark:#4B2FD9;
-    --violet-soft:#ECE6FF;
-    --blue:#2E8BFF;
-    --blue-soft:#DFF0FF;
-    --emerald:#0FAE73;
-    --emerald-soft:#D9F7EA;
-    --rose:#F0355A;
-    --rose-soft:#FFE2E9;
-    --amber:#F5A324;
-    --amber-dark:#E08600;
-    --amber-soft:#FFF0D6;
-    --pink:#EC4899;
-    --pink-soft:#FCE4F1;
-    --teal:#14B8A6;
-    --teal-soft:#D6F6F1;
+<script src="vendor/react.production.min.js?v=20261022" defer></script>
+<script src="vendor/react-dom.production.min.js?v=20261022" defer></script>
 
-    --radius-s:10px;
-    --radius-m:18px;
-    --radius-l:24px;
-    --radius-pill:999px;
-    --font-head:'Poppins',sans-serif;
-    --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
-  body{
-    background:
-      radial-gradient(600px 420px at 108% -6%, rgba(109,74,255,0.18), transparent 60%),
-      radial-gradient(560px 420px at -8% 6%, rgba(46,139,255,0.16), transparent 55%),
-      radial-gradient(500px 380px at 90% 60%, rgba(236,72,153,0.10), transparent 60%),
-      linear-gradient(180deg, var(--bg-1), var(--bg-2));
-    background-attachment:fixed;
-    color:var(--ink);
-    font-family:var(--font-sans);
-    -webkit-font-smoothing:antialiased;
-    min-height:100vh;
-    padding-bottom:118px;
-  }
-  a{color:inherit;}
-  button{font-family:inherit;cursor:pointer;transition:transform .15s ease, opacity .15s ease, background-color .15s ease, box-shadow .15s ease;}
-  input,select,textarea{font-family:inherit;transition:border-color .15s ease, box-shadow .15s ease;}
-  input:focus,select:focus,textarea:focus{border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-soft);}
-  :focus-visible{outline:2px solid var(--violet);outline-offset:2px;}
-  .hidden{display:none !important;}
 
-  @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
-  @keyframes sheetUp{from{opacity:0;transform:translateY(24px);}to{opacity:1;transform:translateY(0);}}
-  @keyframes popIn{from{opacity:0;transform:scale(.94);}to{opacity:1;transform:scale(1);}}
-  @keyframes spin{to{transform:rotate(360deg);}}
-  .fade-up{animation:fadeUp .45s ease both;}
+<!-- Firebase SDK dihapus — sudah diganti Cloudflare Worker (lihat shim di bawah) -->
 
-  .app-shell{max-width:640px;margin:0 auto;padding:0 18px;}
+<!-- Lucide -->
+<script src="vendor/lucide.min.js?v=20261022" defer></script>
+<script src="vendor/qrcode.min.js?v=20261022" defer></script>
 
-  /* Topbar */
-  .topbar{
-    position:sticky;top:0;z-index:20;
-    background:rgba(245,242,255,0.86);backdrop-filter:blur(8px);
-    border-bottom:1px solid var(--line);
-  }
-  .topbar-inner{
-    max-width:640px;margin:0 auto;padding:16px 18px;
-    display:flex;align-items:center;justify-content:space-between;
-  }
-  .brand{display:flex;align-items:center;gap:10px;line-height:1.1;}
-  .brand-mark{
-    width:36px;height:36px;border-radius:12px;flex:0 0 auto;
-    background:linear-gradient(150deg,#8B6BFF,var(--violet) 55%,var(--blue));
-    display:flex;align-items:center;justify-content:center;font-size:17px;
-    box-shadow:0 6px 14px -6px rgba(109,74,255,0.6);
-  }
-  .brand-text{display:flex;flex-direction:column;}
-  .brand-name{font-family:var(--font-head);font-size:19px;font-weight:700;}
-  .brand-tag{font-size:12px;color:var(--ink-soft);margin-top:1px;}
-  .icon-btn{
-    width:40px;height:40px;border-radius:var(--radius-pill);
-    border:1px solid var(--line);background:var(--card);
-    display:flex;align-items:center;justify-content:center;
-    font-size:17px;color:var(--ink);
-  }
-  .icon-btn:active{transform:scale(0.94);}
-  .icon-btn:hover{border-color:var(--violet);color:var(--violet);}
+<!-- Tipografi: Inter + Plus Jakarta Sans, di-host sendiri (vendor/fonts.css) -> tidak ada dependensi CDN. -->
+<link rel="stylesheet" href="vendor/fonts.css?v=20261022">
 
-  /* View toggling */
-  .view-pane{display:none;}
-  .view-pane.active{display:block;}
+  <!-- Animasi untuk pop-up notifikasi Update Sistem -->
+  <style>
+    /* ========================================== */
+    /* PENGAMAN RESPONSIF GLOBAL (2026-07-22) */
+    /* Mencegah layar "kepotong"/geser horizontal di HP */
+    html, body { max-width: 100%; overflow-x: hidden; scroll-behavior: smooth; }
+    * { overflow-wrap: break-word; word-break: break-word; }
+    img, video { max-width: 100%; height: auto; }
 
-  /* Hero */
-  .hero{
-    margin-top:18px;padding:26px 22px;border-radius:var(--radius-l);
-    color:#fff;position:relative;overflow:hidden;
-  }
-  .hero.hero-kas{
-    background:linear-gradient(150deg,#5B34F2 0%,#6D4AFF 45%,#2E8BFF 100%);
-    box-shadow:0 16px 34px -14px rgba(76,52,222,0.6);
-  }
-  .hero.hero-emas{
-    background:linear-gradient(150deg,#E08600 0%,#F5A324 45%,#EC4899 100%);
-    box-shadow:0 16px 34px -14px rgba(224,134,0,0.55);
-  }
-  .hero::before{
-    content:'';position:absolute;inset:0;
-    background:radial-gradient(240px 240px at 90% -14%, rgba(255,255,255,0.28), transparent 65%);
-    pointer-events:none;
-  }
-  .hero::after{
-    content:'';position:absolute;width:180px;height:180px;border-radius:50%;
-    background:rgba(255,255,255,0.08);right:-60px;bottom:-70px;pointer-events:none;
-  }
-  .hero-label{font-size:13px;color:rgba(255,255,255,0.78);position:relative;display:flex;align-items:center;gap:6px;}
-  .hero-number{
-    font-family:var(--font-head);font-weight:700;
-    font-size:40px;letter-spacing:-0.5px;margin-top:4px;
-    word-break:break-word;position:relative;color:#fff;
-  }
-  .hero-number.negative{color:#FFD3DD;}
-  .hero-sub{font-size:13px;color:rgba(255,255,255,0.85);margin-top:6px;position:relative;}
-  .hero-meta{display:flex;gap:16px;margin-top:16px;flex-wrap:wrap;position:relative;}
-  .hero-meta-item{padding-left:14px;border-left:1px solid rgba(255,255,255,0.28);}
-  .hero-meta-item:first-child{padding-left:0;border-left:none;}
-  .hero-meta-label{font-size:11.5px;color:rgba(255,255,255,0.75);}
-  .hero-meta-value{font-family:var(--font-head);font-size:16px;font-weight:600;margin-top:2px;color:#fff;}
-  .hero-meta-value button{background:none;border:none;font:inherit;color:inherit;padding:0;text-decoration:underline dotted;text-underline-offset:3px;}
-  .hero-badge{
-    display:inline-flex;align-items:center;gap:5px;margin-top:12px;position:relative;
-    background:rgba(255,255,255,0.18);padding:6px 12px;border-radius:var(--radius-pill);
-    font-size:12.5px;font-weight:600;
-  }
-  .hero-badge.profit{background:rgba(16,185,129,0.28);}
-  .hero-badge.loss{background:rgba(240,53,90,0.3);}
+    /* ========================================== */
+    /* PERFORMANCE — GPU compositing & rendering hints */
+    /* ========================================== */
+    /* Transisi/animasi dijalankan di GPU thread agar tidak memblokir JS main thread */
+    .animate-fadeIn, .animate-scaleIn, .animate-spin,
+    [class*="transition"], [class*="animate-"] {
+      /* PERBAIKAN (2026-10): will-change dihapus. Sebelumnya dipasang ke SEMUA elemen ber-class
+         "transition*"/"animate-*" (ratusan tombol & kartu) sehingga tiap elemen jadi layer GPU sendiri
+         -> memori boros & scroll/ketik terasa lag di HP. Browser sudah mengatur ini sendiri. */
+    }
+    /* Setelah animasi selesai, lepas will-change supaya tidak waste GPU memory */
+    .animate-fadeIn { animation-fill-mode: both; }
 
-  /* Summary strip */
-  .summary-strip{
-    display:flex;gap:10px;overflow-x:auto;padding:18px 0 4px;
-    scroll-snap-type:x proximity;
-  }
-  .summary-strip::-webkit-scrollbar{display:none;}
-  .stat-card{
-    scroll-snap-align:start;
-    flex:0 0 auto;min-width:152px;
-    background:var(--card);border:1px solid var(--line);border-radius:var(--radius-m);
-    padding:14px 14px 13px;position:relative;overflow:hidden;
-    box-shadow:0 8px 20px -14px rgba(34,26,61,0.35);
-  }
-  .stat-card .ic{font-size:16px;display:inline-flex;align-items:center;justify-content:center;
-    width:28px;height:28px;border-radius:9px;margin-bottom:6px;}
-  .stat-card.income .ic{background:var(--emerald-soft);}
-  .stat-card.expense .ic{background:var(--rose-soft);}
-  .stat-card.unalloc .ic{background:var(--violet-soft);}
-  .stat-card.gold .ic{background:var(--amber-soft);}
-  .stat-card .k{font-size:12px;color:var(--ink-soft);}
-  .stat-card .v{font-family:var(--font-head);font-size:19px;font-weight:700;margin-top:4px;}
-  .stat-card.income .v{color:var(--emerald);}
-  .stat-card.expense .v{color:var(--rose);}
-  .stat-card.unalloc .v{color:var(--violet);}
-  .stat-card.gold .v{color:var(--amber-dark);}
+    /* Input & button: hapus default tap-highlight di mobile (bikin terasa lebih responsif) */
+    input, button, select, textarea { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 
-  /* Section */
-  .section{margin-top:28px;}
-  .section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;}
-  .section-title{font-family:var(--font-head);font-size:18px;font-weight:700;display:flex;align-items:center;gap:7px;}
-  .link-btn{
-    background:var(--violet-soft);border:1px solid transparent;color:var(--violet-dark);
-    font-size:13.5px;font-weight:700;padding:8px 14px;border-radius:var(--radius-pill);
-    display:flex;align-items:center;gap:4px;white-space:nowrap;
-  }
-  .link-btn:active{transform:scale(.95);opacity:.85;}
-  .link-btn:hover{background:var(--violet);color:#fff;}
-  .link-btn.amber{background:var(--amber-soft);color:var(--amber-dark);}
-  .link-btn.amber:hover{background:var(--amber);color:#fff;}
+    /* Daftar panjang (riwayat, produk, dsb): biarkan browser skip render item di luar layar */
+    .content-vis-auto { content-visibility: auto; contain-intrinsic-size: 0 60px; }
 
-  .empty-box{
-    border:1.5px dashed var(--line);border-radius:var(--radius-m);
-    padding:32px 16px;text-align:center;color:var(--ink-soft);font-size:14px;
-    background:linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.25));
-  }
-  .empty-box .emoji{font-size:28px;display:block;margin-bottom:8px;}
-  .empty-box .link-btn{margin-top:12px;display:inline-flex;background:var(--emerald-soft);color:#0A8C5A;}
-  .empty-box .link-btn:hover{background:var(--emerald);color:#fff;}
+    /* Scroll container: gunakan momentum scroll native di iOS */
+    .overflow-y-auto, .overflow-auto { -webkit-overflow-scrolling: touch; }
 
-  /* Category rows */
-  .cat-list{display:flex;flex-direction:column;gap:10px;}
-  .cat-row{
-    padding:14px 14px 12px;border:1px solid var(--line);border-radius:var(--radius-m);
-    background:var(--card);box-shadow:0 8px 18px -14px rgba(34,26,61,0.4);
-    border-left:5px solid var(--cat-color, var(--violet));
-  }
-  .cat-row-top{display:flex;justify-content:space-between;align-items:center;gap:10px;}
-  .cat-name-wrap{display:flex;align-items:center;gap:9px;min-width:0;}
-  .cat-icon{
-    width:34px;height:34px;border-radius:11px;flex:0 0 auto;
-    display:flex;align-items:center;justify-content:center;font-size:16px;
-    background:var(--cat-color-soft, var(--violet-soft));
-  }
-  .cat-name{font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .cat-alloc{font-family:var(--font-head);font-size:14px;color:var(--ink-soft);white-space:nowrap;font-weight:600;}
-  .cat-bar-track{height:8px;border-radius:var(--radius-pill);background:#F1EEFC;margin-top:11px;overflow:hidden;}
-  .cat-bar-fill{height:100%;border-radius:var(--radius-pill);background:var(--cat-color, var(--violet));transition:width .5s ease;}
-  .cat-bar-fill.over{background:var(--rose);}
-  .cat-row-bottom{display:flex;justify-content:space-between;margin-top:8px;font-size:12.5px;color:var(--ink-soft);}
-  .cat-row-actions{display:flex;justify-content:flex-end;margin-top:4px;}
-  .tiny-btn{background:none;border:none;color:var(--ink-soft);font-size:12px;padding:2px 6px;}
-  .tiny-btn:hover{color:var(--rose);}
+    /* Kurangi reflow saat render form panjang */
+    /* (dihapus 2026-10) `contain: layout` pada semua .grid/.flex membebani layout di HP & bisa merusak posisi popup */
 
-  /* Transactions */
-  .tx-filter{display:flex;gap:8px;margin-bottom:14px;}
-  .chip{
-    border:1px solid var(--line);background:var(--card);border-radius:var(--radius-pill);
-    padding:8px 16px;font-size:13px;font-weight:600;color:var(--ink-soft);
-  }
-  .chip.active{background:linear-gradient(135deg,var(--violet),var(--blue));color:#fff;border-color:transparent;box-shadow:0 6px 14px -6px rgba(109,74,255,0.6);}
-  .tx-date-header{font-size:12px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-soft);margin:18px 0 6px;}
-  .tx-date-header:first-child{margin-top:0;}
-  .tx-list{display:flex;flex-direction:column;gap:8px;}
-  .tx-row{
-    display:flex;justify-content:space-between;align-items:center;padding:12px 13px;gap:10px;
-    background:var(--card);border:1px solid var(--line);border-radius:16px;
-    box-shadow:0 6px 16px -14px rgba(34,26,61,0.5);
-  }
-  .tx-left{min-width:0;display:flex;align-items:center;gap:10px;}
-  .tx-icon{
-    width:36px;height:36px;border-radius:11px;flex:0 0 auto;font-size:15px;
-    display:flex;align-items:center;justify-content:center;
-  }
-  .tx-icon.income{background:var(--emerald-soft);}
-  .tx-icon.expense{background:var(--rose-soft);}
-  .tx-body{min-width:0;}
-  .tx-cat{font-weight:700;font-size:14px;}
-  .tx-note{font-size:12.5px;color:var(--ink-soft);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .tx-right{text-align:right;flex:0 0 auto;}
-  .tx-amount{font-family:var(--font-head);font-size:16px;font-weight:700;}
-  .tx-amount.income{color:var(--emerald);}
-  .tx-amount.expense{color:var(--rose);}
-  .tx-del{background:none;border:none;color:var(--ink-soft);font-size:11.5px;margin-top:3px;padding:2px;}
-  .tx-del:hover{color:var(--rose);}
+    @keyframes tarobunFadeIn { from { opacity: 0 } to { opacity: 1 } }
+    @keyframes tarobunScaleIn { from { opacity: 0; transform: scale(0.9) } to { opacity: 1; transform: scale(1) } }
+    .animate-fadeIn { animation: tarobunFadeIn 0.2s ease-out; }
+    .animate-scaleIn { animation: tarobunScaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
 
-  /* Gold cards */
-  .gold-list{display:flex;flex-direction:column;gap:10px;}
-  .gold-row{
-    padding:16px;border:1px solid var(--line);border-radius:var(--radius-m);
-    background:var(--card);box-shadow:0 8px 18px -14px rgba(34,26,61,0.4);
-    border-left:5px solid var(--amber);
-  }
-  .gold-row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
-  .gold-name-wrap{display:flex;align-items:center;gap:10px;min-width:0;}
-  .gold-icon{
-    width:38px;height:38px;border-radius:12px;flex:0 0 auto;font-size:18px;
-    display:flex;align-items:center;justify-content:center;background:var(--amber-soft);
-  }
-  .gold-name{font-weight:700;font-size:15px;}
-  .gold-sub{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
-  .gold-row-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;}
-  .gold-metric{background:#FAF8FF;border-radius:12px;padding:9px 11px;}
-  .gold-metric .k{font-size:11px;color:var(--ink-soft);}
-  .gold-metric .v{font-family:var(--font-head);font-size:14.5px;font-weight:700;margin-top:2px;}
-  .gold-pl{display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);}
-  .gold-pl-label{font-size:12.5px;color:var(--ink-soft);}
-  .gold-pl-value{font-family:var(--font-head);font-weight:700;font-size:15px;display:flex;align-items:center;gap:5px;}
-  .gold-pl-value.profit{color:var(--emerald);}
-  .gold-pl-value.loss{color:var(--rose);}
-  .gold-row-actions{display:flex;justify-content:flex-end;margin-top:6px;}
+    /* ========================================== */
+    /* CETAK THERMAL (Fitur Printing: Premix & Catatan Stok) */
+    /* ========================================== */
+    /* Area cetak disembunyikan di layar (hanya dipakai saat dialog print browser
+       terbuka). Trik "sembunyikan semua, tampilkan area cetak saja" ini bekerja di
+       SEMUA jenis printer (biasa/laser/inkjet/A4) MAUPUN printer thermal (58mm/80mm)
+       karena tidak menetapkan lebar kertas fisik (mm) secara paksa — ukuran kertas
+       & margin diserahkan ke driver/printer masing-masing lewat "size: auto". Layout
+       memakai font monospace + elemen bertumpuk (bukan tabel lebar tetap) supaya tetap
+       rapi baik di kertas sempit 58mm maupun kertas lebar A4/Letter. */
+    #thermalPrintArea { display: none; }
+    @media print {
+      body * { visibility: hidden !important; }
+      #thermalPrintArea, #thermalPrintArea * { visibility: visible !important; }
+      #thermalPrintArea {
+        display: block !important;
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+      }
+      @page { size: auto; margin: 3mm; }
+    }
 
-  .gold-hero-grid{display:flex;gap:14px;margin-top:16px;position:relative;flex-wrap:wrap;}
-  .gold-hero-item{flex:1;min-width:120px;}
-  .gold-hero-label{font-size:11.5px;color:rgba(255,255,255,0.78);}
-  .gold-hero-value{font-family:var(--font-head);font-size:17px;font-weight:700;margin-top:2px;color:#fff;}
+    /* ========================================== */
+    /* SPLASH SCREEN (animasi masuk saat app dibuka) */
+    /* ========================================== */
+    @keyframes tarobunSplashLogoIn {
+      0%   { opacity: 0; transform: scale(0.72); }
+      60%  { opacity: 1; transform: scale(1.05); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    @keyframes tarobunSplashTextIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes tarobunSplashOut {
+      from { opacity: 1; }
+      to   { opacity: 0; }
+    }
+    .tarobun-splash {
+      animation: tarobunSplashOut 0.45s ease-in forwards;
+      animation-delay: 0.5s;
+    }
+    .tarobun-splash-logo {
+      animation: tarobunSplashLogoIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    .tarobun-splash-text {
+      animation: tarobunSplashTextIn 0.5s ease-out both;
+      animation-delay: 0.35s;
+    }
 
-  /* Period (monthly closing) rows */
-  .period-list{display:flex;flex-direction:column;gap:10px;}
-  .period-row{
-    padding:14px;border:1px solid var(--line);border-radius:var(--radius-m);
-    background:var(--card);box-shadow:0 8px 18px -14px rgba(34,26,61,0.4);
-    border-left:5px solid var(--blue);
-  }
-  .period-row-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;}
-  .period-label{font-weight:700;font-size:14px;}
-  .period-dates{font-size:11.5px;color:var(--ink-soft);margin-top:2px;}
-  .period-balance{font-family:var(--font-head);font-weight:700;font-size:15px;white-space:nowrap;}
-  .period-balance.profit{color:var(--emerald);}
-  .period-balance.loss{color:var(--rose);}
-  .period-row-bottom{display:flex;justify-content:space-between;margin-top:10px;font-size:12.5px;color:var(--ink-soft);gap:10px;flex-wrap:wrap;}
-  .period-row-actions{display:flex;justify-content:flex-end;margin-top:8px;}
+    /* ========================================== */
+    /* INDIKATOR STATUS ONLINE (dot berkedip lembut) */
+    /* ========================================== */
+    /* Sengaja dibuat sendiri (bukan pakai utility animate-ping bawaan Tailwind yang default-nya
+       1 detik & agak "kasar") supaya ritmenya lebih perlahan & lembut — durasi 2.2 detik,
+       ripple melebar sambil memudar, mengulang terus selama toko online. */
+    @keyframes tarobunPresencePing {
+      0%   { transform: scale(1);   opacity: 0.55; }
+      70%  { transform: scale(2.3); opacity: 0; }
+      100% { transform: scale(2.3); opacity: 0; }
+    }
+    .presence-dot-ping {
+      animation: tarobunPresencePing 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
 
-  /* FAB */
-  .fab{
-    position:fixed;right:20px;bottom:96px;z-index:30;
-    width:60px;height:60px;border-radius:50%;
-    color:#fff;border:none;
-    font-size:28px;line-height:1;
-    display:flex;align-items:center;justify-content:center;
-  }
-  .fab.mode-kas{background:linear-gradient(150deg,#8B6BFF,var(--violet) 55%,var(--blue));box-shadow:0 12px 26px -8px rgba(109,74,255,0.65);}
-  .fab.mode-emas{background:linear-gradient(150deg,#F5A324,var(--amber-dark) 60%,#EC4899);box-shadow:0 12px 26px -8px rgba(224,134,0,0.6);}
-  .fab:active{transform:scale(0.93);}
+    /* ========================================== */
+    /* TOUR GUIDE INTERAKTIF (spotlight highlight menu SOP onboarding) */
+    /* ========================================== */
+    /* Kotak spotlight: memakai trik box-shadow raksasa (0 0 0 9999px) supaya seluruh layar
+       jadi gelap KECUALI area menu yang sedang disorot — ringan (1 elemen, murni CSS,
+       tanpa canvas/svg/library) dan otomatis mengikuti ukuran/posisi elemen target. */
+    .tour-spotlight-box {
+      position: fixed;
+      z-index: 100;
+      border-radius: 14px;
+      box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.72), 0 0 0 3px #7C3AED, 0 0 18px 2px rgba(124,58,237,0.55);
+      pointer-events: none;
+      transition: top 0.28s cubic-bezier(0.4,0,0.2,1), left 0.28s cubic-bezier(0.4,0,0.2,1),
+                  width 0.28s cubic-bezier(0.4,0,0.2,1), height 0.28s cubic-bezier(0.4,0,0.2,1);
+    }
+    .tour-tooltip-card {
+      position: fixed;
+      z-index: 101;
+      max-width: 280px;
+      width: 84vw;
+      transition: top 0.28s cubic-bezier(0.4,0,0.2,1), left 0.28s cubic-bezier(0.4,0,0.2,1);
+    }
+    .tour-click-shield {
+      position: fixed;
+      inset: 0;
+      z-index: 99;
+      background: transparent;
+    }
+    @keyframes tourPulseDot {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.35; }
+    }
+    .tour-pulse-dot { animation: tourPulseDot 1.4s ease-in-out infinite; }
 
-  /* Bottom tab nav */
-  .tabbar{
-    position:fixed;left:0;right:0;bottom:0;z-index:30;
-    background:rgba(255,255,255,0.92);backdrop-filter:blur(10px);
-    border-top:1px solid var(--line);
-    padding:8px 18px calc(8px + env(safe-area-inset-bottom));
-    display:flex;justify-content:center;
-  }
-  .tabbar-inner{max-width:640px;width:100%;display:flex;gap:8px;}
-  .tab-btn{
-    flex:1;border:none;background:transparent;border-radius:14px;
-    display:flex;flex-direction:column;align-items:center;gap:2px;
-    padding:7px 0 5px;font-size:11.5px;font-weight:600;color:var(--ink-soft);
-  }
-  .tab-btn .tab-ic{font-size:20px;}
-  .tab-btn.active{color:var(--violet-dark);background:var(--violet-soft);}
-  .tab-btn.active.tab-emas{color:var(--amber-dark);background:var(--amber-soft);}
+    /* ========================================== */
+    /* TIPOGRAFI DASAR & LAYOUT LEGA (dashboard modern) */
+    /* ========================================== */
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      line-height: 1.55;
+      letter-spacing: -0.006em;
+      /* Anti-aliasing lebih halus di layar retina/HiDPI, teks kecil dashboard jadi lebih nyaman dibaca */
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    h1, h2, h3 { letter-spacing: -0.015em; }
 
-  /* Saran AI */
-  .hero.hero-ai{
-    background:linear-gradient(150deg,#0B8F6A 0%,#0FAE73 40%,#2E8BFF 100%);
-    box-shadow:0 16px 34px -14px rgba(15,174,115,0.55);
-  }
-  .tab-btn.active.tab-ai{color:#0A8C5A;background:var(--emerald-soft);}
-  .btn-ai{background:linear-gradient(135deg,var(--emerald),var(--blue));color:#fff;box-shadow:0 10px 22px -10px rgba(15,174,115,0.7);}
-  .btn-ai:disabled{opacity:.6;cursor:not-allowed;}
-  .ai-card{
-    margin-top:14px;padding:16px;border:1px solid var(--line);border-radius:var(--radius-m);
-    background:var(--card);box-shadow:0 8px 18px -14px rgba(34,26,61,0.4);
-  }
-  .ai-card h3{margin:0 0 8px;font-family:var(--font-head);font-size:15px;display:flex;align-items:center;gap:6px;}
-  .ai-card p,.ai-card li{font-size:13.5px;line-height:1.6;color:var(--ink);margin:0 0 6px;}
-  .ai-card ul{margin:4px 0 0;padding-left:18px;}
-  .ai-metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;}
-  .ai-metric{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-m);padding:12px;}
-  .ai-metric .k{font-size:11.5px;color:var(--ink-soft);}
-  .ai-metric .v{font-family:var(--font-head);font-size:16px;font-weight:700;margin-top:3px;}
-  .ai-metric .v.good{color:var(--emerald);} .ai-metric .v.bad{color:var(--rose);} .ai-metric .v.warn{color:var(--amber-dark);}
-  .ai-tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:var(--radius-pill);background:var(--violet-soft);color:var(--violet-dark);margin-left:auto;}
-  .ai-disclaimer{font-size:11.5px;color:var(--ink-soft);margin-top:14px;line-height:1.5;}
-  .ai-loading{font-size:13.5px;color:var(--ink-soft);}
+    /* Scrollbar tipis & senada tema (bukan scrollbar default OS yang tebal/kontras) */
+    * { scrollbar-width: thin; scrollbar-color: #C4B5FD transparent; }
+    *::-webkit-scrollbar { width: 8px; height: 8px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb { background-color: #C4B5FD; border-radius: 999px; }
+    *::-webkit-scrollbar-thumb:hover { background-color: #A78BFA; }
 
-  /* Modal */
-  .modal-overlay{
-    position:fixed;inset:0;background:rgba(34,26,61,0.45);backdrop-filter:blur(2px);
-    display:flex;align-items:flex-end;justify-content:center;z-index:50;
-    padding:0;animation:fadeUp .2s ease both;
-  }
-  .modal-sheet{
-    background:var(--bg-1);width:100%;max-width:520px;
-    border-radius:24px 24px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));
-    max-height:88vh;overflow-y:auto;
-    animation:sheetUp .28s cubic-bezier(.2,.8,.3,1) both;
-    box-shadow:0 -16px 34px -12px rgba(34,26,61,0.35);
-  }
-  @media (min-width:680px){
-    .modal-overlay{align-items:center;}
-    .modal-sheet{border-radius:var(--radius-m);max-height:80vh;animation:popIn .22s ease both;}
-  }
-  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
-  .modal-title{font-family:var(--font-head);font-size:19px;font-weight:700;}
-  .field{margin-bottom:14px;}
-  .field label{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:6px;font-weight:500;}
-  .field input, .field select, .field textarea{
-    width:100%;padding:12px 13px;border:1px solid var(--line);border-radius:var(--radius-s);
-    background:var(--card);font-size:15px;color:var(--ink);
-  }
-  .field textarea{resize:vertical;min-height:70px;font-family:var(--font-sans);}
-  .field-hint{font-size:11.5px;color:var(--ink-soft);margin-top:5px;}
-  .field-hint.warn{color:var(--rose);}
-  .field-row{display:flex;gap:10px;}
-  .field-row .field{flex:1;}
+    /* Warna seleksi teks disesuaikan brand, bukan biru default browser */
+    ::selection { background-color: #DDD6FE; color: #3B1370; }
 
-  .icon-grid{display:flex;flex-wrap:wrap;gap:8px;}
-  .icon-opt{
-    width:40px;height:40px;border-radius:11px;border:2px solid transparent;background:#F1EEFC;
-    display:flex;align-items:center;justify-content:center;font-size:17px;color:var(--ink);
-  }
-  .icon-opt.selected{border-color:var(--violet);background:var(--violet-soft);}
-  .color-grid{display:flex;flex-wrap:wrap;gap:9px;}
-  .color-opt{
-    width:28px;height:28px;border-radius:50%;border:2px solid transparent;
-    box-shadow:inset 0 0 0 2px rgba(255,255,255,0.6);
-  }
-  .color-opt.selected{border-color:var(--ink);transform:scale(1.14);}
+    /* Focus ring konsisten & jelas terlihat (aksesibilitas keyboard) tanpa outline kotak default
+       yang kaku — dipakai otomatis di semua elemen interaktif. */
+    button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: 2px solid #7C3AED;
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
 
-  .segmented{display:flex;border:1px solid var(--line);border-radius:var(--radius-pill);overflow:hidden;margin-bottom:16px;background:var(--card);}
-  .segmented button{flex:1;border:none;background:transparent;padding:11px 0;font-size:14.5px;font-weight:600;color:var(--ink-soft);}
-  .segmented button.active-income{background:var(--emerald-soft);color:#0A8C5A;}
-  .segmented button.active-expense{background:var(--rose-soft);color:var(--rose);}
+    /* Micro-interaction global: semua tombol & kartu bertransisi halus saat di-hover/ditekan,
+       tanpa perlu menambahkan className transition di ribuan tempat satu-satu. Efek "tekan"
+       (scale-down tipis) memberi rasa tombol benar-benar merespons sentuhan, terutama di HP. */
+    button, a { transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease, opacity 0.15s ease, filter 0.15s ease; }
+    button:active:not(:disabled) { transform: scale(0.97); }
+    button:disabled { cursor: not-allowed; }
 
-  .btn{
-    width:100%;padding:14px;border-radius:var(--radius-pill);border:none;
-    font-size:15px;font-weight:700;
-  }
-  .btn-primary{background:linear-gradient(135deg,var(--violet),var(--blue));color:#fff;box-shadow:0 10px 22px -10px rgba(109,74,255,0.7);}
-  .btn-primary:active{opacity:.9;transform:scale(.99);}
-  .btn-primary:disabled{opacity:.6;cursor:not-allowed;transform:none;}
-  .btn-amber{background:linear-gradient(135deg,var(--amber),var(--pink));color:#fff;box-shadow:0 10px 22px -10px rgba(224,134,0,0.65);}
-  .btn-amber:active{opacity:.9;transform:scale(.99);}
-  .btn-amber:disabled{opacity:.6;cursor:not-allowed;transform:none;}
-  .btn-ghost{background:transparent;border:1px solid var(--line);color:var(--ink);}
-  .btn-ghost:hover{background:var(--violet-soft);}
-  .btn-danger{background:var(--rose-soft);color:var(--rose);}
-  .btn-row{display:flex;gap:10px;}
-  .btn-row .btn{flex:1;}
+    /* Kartu (rounded-xl/rounded-2xl + border, pola yang dipakai konsisten di seluruh app ini)
+       otomatis "terangkat" lembut saat disentuh kursor — memberi kesan permukaan yang hidup. */
+    .rounded-xl.border, .rounded-2xl.border {
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .rounded-xl.border:hover, .rounded-2xl.border:hover {
+      box-shadow: 0 4px 14px -2px rgba(30, 27, 46, 0.08), 0 16px 32px -12px rgba(30, 27, 46, 0.16);
+    }
 
-  .settings-tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
-  .settings-tab{border:1px solid var(--line);background:var(--card);border-radius:var(--radius-pill);padding:7px 13px;font-size:13px;color:var(--ink-soft);}
-  .settings-tab.active{background:var(--ink);color:#fff;border-color:var(--ink);}
-  .settings-pane{display:none;}
-  .settings-pane.active{display:block;animation:fadeUp .25s ease both;}
+    /* Hormati preferensi pengguna yang mematikan animasi (aksesibilitas) — semua animasi custom
+       di atas otomatis dinonaktifkan, bukan cuma yang bawaan Tailwind. */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+      }
+    }
 
-  .divider-note{border-top:1px solid var(--line);margin:18px 0;padding-top:14px;font-size:12.5px;color:var(--ink-soft);}
+    /* ========================================== */
+    /* SKELETON LOADING (pengganti teks "Memuat...") */
+    /* ========================================== */
+    .skeleton {
+      position: relative;
+      overflow: hidden;
+      background-color: #E9E5FB; /* violet-50/100-ish, senada brand, bukan abu-abu generik */
+      border-radius: 8px;
+    }
+    .skeleton::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+      animation: tarobunShimmer 1.6s ease-in-out infinite;
+    }
+    @keyframes tarobunShimmer { 100% { transform: translateX(100%); } }
 
-  .price-card{
-    background:linear-gradient(150deg,#FFF6E5,#FFEFEF);border:1px solid #F5DFAF;border-radius:var(--radius-m);
-    padding:14px;margin-bottom:14px;
-  }
-  .price-card .k{font-size:12px;color:#8A6412;}
-  .price-card .v{font-family:var(--font-head);font-size:20px;font-weight:700;color:var(--amber-dark);margin-top:2px;}
-  .price-card .upd{font-size:11.5px;color:#8A6412;margin-top:4px;}
-
-  .toast{
-    position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(8px);
-    background:var(--ink);color:#fff;padding:12px 20px;border-radius:var(--radius-pill);
-    font-size:13.5px;font-weight:500;z-index:80;opacity:0;
-    transition:opacity .25s ease, transform .25s ease;pointer-events:none;
-    box-shadow:0 12px 26px -10px rgba(34,26,61,0.6);
-    display:flex;align-items:center;gap:8px;max-width:88vw;
-  }
-  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-  .toast.err{background:var(--rose);}
-
-  .onboard-wrap{
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
-  }
-  .onboard-card{
-    max-width:460px;width:100%;background:var(--card);border:1px solid var(--line);
-    border-radius:var(--radius-l);padding:28px 24px;box-shadow:0 20px 40px -20px rgba(34,26,61,0.4);
-  }
-  .onboard-card h1{font-family:var(--font-head);font-size:25px;margin:0 0 8px;
-    background:linear-gradient(135deg,var(--violet),var(--blue));-webkit-background-clip:text;background-clip:text;color:transparent;}
-  .onboard-card p{font-size:14px;color:var(--ink-soft);line-height:1.55;margin:0 0 18px;}
-  .status-line{font-size:12.5px;margin-top:10px;}
-  .status-line.ok{color:var(--emerald);}
-  .status-line.err{color:var(--rose);}
-  .loading-dot{font-size:14px;color:var(--ink-soft);text-align:center;padding:60px 0;}
-</style>
+    /* Panel sidebar (menu hamburger Admin & Toko) masuk dari kiri dengan halus, bukan muncul tiba-tiba */
+    @keyframes tarobunSlideInLeft {
+      from { transform: translateX(-100%); }
+      to   { transform: translateX(0); }
+    }
+    .animate-slideInLeft { animation: tarobunSlideInLeft 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
+  </style>
+  <!-- Gaya utama (Tailwind statis). Diletakkan PALING AKHIR di <head> supaya urutannya sama seperti dulu
+       (Tailwind CDN menyisipkan <style>-nya setelah style inline halaman). -->
+  <link rel="stylesheet" href="tailwind.css?v=20261020">
 </head>
-<body>
+<body class="bg-slate-50 text-slate-800 font-sans">
 
-<div id="onboard" class="onboard-wrap hidden">
-  <div class="onboard-card">
-    <h1>Buku Kas &amp; Tabungan Emas</h1>
-    <p>Aplikasi ini memakai satu ruang data bersama: siapa pun yang membuka link ini melihat &amp; mengubah data yang sama, dan notifikasi Telegram sudah terhubung otomatis untuk semua orang. Konfigurasinya perlu diisi sekali oleh pemilik aplikasi langsung di dalam kode.</p>
-    <p>Buka file <code>index.html</code>, cari bagian <strong>KONFIGURASI BERSAMA</strong> di awal <code>&lt;script type="module"&gt;</code>, lalu isi <code>FIREBASE_CONFIG</code> (dari Firebase Console → Project settings → Your apps) dan <code>TELEGRAM_CONFIG</code> (token bot &amp; chat ID dari @BotFather). Setelah disimpan dan halaman dimuat ulang, semua pengunjung otomatis memakai data &amp; Telegram yang sama.</p>
-    <button class="btn btn-primary" id="btnRetryConnect">Coba muat ulang</button>
-    <div id="onboardStatus" class="status-line"></div>
-  </div>
-</div>
 
-<div id="appRoot" class="hidden">
-  <div class="topbar">
-    <div class="topbar-inner">
-      <div class="brand">
-        <div class="brand-mark">💰</div>
-        <div class="brand-text">
-          <span class="brand-name">Buku Kas</span>
-          <span class="brand-tag" id="topbarTag">Catatan keuangan bersama</span>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button class="icon-btn" id="btnNotif" aria-label="Aktifkan notifikasi">🔔</button>
-        <button class="icon-btn" id="btnSettings" aria-label="Pengaturan">⚙</button>
+  <div id="root">
+    <!-- PERBAIKAN (2026-10): layar pembuka statis. Sebelumnya #root kosong sampai Babel selesai
+         mengompilasi seluruh aplikasi (beberapa detik di HP) -> layar putih kosong; lalu splash
+         React tampil BERANTAKAN (logo raksasa, teks tanpa gaya) selama Tailwind belum termuat.
+         Blok ini memakai inline style murni sehingga tampil rapi seketika, dan otomatis diganti
+         React begitu aplikasi siap. -->
+    <div id="boot-splash" style="position:fixed;top:0;right:0;bottom:0;left:0;z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#581c87,#312e81,#0f172a);font-family:Inter,system-ui,-apple-system,sans-serif;">
+      <img src="icon-512.png" alt="Tarobun" width="112" height="112" style="width:112px;height:112px;max-width:60vw;border-radius:24px;object-fit:contain;background:rgba(255,255,255,.05);box-shadow:0 25px 50px -12px rgba(0,0,0,.5);">
+      <div style="margin-top:20px;text-align:center;padding:0 16px;">
+        <div style="color:#fff;font-weight:800;font-size:18px;letter-spacing:.02em;">TAROBUN SO Mandiri Hub</div>
+        <div style="color:#e9d5ff;font-size:12px;margin-top:4px;">Memuat aplikasi...</div>
       </div>
     </div>
   </div>
 
-  <div class="app-shell">
-
-    <!-- ===== VIEW: KAS ===== -->
-    <div id="viewKas" class="view-pane active">
-      <div class="hero hero-kas fade-up">
-        <div class="hero-label">💜 Total dana tersisa</div>
-        <div class="hero-number" id="heroTotal">Rp0</div>
-        <div class="hero-meta">
-          <div class="hero-meta-item">
-            <div class="hero-meta-label">Dana awal</div>
-            <div class="hero-meta-value"><button id="btnEditDanaAwal">—</button></div>
-          </div>
-          <div class="hero-meta-item">
-            <div class="hero-meta-label">Belum dialokasikan</div>
-            <div class="hero-meta-value" id="heroUnalloc">Rp0</div>
-          </div>
-        </div>
-        <div class="hero-sub" id="heroPeriodActive">📅 Periode aktif: —</div>
-      </div>
-
-      <div class="summary-strip">
-        <div class="stat-card income"><div class="ic">📈</div><div class="k">Total pemasukan</div><div class="v" id="statIncome">Rp0</div></div>
-        <div class="stat-card expense"><div class="ic">📉</div><div class="k">Total pengeluaran</div><div class="v" id="statExpense">Rp0</div></div>
-        <div class="stat-card unalloc"><div class="ic">🗂️</div><div class="k">Jumlah kategori</div><div class="v" id="statCatCount">0</div></div>
-      </div>
-
-      <div class="section">
-        <div class="section-head">
-          <div class="section-title">Kategori</div>
-          <button class="link-btn" id="btnAddCategory">+ Kategori</button>
-        </div>
-        <div id="categoryArea"></div>
-      </div>
-
-      <div class="section">
-        <div class="section-head">
-          <div class="section-title">Riwayat transaksi</div>
-        </div>
-        <div class="tx-filter">
-          <button class="chip active" data-filter="all">Semua</button>
-          <button class="chip" data-filter="income">Pemasukan</button>
-          <button class="chip" data-filter="expense">Pengeluaran</button>
-        </div>
-        <div id="txArea"></div>
-      </div>
-
-      <div class="section">
-        <div class="section-head">
-          <div class="section-title">📅 Riwayat Pembukuan Bulanan</div>
-        </div>
-        <div class="field-hint" style="margin:-4px 0 12px;">Pembukuan baru dibuat otomatis setiap tanggal 25 (periode berjalan 25 – 24 bulan berikutnya). Jika tanggal 24/25 jatuh di tanggal merah (Sabtu, Minggu, libur nasional), awal periode baru digeser mundur ke hari kerja sebelumnya. Saat periode ditutup: transaksi periode itu diarsipkan ke sini, sisa dananya ditambahkan ke dana utama, dan alokasi tiap kategori direset ke 0 untuk periode baru.</div>
-        <div class="field-hint" id="periodRuleHint" style="margin:-4px 0 12px;font-weight:600;color:var(--violet-dark);"></div>
-        <div id="periodArea"></div>
-      </div>
-    </div>
-
-    <!-- ===== VIEW: EMAS ===== -->
-    <div id="viewEmas" class="view-pane">
-      <div class="hero hero-emas fade-up">
-        <div class="hero-label">🪙 Total tabungan emas</div>
-        <div class="hero-number" id="goldTotalGrams">0 gr</div>
-        <div class="hero-sub" id="goldRefPriceLine">Harga acuan belum diatur</div>
-        <div class="gold-hero-grid">
-          <div class="gold-hero-item">
-            <div class="gold-hero-label">Estimasi nilai saat ini</div>
-            <div class="gold-hero-value" id="goldTotalValue">Rp0</div>
-          </div>
-          <div class="gold-hero-item">
-            <div class="gold-hero-label">Total modal dibeli</div>
-            <div class="gold-hero-value" id="goldTotalBuy">Rp0</div>
-          </div>
-        </div>
-        <div class="hero-badge" id="goldTotalPlBadge">Untung/rugi: Rp0</div>
-      </div>
-
-      <div class="section" style="margin-top:22px;">
-        <div class="section-head">
-          <div class="section-title">🪙 Koleksi emas</div>
-          <button class="link-btn amber" id="btnAddGold">+ Emas</button>
-        </div>
-        <div id="goldArea"></div>
-      </div>
-    </div>
-
-
-    <!-- ===== VIEW: SARAN AI ===== -->
-    <div id="viewAI" class="view-pane">
-      <div class="hero hero-ai fade-up">
-        <div class="hero-label">🤖 Ringkasan saran finansial</div>
-        <div class="hero-number" style="font-size:24px;">Analisis periode aktif</div>
-        <div class="hero-sub" id="aiPeriodLine">—</div>
-      </div>
-      <div style="margin-top:16px;">
-        <button class="btn btn-ai" id="btnAiRun">✨ Buat ringkasan &amp; saran</button>
-        <div class="field-hint" id="aiProviderHint" style="margin-top:8px;"></div>
-      </div>
-      <div id="aiOutput"></div>
-      <div class="ai-disclaimer">Saran bersifat umum berdasarkan data catatanmu, bukan nasihat keuangan/investasi profesional.</div>
-    </div>
-
-  </div>
-
-  <button class="fab mode-kas" id="btnFab" aria-label="Tambah">+</button>
-
-  <div class="tabbar">
-    <div class="tabbar-inner">
-      <button class="tab-btn active" id="btnTabKas" data-tab="kas"><span class="tab-ic">💰</span>Kas</button>
-      <button class="tab-btn" id="btnTabEmas" data-tab="emas"><span class="tab-ic">🪙</span>Tabungan Emas</button>
-      <button class="tab-btn" id="btnTabAI" data-tab="ai"><span class="tab-ic">🤖</span>Saran AI</button>
-    </div>
-  </div>
-</div>
-
-<div id="globalLoading" class="loading-dot hidden">Memuat…</div>
-
-<!-- Modal: Transaction -->
-<div class="modal-overlay hidden" id="modalTx">
-  <div class="modal-sheet">
-    <div class="modal-head">
-      <div class="modal-title">Tambah transaksi</div>
-      <button class="icon-btn" data-close="modalTx">✕</button>
-    </div>
-    <div class="segmented" id="txTypeSeg">
-      <button type="button" data-type="income">Pemasukan</button>
-      <button type="button" data-type="expense">Pengeluaran</button>
-    </div>
-    <div class="field">
-      <label>Kategori</label>
-      <select id="txCategory"></select>
-    </div>
-    <div class="field">
-      <label>Jumlah (Rp)</label>
-      <input type="text" inputmode="numeric" id="txAmount" data-money placeholder="0">
-    </div>
-    <div class="field">
-      <label>Catatan (opsional)</label>
-      <input type="text" id="txNote" placeholder="mis. Beli bensin, Gaji bulanan">
-    </div>
-    <div class="field">
-      <label>Tanggal</label>
-      <input type="date" id="txDate">
-    </div>
-    <button class="btn btn-primary" id="btnSaveTx">Simpan transaksi</button>
-  </div>
-</div>
-
-<!-- Modal: Category -->
-<div class="modal-overlay hidden" id="modalCategory">
-  <div class="modal-sheet">
-    <div class="modal-head">
-      <div class="modal-title">Kategori baru</div>
-      <button class="icon-btn" data-close="modalCategory">✕</button>
-    </div>
-    <div class="field">
-      <label>Nama kategori</label>
-      <input type="text" id="catName" placeholder="mis. Makan, Transport, Tabungan">
-    </div>
-    <div class="field">
-      <label>Ikon</label>
-      <div class="icon-grid" id="catIconGrid"></div>
-    </div>
-    <div class="field">
-      <label>Warna</label>
-      <div class="color-grid" id="catColorGrid"></div>
-    </div>
-    <div class="field">
-      <label>Alokasi dana (Rp)</label>
-      <input type="text" inputmode="numeric" id="catAlloc" data-money placeholder="0">
-      <div class="field-hint" id="catAllocHint"></div>
-    </div>
-    <button class="btn btn-primary" id="btnSaveCategory">Simpan kategori</button>
-  </div>
-</div>
-
-<!-- Modal: Gold -->
-<div class="modal-overlay hidden" id="modalGold">
-  <div class="modal-sheet">
-    <div class="modal-head">
-      <div class="modal-title">🪙 Tambah emas</div>
-      <button class="icon-btn" data-close="modalGold">✕</button>
-    </div>
-    <div class="field">
-      <label>Jenis / nama emas</label>
-      <input type="text" id="goldName" placeholder="mis. Antam 5gr, Perhiasan kalung, UBS">
-    </div>
-    <div class="field-row">
-      <div class="field">
-        <label>Berat (gram)</label>
-        <input type="number" id="goldGrams" min="0" step="0.001" placeholder="mis. 5">
-      </div>
-      <div class="field">
-        <label>Kadar emas (%)</label>
-        <input type="number" id="goldPurity" min="0" max="100" step="0.01" placeholder="mis. 99.99">
-      </div>
-    </div>
-    <div class="field-hint" style="margin-top:-8px;margin-bottom:14px;">Contoh kadar umum: 24K ≈ 99,99% · 22K ≈ 91,6% · 18K ≈ 75%</div>
-    <div class="field">
-      <label>Harga saat dibeli (Rp, total)</label>
-      <input type="text" inputmode="numeric" id="goldBuyPrice" data-money placeholder="0">
-    </div>
-    <div class="field">
-      <label>Tanggal beli</label>
-      <input type="date" id="goldBuyDate">
-    </div>
-    <button class="btn btn-amber" id="btnSaveGold">Simpan emas</button>
-  </div>
-</div>
-
-<!-- Modal: Settings -->
-<div class="modal-overlay hidden" id="modalSettings">
-  <div class="modal-sheet">
-    <div class="modal-head">
-      <div class="modal-title">Pengaturan</div>
-      <button class="icon-btn" data-close="modalSettings">✕</button>
-    </div>
-    <div class="settings-tabs">
-      <button class="settings-tab active" data-pane="paneDana">Dana awal</button>
-      <button class="settings-tab" data-pane="paneGoldPrice">Harga Emas</button>
-      <button class="settings-tab" data-pane="paneAI">AI</button>
-      <button class="settings-tab" data-pane="paneInfo">Info</button>
-    </div>
-
-    <div class="settings-pane active" id="paneDana">
-      <div class="field">
-        <label>Dana awal saat ini (Rp)</label>
-        <input type="text" inputmode="numeric" id="danaAwalInput" data-money>
-        <div class="field-hint">Mengubah dana awal akan langsung memengaruhi total dana tersisa.</div>
-      </div>
-      <button class="btn btn-primary" id="btnSaveDanaAwal">Simpan dana awal</button>
-    </div>
-
-    <div class="settings-pane" id="paneGoldPrice">
-      <div class="price-card">
-        <div class="k">Harga emas Antam acuan saat ini (per gram, 24K)</div>
-        <div class="v" id="paneGoldPriceCurrent">Belum diatur</div>
-        <div class="upd" id="paneGoldPriceUpdated">—</div>
-      </div>
-      <div class="field">
-        <label>Harga emas Antam per gram (Rp)</label>
-        <input type="text" inputmode="numeric" id="goldPriceInput" data-money placeholder="0">
-        <div class="field-hint">Harga ini dipakai untuk menghitung estimasi jual seluruh emasmu: harga acuan × kadar (%) × berat (gram).</div>
-      </div>
-      <div class="btn-row" style="margin-bottom:10px;">
-        <button class="btn btn-ghost" id="btnFetchGoldPrice">🔄 Ambil otomatis</button>
-        <button class="btn btn-amber" id="btnSaveGoldPrice">Simpan harga</button>
-      </div>
-      <div class="field-hint" id="goldPriceFetchHint">Pengambilan otomatis memakai data publik logam-mulia-api (sumber: logammulia.com). Jika gagal (mis. karena koneksi), isi harga secara manual — cek di app Logam Mulia Antam atau logammulia.com.</div>
-    </div>
-
-    <div class="settings-pane" id="paneAI">
-      <div class="field">
-        <label>Penyedia AI</label>
-        <select id="aiProviderSel">
-          <option value="">Analisis lokal saja (tanpa AI online)</option>
-          <option value="gemini">Google Gemini</option>
-          <option value="claude">Anthropic Claude</option>
-          <option value="groq">Groq (gratis)</option>
-          <option value="openrouter">OpenRouter (model gratis)</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>API key</label>
-        <input type="password" id="aiKeyInput" autocomplete="off" placeholder="Tempel API key di sini">
-        <div class="field-hint">Disimpan hanya di perangkat ini (tidak masuk kode &amp; tidak dibagikan ke pengguna lain). Saat kamu menekan "Buat ringkasan", ringkasan angka periode aktif (tanpa catatan transaksi) dikirim ke penyedia yang dipilih.</div>
-      </div>
-      <div class="field">
-        <label>Nama model (opsional)</label>
-        <input type="text" id="aiModelInput" placeholder="kosongkan untuk bawaan">
-        <div class="field-hint">Groq: console.groq.com → API Keys. OpenRouter: openrouter.ai → Keys. Jika OpenRouter gagal karena model gratis berganti, isi nama model yang berakhiran :free dari daftar mereka.</div>
-      </div>
-      <button class="btn btn-primary" id="btnSaveAI">Simpan pengaturan AI</button>
-    </div>
-
-    <div class="settings-pane" id="paneInfo">
-      <div class="field-hint" style="margin-bottom:12px;">🔗 Data bersama — proyek Firebase: <strong id="fbProjectLabel">-</strong>. Semua orang yang membuka link aplikasi ini melihat &amp; mengubah data keuangan dan tabungan emas yang sama.</div>
-      <div class="field-hint" style="margin-bottom:12px;">📨 Notifikasi Telegram: <strong id="tgStatusLabel">-</strong>. Setiap transaksi baru otomatis terkirim ke chat Telegram yang sama untuk semua orang, tanpa perlu diatur ulang.</div>
-      <div class="divider-note">Konfigurasi Firebase &amp; Telegram diatur sekali oleh pemilik aplikasi langsung di dalam kode (bagian KONFIGURASI BERSAMA), bukan per-perangkat.</div>
-    </div>
-  </div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-import {
-  getFirestore, doc, setDoc, getDoc, addDoc, deleteDoc, updateDoc,
-  collection, onSnapshot, query, orderBy, serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-
-// ---------- State ----------
-// =====================================================================
-// KONFIGURASI BERSAMA — diisi SEKALI oleh pemilik aplikasi.
-// Setelah diisi, SEMUA orang yang membuka link ini otomatis memakai
-// Firebase & Telegram yang sama (satu ruang data bersama, saling terhubung).
-// Jangan menaruh nilai ini di localStorage / per-perangkat lagi.
-// =====================================================================
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyA1_pHUVSIyjS7_x13_zCWDHkqx5ONMeRE",
-  authDomain: "catatanpribadi-e0aca.firebaseapp.com",
-  projectId: "catatanpribadi-e0aca",
-  storageBucket: "catatanpribadi-e0aca.firebasestorage.app",
-  messagingSenderId: "377825654328",
-  appId: "1:377825654328:web:2ef78f046b800e8fced8cd"
-};
-const TELEGRAM_CONFIG = {
-  token: "8769536722:AAGb4LcABqUbfOxf4-JlBmpTZIQq9IXhKiI",   // dari @BotFather
-  chatId: "-1004297338375"     // chat/group tujuan notifikasi
-};
-// ID ruang data bersama. Biarkan "main" kecuali sengaja ingin memisah data
-// (mis. jadi beberapa "buku kas" berbeda) dengan mengganti ID ini.
-const SHARED_SPACE_ID = "main";
-// =====================================================================
-
-function isPlaceholder(v){ return !v || String(v).startsWith('GANTI_'); }
-function isFirebaseConfigValid(){
-  return !isPlaceholder(FIREBASE_CONFIG.apiKey) && !isPlaceholder(FIREBASE_CONFIG.projectId);
-}
-function isTelegramConfigValid(){
-  return !isPlaceholder(TELEGRAM_CONFIG.token) && !isPlaceholder(TELEGRAM_CONFIG.chatId);
-}
-
-let app, db, auth, uid = null;
-let meta = { danaAwal: 0, goldRefPrice: 0, goldRefPriceUpdatedAt: null, goldRefPriceSource: null, currentPeriodStart: null };
-let categories = [];
-let transactions = [];
-let goldItems = [];
-let periods = [];
-let txFilter = 'all';
-let selectedTxType = 'expense';
-let activeTab = 'kas';
-let txSnapshotReady = false;
-let goldSnapshotReady = false;
-
-// ---------- Monthly closing (pembukuan) init flags ----------
-// Pembukuan otomatis hanya boleh dijalankan setelah data meta, kategori,
-// dan transaksi awal sudah termuat dari Firestore, dan hanya sekali per sesi.
-let closingInitFlags = { meta:false, categories:false, transactions:false };
-let closingChecked = false;
-let closingRunning = false;
-
-const CATEGORY_ICONS = ['🍽️','🚗','🏠','🛒','💊','🎓','🎁','🧾','📱','💡','🐾','✈️','🎉','🧴','🏦','💼','🐷','☕'];
-const CATEGORY_COLORS = [
-  { solid:'#6D4AFF', soft:'#ECE6FF' }, // violet
-  { solid:'#F0355A', soft:'#FFE2E9' }, // rose
-  { solid:'#F5A324', soft:'#FFF0D6' }, // amber
-  { solid:'#2E8BFF', soft:'#DFF0FF' }, // blue
-  { solid:'#0FAE73', soft:'#D9F7EA' }, // emerald
-  { solid:'#EC4899', soft:'#FCE4F1' }, // pink
-  { solid:'#14B8A6', soft:'#D6F6F1' }, // teal
-  { solid:'#8B5CF6', soft:'#EDE6FE' }  // purple
-];
-let selectedCatIcon = CATEGORY_ICONS[0];
-let selectedCatColorIdx = 0;
-
-function catColor(cat, fallbackIdx){
-  const idx = (typeof cat?.colorIdx === 'number') ? cat.colorIdx : (fallbackIdx % CATEGORY_COLORS.length);
-  return CATEGORY_COLORS[idx] || CATEGORY_COLORS[0];
-}
-function catIcon(cat){ return cat?.icon || '🗂️'; }
-
-// ---------- Helpers ----------
-function formatRupiah(n){
-  const num = Math.round(Number(n)||0);
-  const sign = num < 0 ? '-' : '';
-  return sign + 'Rp' + Math.abs(num).toLocaleString('id-ID');
-}
-function formatGram(n){
-  const num = Number(n)||0;
-  return num.toLocaleString('id-ID', { maximumFractionDigits:3 }) + ' gr';
-}
-function formatDateHuman(iso){
-  if(!iso) return '';
-  const d = new Date(iso + 'T00:00:00');
-  return d.toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' });
-}
-function formatDateTimeHuman(iso){
-  if(!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric' }) + ', ' +
-    d.toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit' });
-}
-function todayISO(){
-  const d = new Date();
-  const off = d.getTimezoneOffset();
-  const local = new Date(d.getTime() - off*60000);
-  return local.toISOString().slice(0,10);
-}
-function showToast(msg, isError){
-  const t = document.getElementById('toast');
-  t.textContent = (isError ? '⚠️ ' : '') + msg;
-  t.classList.toggle('err', !!isError);
-  t.classList.add('show');
-  clearTimeout(showToast._tm);
-  showToast._tm = setTimeout(()=>t.classList.remove('show'), isError ? 3600 : 2600);
-}
-function errorMessage(e){
-  const code = e?.code || '';
-  if(code.includes('permission-denied')) return 'Ditolak oleh aturan keamanan Firestore. Periksa Firestore Rules proyekmu.';
-  if(code.includes('unavailable')) return 'Tidak ada koneksi ke Firebase. Periksa internet kamu.';
-  return e?.message || 'Terjadi kesalahan tak terduga.';
-}
-function openModal(id){ document.getElementById(id).classList.remove('hidden'); }
-function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
-
-// ---------- Notifikasi perangkat (muncul saat ada transaksi baru) ----------
-function updateNotifBtn(){
-  const btn = document.getElementById('btnNotif');
-  if(!btn) return;
-  if(!('Notification' in window)){ btn.textContent = '🔕'; return; }
-  btn.textContent = Notification.permission === 'granted' ? '🔔' : '🔕';
-}
-function showLocalNotification(title, body){
-  if(!('Notification' in window) || Notification.permission !== 'granted') return;
-  const opts = { body, icon: 'icon-192.png', badge: 'icon-192.png', vibrate: [80,40,80] };
-  if(navigator.serviceWorker && navigator.serviceWorker.ready){
-    navigator.serviceWorker.ready.then(reg=>{
-      if(reg && reg.showNotification) reg.showNotification(title, opts);
-      else new Notification(title, opts);
-    }).catch(()=>{ try{ new Notification(title, opts); }catch(e){} });
-  }else{
-    try{ new Notification(title, opts); }catch(e){}
-  }
-}
-function notifyNewTransaction(tx){
-  const emoji = tx.type === 'income' ? '🟢' : '🔴';
-  const label = tx.type === 'income' ? 'Pemasukan baru' : 'Pengeluaran baru';
-  const body = `${tx.categoryName || 'Tanpa kategori'} • ${formatRupiah(tx.amount)}${tx.note ? ' • ' + tx.note : ''}`;
-  showLocalNotification(`${emoji} ${label}`, body);
-}
-function notifyNewGold(item){
-  const body = `${item.name} • ${formatGram(item.grams)} • ${formatRupiah(item.buyPrice)}`;
-  showLocalNotification('🪙 Emas baru ditambahkan', body);
-}
-async function requestNotifPermission(){
-  if(!('Notification' in window)){
-    showToast('Browser ini tidak mendukung notifikasi', true);
-    return;
-  }
-  if(Notification.permission === 'granted'){
-    showToast('Notifikasi sudah aktif 🔔');
-    return;
-  }
-  if(Notification.permission === 'denied'){
-    showToast('Notifikasi diblokir. Aktifkan lewat pengaturan browser/HP kamu.', true);
-    return;
-  }
-  const perm = await Notification.requestPermission();
-  updateNotifBtn();
-  if(perm === 'granted'){
-    showToast('Notifikasi diaktifkan 🔔');
-    showLocalNotification('🔔 Notifikasi aktif', 'Kamu akan diberi tahu setiap ada transaksi baru.');
-  }else{
-    showToast('Notifikasi tidak diaktifkan', true);
-  }
-}
-document.getElementById('btnNotif').addEventListener('click', requestNotifPermission);
-
-// ---------- Number input formatting (pemisah ribuan) ----------
-function digitsOnly(s){ return String(s||'').replace(/\D/g,''); }
-function moneyValue(el){ return Number(digitsOnly(el.value)) || 0; }
-function setMoneyValue(el, num){
-  const n = Number(num)||0;
-  el.value = n ? n.toLocaleString('id-ID') : '';
-}
-function attachMoneyFormatting(){
-  document.querySelectorAll('[data-money]').forEach(el=>{
-    el.addEventListener('input', ()=>{
-      const raw = digitsOnly(el.value);
-      el.value = raw ? Number(raw).toLocaleString('id-ID') : '';
-    });
-  });
-}
-
-// ---------- Firebase bootstrap ----------
-function showOnboardError(msg){
-  document.getElementById('appRoot').classList.add('hidden');
-  document.getElementById('globalLoading').classList.add('hidden');
-  document.getElementById('onboard').classList.remove('hidden');
-  document.getElementById('onboardStatus').textContent = msg;
-  document.getElementById('onboardStatus').className = 'status-line err';
-}
-
-async function startApp(){
-  if(!isFirebaseConfigValid()){
-    showOnboardError('FIREBASE_CONFIG belum diisi. Edit bagian KONFIGURASI BERSAMA di dalam <script> lalu muat ulang halaman.');
-    return;
-  }
-  document.getElementById('onboard').classList.add('hidden');
-  document.getElementById('appRoot').classList.remove('hidden');
-  document.getElementById('globalLoading').classList.remove('hidden');
-  try{
-    app = initializeApp(FIREBASE_CONFIG);
-    db = getFirestore(app);
-    auth = getAuth(app);
-    onAuthStateChanged(auth, (user)=>{
-      if(user){
-        uid = user.uid;
-        document.getElementById('fbProjectLabel').textContent = FIREBASE_CONFIG.projectId || '-';
-        document.getElementById('tgStatusLabel').textContent = isTelegramConfigValid() ? 'Aktif' : 'Belum diisi';
-        attachListeners();
-        document.getElementById('globalLoading').classList.add('hidden');
-      }
-    });
-    await signInAnonymously(auth);
-  }catch(e){
-    console.error(e);
-    showOnboardError('Gagal terhubung ke Firebase: ' + (e.message||e) + '. Periksa nilai FIREBASE_CONFIG dan Firestore Rules proyekmu.');
-  }
-}
-
-// Semua orang yang membuka link ini membaca/menulis ke ruang data BERSAMA
-// yang sama (SHARED_SPACE_ID), bukan ruang privat per-perangkat/per-uid.
-function userDocRef(){ return doc(db, 'bukukas_shared', SHARED_SPACE_ID); }
-function categoriesColRef(){ return collection(db, 'bukukas_shared', SHARED_SPACE_ID, 'categories'); }
-function txColRef(){ return collection(db, 'bukukas_shared', SHARED_SPACE_ID, 'transactions'); }
-function goldColRef(){ return collection(db, 'bukukas_shared', SHARED_SPACE_ID, 'gold'); }
-function periodsColRef(){ return collection(db, 'bukukas_shared', SHARED_SPACE_ID, 'periods'); }
-
-function attachListeners(){
-  onSnapshot(userDocRef(), (snap)=>{
-    meta = snap.exists() ? { danaAwal:0, goldRefPrice:0, goldRefPriceUpdatedAt:null, goldRefPriceSource:null, currentPeriodStart:null, ...snap.data() } : { danaAwal: 0, goldRefPrice: 0, goldRefPriceUpdatedAt: null, goldRefPriceSource: null, currentPeriodStart: null };
-    closingInitFlags.meta = true;
-    render();
-    maybeRunClosingCheck();
-  });
-  onSnapshot(categoriesColRef(), (snap)=>{
-    categories = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-    closingInitFlags.categories = true;
-    render();
-    maybeRunClosingCheck();
-  });
-  onSnapshot(query(txColRef(), orderBy('createdAt','desc')), (snap)=>{
-    if(txSnapshotReady){
-      snap.docChanges().forEach(change=>{
-        if(change.type === 'added') notifyNewTransaction({ id: change.doc.id, ...change.doc.data() });
-      });
-    }
-    transactions = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-    closingInitFlags.transactions = true;
-    txSnapshotReady = true;
-    render();
-    maybeRunClosingCheck();
-  });
-  onSnapshot(query(goldColRef(), orderBy('createdAt','desc')), (snap)=>{
-    if(goldSnapshotReady){
-      snap.docChanges().forEach(change=>{
-        if(change.type === 'added') notifyNewGold({ id: change.doc.id, ...change.doc.data() });
-      });
-    }
-    goldItems = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-    goldSnapshotReady = true;
-    render();
-  });
-  onSnapshot(query(periodsColRef(), orderBy('startDate','desc')), (snap)=>{
-    periods = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-    render();
-  });
-}
-
-// ---------- Computation ----------
-function totalIncome(){ return transactions.filter(t=>t.type==='income').reduce((s,t)=>s+Number(t.amount),0); }
-function totalExpense(){ return transactions.filter(t=>t.type==='expense').reduce((s,t)=>s+Number(t.amount),0); }
-function totalAllocated(){ return categories.reduce((s,c)=>s+Number(c.allocated||0),0); }
-function categoryStats(catId){
-  const rel = transactions.filter(t=>t.categoryId===catId);
-  const income = rel.filter(t=>t.type==='income').reduce((s,t)=>s+Number(t.amount),0);
-  const expense = rel.filter(t=>t.type==='expense').reduce((s,t)=>s+Number(t.amount),0);
-  const cat = categories.find(c=>c.id===catId);
-  const allocated = Number(cat?.allocated||0);
-  return { income, expense, allocated, remaining: allocated + income - expense };
-}
-function goldStats(item){
-  const refPrice = Number(meta.goldRefPrice||0);
-  const grams = Number(item.grams||0);
-  const purity = Number(item.purity||0);
-  const buyPrice = Number(item.buyPrice||0);
-  const estValue = refPrice * (purity/100) * grams;
-  const profit = estValue - buyPrice;
-  const profitPct = buyPrice > 0 ? (profit/buyPrice*100) : 0;
-  return { estValue, profit, profitPct };
-}
-function goldTotals(){
-  const refPrice = Number(meta.goldRefPrice||0);
-  let totalGrams = 0, totalBuy = 0, totalEst = 0;
-  goldItems.forEach(item=>{
-    const s = goldStats(item);
-    totalGrams += Number(item.grams||0);
-    totalBuy += Number(item.buyPrice||0);
-    totalEst += s.estValue;
-  });
-  return { refPrice, totalGrams, totalBuy, totalEst, totalProfit: totalEst - totalBuy };
-}
-
-// ---------- Monthly period (pembukuan) helpers ----------
-// Patokan: periode baru dimulai tanggal 25 dan periode lama berakhir tanggal 24.
-// Kalau awal periode (tgl 25) ATAU hari terakhir periode lama (tgl 24) jatuh di tanggal merah
-// (Sabtu, Minggu, libur nasional, cuti bersama), tanggal mulai digeser MUNDUR ke hari kerja
-// terdekat sebelumnya, sehingga awal periode baru & hari terakhir periode lama sama-sama hari kerja.
-// Contoh Oktober 2026: 25 (Minggu) & 24 (Sabtu) merah -> periode baru mulai Jumat 23 Okt,
-// periode lama berakhir Kamis 22 Okt.
-//
-// Daftar tanggal merah di bawah bersumber dari SKB 3 Menteri (2026 & 2027).
-// Tahun lain hanya mengenali Sabtu/Minggu — tambahkan tanggal ke daftar ini tiap SKB baru terbit.
-const INCLUDE_CUTI_BERSAMA = true;   // false = cuti bersama dianggap hari kerja biasa
-const LIBUR_NASIONAL = [
-  // 2025
-  '2025-12-25',
-  // 2026
-  '2026-01-01','2026-01-16','2026-02-17','2026-03-19','2026-03-21','2026-03-22','2026-04-03','2026-04-05',
-  '2026-05-01','2026-05-14','2026-05-27','2026-05-31','2026-06-01','2026-06-16','2026-08-17','2026-08-25','2026-12-25',
-  // 2027
-  '2027-01-01','2027-01-05','2027-02-06','2027-03-08','2027-03-10','2027-03-11','2027-03-26','2027-03-28',
-  '2027-05-01','2027-05-06','2027-05-17','2027-05-20','2027-06-01','2027-06-06','2027-08-15','2027-08-17',
-  '2027-12-25','2027-12-26'
-];
-const CUTI_BERSAMA = [
-  '2025-12-26',
-  '2026-02-16','2026-03-18','2026-03-20','2026-03-23','2026-03-24','2026-05-15','2026-05-28','2026-12-24',
-  '2027-02-05','2027-03-09','2027-03-12','2027-03-15','2027-03-25','2027-05-18','2027-05-19','2027-12-24'
-];
-const RED_DATES = new Set([...LIBUR_NASIONAL, ...(INCLUDE_CUTI_BERSAMA ? CUTI_BERSAMA : [])]);
-
-function isoFromYMD(y, m, d){
-  const dt = new Date(y, m, d);
-  const mm = String(dt.getMonth()+1).padStart(2,'0');
-  const dd = String(dt.getDate()).padStart(2,'0');
-  return `${dt.getFullYear()}-${mm}-${dd}`;
-}
-function parseISO(iso){ return new Date(iso + 'T00:00:00'); }
-function addDaysISO(iso, n){
-  const d = parseISO(iso);
-  return isoFromYMD(d.getFullYear(), d.getMonth(), d.getDate() + n);
-}
-function isRedDate(iso){
-  const wd = parseISO(iso).getDay();      // 0 = Minggu, 6 = Sabtu
-  return wd === 0 || wd === 6 || RED_DATES.has(iso);
-}
-function redDateReason(iso){
-  const wd = parseISO(iso).getDay();
-  if(wd === 0) return 'Minggu';
-  if(wd === 6) return 'Sabtu';
-  if(LIBUR_NASIONAL.includes(iso)) return 'libur nasional';
-  if(INCLUDE_CUTI_BERSAMA && CUTI_BERSAMA.includes(iso)) return 'cuti bersama';
-  return '';
-}
-const _boundaryCache = {};
-// Tanggal mulai periode yang "dipatok" di bulan m (0-11) tahun y, setelah digeser karena tanggal merah.
-function periodBoundary(y, m){
-  const key = `${y}-${m}`;
-  if(_boundaryCache[key]) return _boundaryCache[key];
-  let iso = isoFromYMD(y, m, 25);
-  let guard = 0;
-  while((isRedDate(iso) || isRedDate(addDaysISO(iso, -1))) && guard < 20){
-    iso = addDaysISO(iso, -1);
-    guard++;
-  }
-  _boundaryCache[key] = iso;
-  return iso;
-}
-function periodStartForDate(iso){
-  const d = parseISO(iso);
-  const y = d.getFullYear(), m = d.getMonth();
-  const b = periodBoundary(y, m);
-  if(iso >= b) return b;
-  return m === 0 ? periodBoundary(y - 1, 11) : periodBoundary(y, m - 1);
-}
-function nextPeriodStart(startIso){
-  const d = parseISO(startIso);
-  const m = d.getMonth() + 1;
-  return periodBoundary(m > 11 ? d.getFullYear() + 1 : d.getFullYear(), m > 11 ? 0 : m);
-}
-function periodEndFromStart(startIso){
-  return addDaysISO(nextPeriodStart(startIso), -1);
-}
-// Data lama bisa menyimpan awal periode "tgl 25 polos". Rapikan ke tanggal patokan yang benar.
-function normalizePeriodStart(startIso){
-  const d = parseISO(startIso);
-  return periodBoundary(d.getFullYear(), d.getMonth());
-}
-function formatDateWithDay(iso){
-  return parseISO(iso).toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
-}
-function periodLabel(startIso, endIso){
-  const fmt = (iso)=> parseISO(iso).toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' });
-  return `${fmt(startIso)} – ${fmt(endIso)}`;
-}
-
-// ---------- Monthly closing (pembukuan otomatis) ----------
-function maybeRunClosingCheck(){
-  if(closingChecked || closingRunning) return;
-  if(!(closingInitFlags.meta && closingInitFlags.categories && closingInitFlags.transactions)) return;
-  closingChecked = true;
-  runMonthlyClosingIfNeeded().catch(e=>{
-    console.error('runMonthlyClosingIfNeeded', e);
-  });
-}
-
-async function runMonthlyClosingIfNeeded(){
-  const todayStart = periodStartForDate(todayISO());
-  let curStart = meta.currentPeriodStart;
-
-  // Pertama kali dipakai (belum pernah ada periode aktif tercatat):
-  // set baseline periode berjalan tanpa menutup/mengarsipkan apa pun,
-  // supaya data yang sudah ada saat ini tidak tiba-tiba terarsip.
-  if(!curStart){
-    await setDoc(userDocRef(), { currentPeriodStart: todayStart }, { merge:true });
-    meta = { ...meta, currentPeriodStart: todayStart };
-    return;
-  }
-
-  // Rapikan data lama (mis. tersimpan 25 polos padahal patokan baru digeser karena tanggal merah)
-  const normalized = normalizePeriodStart(curStart);
-  if(normalized !== curStart){
-    curStart = normalized;
-    await setDoc(userDocRef(), { currentPeriodStart: curStart }, { merge:true });
-    meta = { ...meta, currentPeriodStart: curStart };
-  }
-
-  if(curStart >= todayStart) return; // masih di periode yang sama, tidak perlu tutup buku
-
-  closingRunning = true;
-  try{
-    showToast('Menutup pembukuan periode sebelumnya…');
-    let guard = 0;
-    while(curStart < todayStart && guard < 60){ // guard: maksimal 60 bulan sekali jalan
-      const periodEnd = periodEndFromStart(curStart);
-      await closeSinglePeriod(curStart, periodEnd);
-      curStart = nextPeriodStart(curStart);
-      guard++;
-    }
-    showToast('Pembukuan bulanan selesai diperbarui ✅');
-  }catch(e){
-    console.error('runMonthlyClosingIfNeeded loop', e);
-    showToast('Gagal menyelesaikan pembukuan otomatis: ' + errorMessage(e), true);
-  }finally{
-    closingRunning = false;
-  }
-}
-
-async function closeSinglePeriod(startIso, endIso){
-  const periodTx = transactions.filter(t => t.date >= startIso && t.date <= endIso);
-  const income = periodTx.filter(t=>t.type==='income').reduce((s,t)=>s+Number(t.amount||0),0);
-  const expense = periodTx.filter(t=>t.type==='expense').reduce((s,t)=>s+Number(t.amount||0),0);
-  const opening = Number(meta.danaAwal||0);
-  const closing = opening + income - expense;
-
-  const catSnapshot = categories.map(c=>{
-    const rel = periodTx.filter(t=>t.categoryId===c.id);
-    const cIncome = rel.filter(t=>t.type==='income').reduce((s,t)=>s+Number(t.amount||0),0);
-    const cExpense = rel.filter(t=>t.type==='expense').reduce((s,t)=>s+Number(t.amount||0),0);
-    const alloc = Number(c.allocated||0);
-    return { name: c.name || '', icon: c.icon || '', allocated: alloc, income: cIncome, expense: cExpense, remaining: alloc + cIncome - cExpense };
-  });
-
-  const txSnapshot = periodTx
-    .map(t=>({ date: t.date, type: t.type, categoryName: t.categoryName || 'Tanpa kategori', amount: Number(t.amount||0), note: t.note || '' }))
-    .sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
-
-  // 1) Arsipkan pembukuan periode ini
-  await addDoc(periodsColRef(), {
-    startDate: startIso,
-    endDate: endIso,
-    label: periodLabel(startIso, endIso),
-    openingBalance: opening,
-    totalIncome: income,
-    totalExpense: expense,
-    closingBalance: closing,
-    categories: catSnapshot,
-    transactions: txSnapshot,
-    closedAt: serverTimestamp()
-  });
-
-  // 2) Hapus transaksi periode ini dari riwayat utama (sudah diarsipkan di atas)
-  for(const t of periodTx){
-    await deleteDoc(doc(txColRef(), t.id));
-  }
-
-  // 3) Reset alokasi tiap kategori ke 0 untuk periode baru
-  for(const c of categories){
-    await updateDoc(doc(categoriesColRef(), c.id), { allocated: 0 });
-  }
-
-  // 4) Sisa dana periode ini menjadi dana utama periode berikutnya
-  const next = nextPeriodStart(startIso);
-  await setDoc(userDocRef(), { danaAwal: closing, currentPeriodStart: next }, { merge:true });
-
-  // Perbarui cache lokal supaya iterasi berikutnya (jika menutup >1 bulan sekaligus) akurat
-  meta = { ...meta, danaAwal: closing, currentPeriodStart: next };
-  transactions = transactions.filter(t => !(t.date >= startIso && t.date <= endIso));
-  categories = categories.map(c=>({ ...c, allocated: 0 }));
-  render();
-}
-
-// ---------- PDF laporan keuangan bulanan ----------
-function generatePeriodPDF(period){
-  if(!window.jspdf || !window.jspdf.jsPDF){
-    showToast('Gagal memuat modul PDF. Periksa koneksi internet lalu coba lagi.', true);
-    return;
-  }
-  const { jsPDF } = window.jspdf;
-  const docPdf = new jsPDF();
-  let y = 18;
-
-  docPdf.setFont('helvetica','bold'); docPdf.setFontSize(16);
-  docPdf.text('Laporan Keuangan Bulanan', 14, y); y += 8;
-  docPdf.setFont('helvetica','normal'); docPdf.setFontSize(11);
-  docPdf.text(`Periode: ${period.label || ''}`, 14, y); y += 6;
-  docPdf.text(`Dicetak: ${new Date().toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'})}`, 14, y); y += 10;
-
-  docPdf.setFont('helvetica','bold'); docPdf.text('Ringkasan', 14, y); y += 6;
-  docPdf.setFont('helvetica','normal');
-  const summaryLines = [
-    `Dana awal periode: ${formatRupiah(period.openingBalance)}`,
-    `Total pemasukan: ${formatRupiah(period.totalIncome)}`,
-    `Total pengeluaran: ${formatRupiah(period.totalExpense)}`,
-    `Dana akhir periode (dibawa ke bulan berikutnya): ${formatRupiah(period.closingBalance)}`
-  ];
-  summaryLines.forEach(l=>{ docPdf.text(l, 14, y); y += 6; });
-  y += 4;
-
-  if(typeof docPdf.autoTable === 'function'){
-    docPdf.autoTable({
-      startY: y,
-      head: [['Kategori','Alokasi','Pemasukan','Pengeluaran','Sisa']],
-      body: (period.categories||[]).map(c=>[c.name, formatRupiah(c.allocated), formatRupiah(c.income), formatRupiah(c.expense), formatRupiah(c.remaining)]),
-      styles: { fontSize:9 }, headStyles: { fillColor:[109,74,255] }
-    });
-    y = docPdf.lastAutoTable.finalY + 10;
-
-    docPdf.autoTable({
-      startY: y,
-      head: [['Tanggal','Tipe','Kategori','Catatan','Jumlah']],
-      body: (period.transactions||[]).map(t=>[
-        formatDateHuman(t.date), t.type==='income' ? 'Masuk' : 'Keluar', t.categoryName || '-', t.note || '-',
-        (t.type==='income'?'+':'-') + formatRupiah(t.amount)
-      ]),
-      styles: { fontSize:8 }, headStyles: { fillColor:[46,139,255] }
-    });
-  }
-
-  const fileSafe = `${period.startDate || ''}_${period.endDate || ''}`.replace(/[^0-9a-zA-Z_-]/g,'');
-  docPdf.save(`Laporan-Keuangan-${fileSafe || 'periode'}.pdf`);
-}
-
-// ---------- Render ----------
-function render(){
-  const danaAwal = Number(meta.danaAwal||0);
-  const tIncome = totalIncome();
-  const tExpense = totalExpense();
-  const totalRemaining = danaAwal + tIncome - tExpense;
-  const unalloc = danaAwal - totalAllocated();
-
-  const heroEl = document.getElementById('heroTotal');
-  heroEl.textContent = formatRupiah(totalRemaining);
-  heroEl.classList.toggle('negative', totalRemaining < 0);
-
-  document.querySelector('#btnEditDanaAwal').textContent = formatRupiah(danaAwal);
-  document.getElementById('heroUnalloc').textContent = formatRupiah(unalloc);
-  document.getElementById('statIncome').textContent = formatRupiah(tIncome);
-  document.getElementById('statExpense').textContent = formatRupiah(tExpense);
-  document.getElementById('statCatCount').textContent = categories.length;
-
-  const curStart = normalizePeriodStart(meta.currentPeriodStart || periodStartForDate(todayISO()));
-  const curEnd = periodEndFromStart(curStart);
-  const periodEl = document.getElementById('heroPeriodActive');
-  if(periodEl) periodEl.textContent = `📅 Periode aktif: ${periodLabel(curStart, curEnd)}`;
-  renderPeriodRuleHint(curStart, curEnd);
-
-  renderCategories();
-  renderTransactions();
-  renderCategorySelect();
-  renderGold();
-  renderPeriods();
-}
-
-function renderPeriodRuleHint(curStart, curEnd){
-  const el = document.getElementById('periodRuleHint');
-  if(!el) return;
-  const nextStart = nextPeriodStart(curStart);
-  const d = parseISO(nextStart);
-  const nominal = isoFromYMD(d.getFullYear(), d.getMonth(), 25);
-  let line = `Periode aktif berakhir ${formatDateWithDay(curEnd)}. Periode berikutnya mulai ${formatDateWithDay(nextStart)}`;
-  if(nominal !== nextStart){
-    const reasons = [];
-    const r25 = redDateReason(nominal);
-    if(r25) reasons.push(`tgl 25 jatuh di hari ${r25}`);
-    const dayBefore = isoFromYMD(d.getFullYear(), d.getMonth(), 24);
-    const r24 = redDateReason(dayBefore);
-    if(r24) reasons.push(`tgl 24 jatuh di hari ${r24}`);
-    line += ` (digeser mundur dari tgl 25 karena ${reasons.join(' & ') || 'tanggal merah'}).`;
-  }else{
-    line += '.';
-  }
-  el.textContent = line;
-}
-
-function renderCategories(){
-  const area = document.getElementById('categoryArea');
-  if(categories.length === 0){
-    area.innerHTML = `<div class="empty-box"><span class="emoji">🗂️</span>Belum ada kategori. Buat kategori untuk membagi dana awal, mis. Makan, Transport, Tabungan.<br><button class="link-btn" id="emptyAddCat">+ Buat kategori pertama</button></div>`;
-    document.getElementById('emptyAddCat').addEventListener('click', openAddCategoryModal);
-    return;
-  }
-  let html = '<div class="cat-list">';
-  categories.forEach((cat,i)=>{
-    const s = categoryStats(cat.id);
-    const pct = s.allocated > 0 ? Math.min(100, (s.expense / s.allocated) * 100) : (s.expense>0?100:0);
-    const over = s.remaining < 0;
-    const color = catColor(cat, i);
-    html += `
-      <div class="cat-row fade-up" style="--cat-color:${color.solid};--cat-color-soft:${color.soft};animation-delay:${i*40}ms">
-        <div class="cat-row-top">
-          <div class="cat-name-wrap">
-            <div class="cat-icon">${catIcon(cat)}</div>
-            <div class="cat-name">${escapeHtml(cat.name)}</div>
-          </div>
-          <div class="cat-alloc">${formatRupiah(s.allocated)}</div>
-        </div>
-        <div class="cat-bar-track"><div class="cat-bar-fill ${over?'over':''}" style="width:${pct}%"></div></div>
-        <div class="cat-row-bottom">
-          <span>Terpakai ${formatRupiah(s.expense)}</span>
-          <span>Sisa ${formatRupiah(s.remaining)}</span>
-        </div>
-        <div class="cat-row-actions">
-          <button class="tiny-btn" data-del-cat="${cat.id}">Hapus kategori</button>
-        </div>
-      </div>`;
-  });
-  html += '</div>';
-  area.innerHTML = html;
-  area.querySelectorAll('[data-del-cat]').forEach(btn=>{
-    btn.addEventListener('click', ()=>deleteCategory(btn.dataset.delCat));
-  });
-}
-
-function renderTransactions(){
-  const area = document.getElementById('txArea');
-  let list = transactions;
-  if(txFilter !== 'all') list = list.filter(t=>t.type===txFilter);
-  if(list.length === 0){
-    area.innerHTML = `<div class="empty-box"><span class="emoji">🧾</span>Belum ada transaksi tercatat.</div>`;
-    return;
-  }
-  let html = '';
-  let lastDate = null;
-  list.forEach(t=>{
-    if(t.date !== lastDate){
-      html += `<div class="tx-date-header">${formatDateHuman(t.date)}</div>`;
-      lastDate = t.date;
-    }
-    const cat = categories.find(c=>c.id===t.categoryId);
-    const icon = cat ? catIcon(cat) : (t.type==='income' ? '⬆️' : '⬇️');
-    html += `
-      <div class="tx-row">
-        <div class="tx-left">
-          <div class="tx-icon ${t.type}">${icon}</div>
-          <div class="tx-body">
-            <div class="tx-cat">${escapeHtml(t.categoryName || 'Tanpa kategori')}</div>
-            ${t.note ? `<div class="tx-note">${escapeHtml(t.note)}</div>` : ''}
-          </div>
-        </div>
-        <div class="tx-right">
-          <div class="tx-amount ${t.type}">${t.type==='income'?'+':'-'}${formatRupiah(t.amount)}</div>
-          <button class="tx-del" data-del-tx="${t.id}">Hapus</button>
-        </div>
-      </div>`;
-  });
-  area.innerHTML = `<div class="tx-list">${html}</div>`;
-  area.querySelectorAll('[data-del-tx]').forEach(btn=>{
-    btn.addEventListener('click', ()=>deleteTransaction(btn.dataset.delTx));
-  });
-}
-
-function renderCategorySelect(){
-  const sel = document.getElementById('txCategory');
-  const current = sel.value;
-  sel.innerHTML = categories.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
-  if(categories.length === 0){
-    sel.innerHTML = `<option value="">Tanpa kategori</option>`;
-  }
-  if(current) sel.value = current;
-}
-
-function renderIconGrid(){
-  const grid = document.getElementById('catIconGrid');
-  grid.innerHTML = CATEGORY_ICONS.map(ic=>
-    `<button type="button" class="icon-opt${ic===selectedCatIcon?' selected':''}" data-icon="${ic}">${ic}</button>`
-  ).join('');
-  grid.querySelectorAll('.icon-opt').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      selectedCatIcon = btn.dataset.icon;
-      grid.querySelectorAll('.icon-opt').forEach(b=>b.classList.remove('selected'));
-      btn.classList.add('selected');
-    });
-  });
-}
-function renderColorGrid(){
-  const grid = document.getElementById('catColorGrid');
-  grid.innerHTML = CATEGORY_COLORS.map((c,i)=>
-    `<button type="button" class="color-opt${i===selectedCatColorIdx?' selected':''}" data-idx="${i}" style="background:${c.solid}"></button>`
-  ).join('');
-  grid.querySelectorAll('.color-opt').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      selectedCatColorIdx = Number(btn.dataset.idx);
-      grid.querySelectorAll('.color-opt').forEach(b=>b.classList.remove('selected'));
-      btn.classList.add('selected');
-    });
-  });
-}
-
-function renderGold(){
-  const totals = goldTotals();
-  document.getElementById('goldTotalGrams').textContent = formatGram(totals.totalGrams);
-  document.getElementById('goldTotalValue').textContent = formatRupiah(totals.totalEst);
-  document.getElementById('goldTotalBuy').textContent = formatRupiah(totals.totalBuy);
-
-  const refLine = document.getElementById('goldRefPriceLine');
-  if(totals.refPrice > 0){
-    refLine.textContent = `Harga acuan: ${formatRupiah(totals.refPrice)}/gram (24K)` + (meta.goldRefPriceUpdatedAt ? ` · diperbarui ${formatDateTimeHuman(meta.goldRefPriceUpdatedAt)}` : '');
-  }else{
-    refLine.textContent = 'Harga acuan belum diatur — buka ⚙ Pengaturan → Harga Emas';
-  }
-
-  const plBadge = document.getElementById('goldTotalPlBadge');
-  const pl = totals.totalProfit;
-  const plPct = totals.totalBuy > 0 ? (pl/totals.totalBuy*100) : 0;
-  plBadge.classList.remove('profit','loss');
-  if(totals.totalBuy === 0 && goldItems.length === 0){
-    plBadge.textContent = 'Belum ada data emas';
-  }else{
-    plBadge.classList.add(pl >= 0 ? 'profit' : 'loss');
-    plBadge.textContent = (pl >= 0 ? '📈 Untung ' : '📉 Rugi ') + formatRupiah(Math.abs(pl)) + ` (${pl>=0?'+':'-'}${Math.abs(plPct).toFixed(1)}%)`;
-  }
-
-  // Settings pane preview
-  const pgc = document.getElementById('paneGoldPriceCurrent');
-  const pgu = document.getElementById('paneGoldPriceUpdated');
-  if(Number(meta.goldRefPrice||0) > 0){
-    pgc.textContent = formatRupiah(meta.goldRefPrice) + ' / gram';
-    pgu.textContent = (meta.goldRefPriceUpdatedAt ? 'Diperbarui ' + formatDateTimeHuman(meta.goldRefPriceUpdatedAt) : '') + (meta.goldRefPriceSource ? ' · ' + meta.goldRefPriceSource : '');
-  }else{
-    pgc.textContent = 'Belum diatur';
-    pgu.textContent = '—';
-  }
-
-  const area = document.getElementById('goldArea');
-  if(goldItems.length === 0){
-    area.innerHTML = `<div class="empty-box"><span class="emoji">🪙</span>Belum ada emas tercatat. Tambahkan emas Antam, UBS, atau perhiasanmu untuk memantau nilainya.<br><button class="link-btn amber" id="emptyAddGold">+ Tambah emas pertama</button></div>`;
-    document.getElementById('emptyAddGold').addEventListener('click', openAddGoldModal);
-    return;
-  }
-  let html = '<div class="gold-list">';
-  goldItems.forEach((item,i)=>{
-    const s = goldStats(item);
-    const profit = s.profit;
-    html += `
-      <div class="gold-row fade-up" style="animation-delay:${i*40}ms">
-        <div class="gold-row-top">
-          <div class="gold-name-wrap">
-            <div class="gold-icon">🪙</div>
-            <div>
-              <div class="gold-name">${escapeHtml(item.name || 'Emas')}</div>
-              <div class="gold-sub">${formatGram(item.grams)} · kadar ${Number(item.purity||0).toLocaleString('id-ID')}% · dibeli ${item.buyDate ? formatDateHuman(item.buyDate) : '-'}</div>
-            </div>
-          </div>
-        </div>
-        <div class="gold-row-grid">
-          <div class="gold-metric"><div class="k">Harga saat dibeli</div><div class="v">${formatRupiah(item.buyPrice)}</div></div>
-          <div class="gold-metric"><div class="k">Estimasi harga jual sekarang</div><div class="v">${formatRupiah(s.estValue)}</div></div>
-        </div>
-        <div class="gold-pl">
-          <div class="gold-pl-label">${profit>=0?'Estimasi untung':'Estimasi rugi'} jika dijual</div>
-          <div class="gold-pl-value ${profit>=0?'profit':'loss'}">${profit>=0?'▲':'▼'} ${formatRupiah(Math.abs(profit))}</div>
-        </div>
-        <div class="gold-row-actions">
-          <button class="tiny-btn" data-del-gold="${item.id}">Hapus emas</button>
-        </div>
-      </div>`;
-  });
-  html += '</div>';
-  area.innerHTML = html;
-  area.querySelectorAll('[data-del-gold]').forEach(btn=>{
-    btn.addEventListener('click', ()=>deleteGold(btn.dataset.delGold));
-  });
-}
-
-function renderPeriods(){
-  const area = document.getElementById('periodArea');
-  if(!area) return;
-  if(periods.length === 0){
-    area.innerHTML = `<div class="empty-box"><span class="emoji">📅</span>Belum ada pembukuan bulanan. Pembukuan pertama akan dibuat otomatis saat aplikasi dibuka setelah awal periode baru (sekitar tanggal 25, digeser jika tanggal merah).</div>`;
-    return;
-  }
-  let html = '<div class="period-list">';
-  periods.forEach((p,i)=>{
-    const profit = Number(p.closingBalance||0) - Number(p.openingBalance||0);
-    html += `
-      <div class="period-row fade-up" style="animation-delay:${i*40}ms">
-        <div class="period-row-top">
-          <div>
-            <div class="period-label">${escapeHtml(p.label || '')}</div>
-            <div class="period-dates">Dana awal ${formatRupiah(p.openingBalance)} → dana akhir</div>
-          </div>
-          <div class="period-balance ${profit>=0?'profit':'loss'}">${formatRupiah(p.closingBalance)}</div>
-        </div>
-        <div class="period-row-bottom">
-          <span>Masuk ${formatRupiah(p.totalIncome)}</span>
-          <span>Keluar ${formatRupiah(p.totalExpense)}</span>
-        </div>
-        <div class="period-row-actions">
-          <button class="link-btn" data-pdf-period="${p.id}">📄 Unduh PDF</button>
-        </div>
-      </div>`;
-  });
-  html += '</div>';
-  area.innerHTML = html;
-  area.querySelectorAll('[data-pdf-period]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const p = periods.find(x=>x.id===btn.dataset.pdfPeriod);
-      if(p) generatePeriodPDF(p);
-      else showToast('Data periode tidak ditemukan', true);
-    });
-  });
-}
-
-function escapeHtml(s){
-  return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-
-// ---------- Actions: Kas ----------
-async function saveDanaAwal(value){
-  try{
-    await setDoc(userDocRef(), { danaAwal: Number(value)||0 }, { merge:true });
-    showToast('Dana awal disimpan');
-  }catch(e){
-    console.error('saveDanaAwal', e);
-    showToast(errorMessage(e), true);
-    throw e;
-  }
-}
-
-async function saveCategory(name, allocated, icon, colorIdx){
-  try{
-    await addDoc(categoriesColRef(), {
-      name,
-      allocated: Number(allocated)||0,
-      icon: icon || CATEGORY_ICONS[0],
-      colorIdx: Number.isInteger(colorIdx) ? colorIdx : 0,
-      createdAt: serverTimestamp()
-    });
-    showToast('Kategori ditambahkan');
-  }catch(e){
-    console.error('saveCategory', e);
-    showToast(errorMessage(e), true);
-    throw e;
-  }
-}
-
-async function deleteCategory(id){
-  if(!confirm('Hapus kategori ini? Riwayat transaksi lama tetap tersimpan.')) return;
-  try{
-    await deleteDoc(doc(categoriesColRef(), id));
-    showToast('Kategori dihapus');
-  }catch(e){
-    console.error('deleteCategory', e);
-    showToast(errorMessage(e), true);
-  }
-}
-
-async function saveTransaction(data){
-  try{
-    await addDoc(txColRef(), { ...data, createdAt: serverTimestamp() });
-    showToast('Transaksi disimpan');
-    sendTelegramNotification(data);
-  }catch(e){
-    console.error('saveTransaction', e);
-    showToast(errorMessage(e), true);
-    throw e;
-  }
-}
-
-async function deleteTransaction(id){
-  if(!confirm('Hapus transaksi ini?')) return;
-  try{
-    await deleteDoc(doc(txColRef(), id));
-    showToast('Transaksi dihapus');
-  }catch(e){
-    console.error('deleteTransaction', e);
-    showToast(errorMessage(e), true);
-  }
-}
-
-async function sendTelegramMessage(text){
-  if(!isTelegramConfigValid()) return;
-  try{
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_CONFIG.token}/sendMessage`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ chat_id: TELEGRAM_CONFIG.chatId, text, parse_mode:'HTML' })
-    });
-  }catch(e){
-    console.warn('Gagal mengirim ke Telegram', e);
-  }
-}
-
-async function sendTelegramNotification(tx){
-  const danaAwal = Number(meta.danaAwal||0);
-  const sisa = danaAwal + totalIncome() - totalExpense();
-  const emoji = tx.type === 'income' ? '🟢' : '🔴';
-  const label = tx.type === 'income' ? 'Pemasukan' : 'Pengeluaran';
-  const text = [
-    `${emoji} <b>${label} baru</b>`,
-    `Kategori: ${tx.categoryName || 'Tanpa kategori'}`,
-    `Jumlah: ${formatRupiah(tx.amount)}`,
-    tx.note ? `Catatan: ${tx.note}` : null,
-    `Tanggal: ${formatDateHuman(tx.date)}`,
-    ``,
-    `Sisa dana: ${formatRupiah(sisa)}`
-  ].filter(Boolean).join('\n');
-  sendTelegramMessage(text);
-}
-
-async function sendTelegramGoldNotification(item){
-  const text = [
-    `🪙 <b>Emas baru ditambahkan</b>`,
-    `Nama: ${item.name}`,
-    `Berat: ${formatGram(item.grams)}`,
-    `Kadar: ${item.purity}%`,
-    `Harga beli: ${formatRupiah(item.buyPrice)}`,
-    `Tanggal beli: ${formatDateHuman(item.buyDate)}`
-  ].join('\n');
-  sendTelegramMessage(text);
-}
-
-// ---------- Actions: Gold ----------
-async function saveGold(data){
-  try{
-    await addDoc(goldColRef(), { ...data, createdAt: serverTimestamp() });
-    showToast('Emas ditambahkan');
-    sendTelegramGoldNotification(data);
-  }catch(e){
-    console.error('saveGold', e);
-    showToast(errorMessage(e), true);
-    throw e;
-  }
-}
-
-async function deleteGold(id){
-  if(!confirm('Hapus data emas ini?')) return;
-  try{
-    await deleteDoc(doc(goldColRef(), id));
-    showToast('Data emas dihapus');
-  }catch(e){
-    console.error('deleteGold', e);
-    showToast(errorMessage(e), true);
-  }
-}
-
-async function saveGoldRefPrice(value, source){
-  try{
-    await setDoc(userDocRef(), {
-      goldRefPrice: Number(value)||0,
-      goldRefPriceUpdatedAt: new Date().toISOString(),
-      goldRefPriceSource: source || 'manual'
-    }, { merge:true });
-    showToast('Harga emas acuan disimpan');
-  }catch(e){
-    console.error('saveGoldRefPrice', e);
-    showToast(errorMessage(e), true);
-    throw e;
-  }
-}
-
-async function fetchAntamPriceOnline(){
-  const btn = document.getElementById('btnFetchGoldPrice');
-  const origText = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Mengambil…';
-  try{
-    const res = await fetch('https://logam-mulia-api.iamutaki.workers.dev/api/prices/logammulia');
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const json = await res.json();
-    const list = Array.isArray(json?.data) ? json.data : [];
-    let rec = list.find(r => Number(r.weight) === 1) || list[0];
-    if(!rec) throw new Error('Data harga tidak ditemukan pada respons API');
-    const price = Number(rec.buybackPrice || rec.sellPrice || 0);
-    if(!price) throw new Error('Harga tidak valid pada respons API');
-    setMoneyValue(document.getElementById('goldPriceInput'), price);
-    showToast('Harga terbaru diambil: ' + formatRupiah(price) + '/gram. Klik "Simpan harga" untuk menyimpannya.');
-  }catch(e){
-    console.warn('fetchAntamPriceOnline gagal', e);
-    showToast('Gagal mengambil harga otomatis (kemungkinan koneksi/CORS diblokir browser). Silakan isi harga secara manual.', true);
-  }finally{
-    btn.disabled = false; btn.textContent = origText;
-  }
-}
-
-// ---------- Event wiring ----------
-document.getElementById('btnRetryConnect').addEventListener('click', ()=>{
-  document.getElementById('onboardStatus').textContent = '';
-  startApp();
-});
-
-document.getElementById('btnSettings').addEventListener('click', ()=>{
-  fillAISettings();
-  setMoneyValue(document.getElementById('danaAwalInput'), Number(meta.danaAwal||0));
-  setMoneyValue(document.getElementById('goldPriceInput'), Number(meta.goldRefPrice||0));
-  document.getElementById('fbProjectLabel').textContent = FIREBASE_CONFIG.projectId || '-';
-  document.getElementById('tgStatusLabel').textContent = isTelegramConfigValid() ? 'Aktif' : 'Belum diisi';
-  openModal('modalSettings');
-});
-
-document.querySelectorAll('[data-close]').forEach(btn=>{
-  btn.addEventListener('click', ()=>closeModal(btn.dataset.close));
-});
-document.querySelectorAll('.modal-overlay').forEach(ov=>{
-  ov.addEventListener('click', (e)=>{ if(e.target === ov) ov.classList.add('hidden'); });
-});
-
-// ---------- Tab navigation ----------
-function setActiveTab(tab){
-  activeTab = tab;
-  document.getElementById('viewKas').classList.toggle('active', tab === 'kas');
-  document.getElementById('viewEmas').classList.toggle('active', tab === 'emas');
-  document.getElementById('viewAI').classList.toggle('active', tab === 'ai');
-  document.getElementById('btnTabKas').classList.toggle('active', tab === 'kas');
-  document.getElementById('btnTabEmas').classList.toggle('active', tab === 'emas');
-  document.getElementById('btnTabEmas').classList.toggle('tab-emas', tab === 'emas');
-  document.getElementById('btnTabAI').classList.toggle('active', tab === 'ai');
-  document.getElementById('btnTabAI').classList.toggle('tab-ai', tab === 'ai');
-  const fab = document.getElementById('btnFab');
-  fab.classList.toggle('mode-kas', tab === 'kas');
-  fab.classList.toggle('mode-emas', tab === 'emas');
-  fab.classList.toggle('hidden', tab === 'ai');
-  document.getElementById('topbarTag').textContent =
-    tab === 'kas' ? 'Catatan keuangan bersama' : (tab === 'emas' ? 'Tabungan emas bersama' : 'Saran finansial dari AI');
-  if(tab === 'ai') renderAIHeader();
-}
-document.getElementById('btnTabKas').addEventListener('click', ()=>setActiveTab('kas'));
-document.getElementById('btnTabEmas').addEventListener('click', ()=>setActiveTab('emas'));
-document.getElementById('btnTabAI').addEventListener('click', ()=>setActiveTab('ai'));
-
-document.getElementById('btnFab').addEventListener('click', ()=>{
-  if(activeTab === 'emas'){
-    openAddGoldModal();
-  }else{
-    document.getElementById('txDate').value = todayISO();
-    document.getElementById('txAmount').value = '';
-    document.getElementById('txNote').value = '';
-    setTxType('expense');
-    renderCategorySelect();
-    openModal('modalTx');
-  }
-});
-
-function openAddCategoryModal(){
-  document.getElementById('catName').value = '';
-  document.getElementById('catAlloc').value = '';
-  selectedCatIcon = CATEGORY_ICONS[0];
-  selectedCatColorIdx = categories.length % CATEGORY_COLORS.length;
-  renderIconGrid();
-  renderColorGrid();
-  const unalloc = Number(meta.danaAwal||0) - totalAllocated();
-  document.getElementById('catAllocHint').textContent = `Belum dialokasikan: ${formatRupiah(unalloc)}`;
-  document.getElementById('catAllocHint').className = 'field-hint';
-  openModal('modalCategory');
-}
-document.getElementById('btnAddCategory').addEventListener('click', openAddCategoryModal);
-
-document.getElementById('btnSaveCategory').addEventListener('click', async ()=>{
-  const name = document.getElementById('catName').value.trim();
-  const alloc = moneyValue(document.getElementById('catAlloc'));
-  if(!name){ showToast('Nama kategori wajib diisi', true); return; }
-  if(!uid){ showToast('Belum terhubung ke Firebase, coba lagi sebentar.', true); return; }
-  const btn = document.getElementById('btnSaveCategory');
-  btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Menyimpan…';
-  try{
-    await saveCategory(name, alloc, selectedCatIcon, selectedCatColorIdx);
-    closeModal('modalCategory');
-  }catch(e){
-    // error toast already shown by saveCategory; keep modal open so user can retry
-  }finally{
-    btn.disabled = false; btn.textContent = origText;
-  }
-});
-
-function setTxType(type){
-  selectedTxType = type;
-  document.querySelectorAll('#txTypeSeg button').forEach(b=>{
-    b.classList.remove('active-income','active-expense');
-    if(b.dataset.type === type) b.classList.add(type === 'income' ? 'active-income' : 'active-expense');
-  });
-}
-document.querySelectorAll('#txTypeSeg button').forEach(b=>{
-  b.addEventListener('click', ()=>setTxType(b.dataset.type));
-});
-
-document.getElementById('btnSaveTx').addEventListener('click', async ()=>{
-  const amount = moneyValue(document.getElementById('txAmount'));
-  const categorySel = document.getElementById('txCategory');
-  const categoryId = categorySel.value || null;
-  const categoryName = categorySel.options[categorySel.selectedIndex]?.text || 'Tanpa kategori';
-  const note = document.getElementById('txNote').value.trim();
-  const date = document.getElementById('txDate').value || todayISO();
-  if(!amount || amount <= 0){ showToast('Jumlah harus lebih dari 0', true); return; }
-  if(!uid){ showToast('Belum terhubung ke Firebase, coba lagi sebentar.', true); return; }
-  const btn = document.getElementById('btnSaveTx');
-  btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Menyimpan…';
-  try{
-    await saveTransaction({ type: selectedTxType, categoryId, categoryName, amount, note, date });
-    closeModal('modalTx');
-  }catch(e){
-    // error toast already shown by saveTransaction
-  }finally{
-    btn.disabled = false; btn.textContent = origText;
-  }
-});
-
-document.querySelectorAll('.tx-filter .chip').forEach(chip=>{
-  chip.addEventListener('click', ()=>{
-    document.querySelectorAll('.tx-filter .chip').forEach(c=>c.classList.remove('active'));
-    chip.classList.add('active');
-    txFilter = chip.dataset.filter;
-    renderTransactions();
-  });
-});
-
-document.getElementById('btnEditDanaAwal').addEventListener('click', ()=>{
-  setMoneyValue(document.getElementById('danaAwalInput'), Number(meta.danaAwal||0));
-  document.querySelectorAll('.settings-tab').forEach(t=>t.classList.remove('active'));
-  document.querySelector('[data-pane="paneDana"]').classList.add('active');
-  document.querySelectorAll('.settings-pane').forEach(p=>p.classList.remove('active'));
-  document.getElementById('paneDana').classList.add('active');
-  openModal('modalSettings');
-});
-
-document.querySelectorAll('.settings-tab').forEach(tab=>{
-  tab.addEventListener('click', ()=>{
-    document.querySelectorAll('.settings-tab').forEach(t=>t.classList.remove('active'));
-    tab.classList.add('active');
-    document.querySelectorAll('.settings-pane').forEach(p=>p.classList.remove('active'));
-    document.getElementById(tab.dataset.pane).classList.add('active');
-  });
-});
-
-document.getElementById('btnSaveDanaAwal').addEventListener('click', async ()=>{
-  const val = moneyValue(document.getElementById('danaAwalInput'));
-  const btn = document.getElementById('btnSaveDanaAwal');
-  btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Menyimpan…';
-  try{
-    await saveDanaAwal(val);
-    closeModal('modalSettings');
-  }catch(e){
-    // error toast already shown
-  }finally{
-    btn.disabled = false; btn.textContent = origText;
-  }
-});
-
-document.getElementById('btnFetchGoldPrice').addEventListener('click', fetchAntamPriceOnline);
-
-document.getElementById('btnSaveGoldPrice').addEventListener('click', async ()=>{
-  const val = moneyValue(document.getElementById('goldPriceInput'));
-  if(!val || val <= 0){ showToast('Isi harga emas per gram terlebih dahulu', true); return; }
-  const btn = document.getElementById('btnSaveGoldPrice');
-  btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Menyimpan…';
-  try{
-    await saveGoldRefPrice(val, 'manual');
-  }catch(e){
-    // error toast already shown
-  }finally{
-    btn.disabled = false; btn.textContent = origText;
-  }
-});
-
-// ---------- Gold modal wiring ----------
-function openAddGoldModal(){
-  document.getElementById('goldName').value = '';
-  document.getElementById('goldGrams').value = '';
-  document.getElementById('goldPurity').value = '';
-  document.getElementById('goldBuyPrice').value = '';
-  document.getElementById('goldBuyDate').value = todayISO();
-  openModal('modalGold');
-}
-document.getElementById('btnAddGold').addEventListener('click', openAddGoldModal);
-
-document.getElementById('btnSaveGold').addEventListener('click', async ()=>{
-  const name = document.getElementById('goldName').value.trim();
-  const grams = Number(document.getElementById('goldGrams').value || 0);
-  const purity = Number(document.getElementById('goldPurity').value || 0);
-  const buyPrice = moneyValue(document.getElementById('goldBuyPrice'));
-  const buyDate = document.getElementById('goldBuyDate').value || todayISO();
-  if(!name){ showToast('Jenis/nama emas wajib diisi', true); return; }
-  if(!grams || grams <= 0){ showToast('Berat emas harus lebih dari 0 gram', true); return; }
-  if(!purity || purity <= 0 || purity > 100){ showToast('Kadar emas harus antara 0-100%', true); return; }
-  if(!uid){ showToast('Belum terhubung ke Firebase, coba lagi sebentar.', true); return; }
-  const btn = document.getElementById('btnSaveGold');
-  btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Menyimpan…';
-  try{
-    await saveGold({ name, grams, purity, buyPrice, buyDate });
-    closeModal('modalGold');
-  }catch(e){
-    // error toast already shown by saveGold
-  }finally{
-    btn.disabled = false; btn.textContent = origText;
-  }
-});
-
-// ---------- Saran finansial AI ----------
-// Analisis lokal (rule-based) selalu jalan tanpa internet/API key. Jika API key diisi di
-// Pengaturan → AI, narasi saran tambahan dibuat oleh model AI pilihan.
-const AI_DEFAULT_MODELS = {
-  gemini: 'gemini-2.5-flash',
-  claude: 'claude-sonnet-5-5',
-  groq: 'llama-3.3-70b-versatile',
-  openrouter: 'meta-llama/llama-3.3-70b-instruct:free'   // model gratis OpenRouter bisa berganti; ganti di Pengaturan jika gagal
-};
-const AI_PROVIDER_NAMES = { gemini:'Google Gemini', claude:'Anthropic Claude', groq:'Groq', openrouter:'OpenRouter' };
-const OPENAI_COMPAT_URLS = {
-  groq: 'https://api.groq.com/openai/v1/chat/completions',
-  openrouter: 'https://openrouter.ai/api/v1/chat/completions'
-};
-function loadAIConfig(){
-  try{ return JSON.parse(localStorage.getItem('bukukas_ai_cfg') || '{}') || {}; }catch(e){ return {}; }
-}
-function saveAIConfig(cfg){
-  try{ localStorage.setItem('bukukas_ai_cfg', JSON.stringify(cfg)); return true; }catch(e){ return false; }
-}
-function aiConfigured(){
-  const c = loadAIConfig();
-  return !!(c.provider && c.apiKey);
-}
-
-function currentPeriodInfo(){
-  const start = normalizePeriodStart(meta.currentPeriodStart || periodStartForDate(todayISO()));
-  const end = periodEndFromStart(start);
-  const today = todayISO();
-  const totalDays = Math.round((parseISO(end) - parseISO(start)) / 86400000) + 1;
-  let elapsed = Math.round((parseISO(today) - parseISO(start)) / 86400000) + 1;
-  elapsed = Math.max(1, Math.min(totalDays, elapsed));
-  return { start, end, totalDays, elapsed, daysLeft: Math.max(0, totalDays - elapsed) };
-}
-
-function buildFinanceSnapshot(){
-  const per = currentPeriodInfo();
-  const danaAwal = Number(meta.danaAwal||0);
-  const income = totalIncome(), expense = totalExpense();
-  const remaining = danaAwal + income - expense;
-  const avgDaily = expense / per.elapsed;
-  const safeDaily = per.daysLeft > 0 ? Math.max(0, remaining) / per.daysLeft : Math.max(0, remaining);
-  // Proyeksi baru berarti setelah ada cukup hari data (hari 1-4 terlalu bias oleh satu-dua transaksi)
-  const projectedEnd = per.elapsed >= 5 ? remaining - avgDaily * per.daysLeft : null;
-  const cats = categories.map(c=>{
-    const st = categoryStats(c.id);
-    const usedPct = st.allocated > 0 ? (st.expense / (st.allocated + st.income)) * 100 : null;
-    return { name: c.name || 'Tanpa nama', allocated: st.allocated, income: st.income, expense: st.expense, remaining: st.remaining, usedPct };
-  });
-  const topExpenses = transactions.filter(t=>t.type==='expense')
-    .sort((a,b)=>Number(b.amount)-Number(a.amount)).slice(0,5)
-    .map(t=>({ kategori: t.categoryName || 'Tanpa kategori', jumlah: Number(t.amount), tanggal: t.date }));
-  const gt = goldTotals();
-  const prev = periods.slice(0,3).map(p=>({
-    periode: p.label, pemasukan: Number(p.totalIncome||0), pengeluaran: Number(p.totalExpense||0), danaAkhir: Number(p.closingBalance||0)
-  }));
-  return {
-    periode: { mulai: per.start, selesai: per.end, hariKe: per.elapsed, totalHari: per.totalDays, sisaHari: per.daysLeft },
-    danaAwal, pemasukan: income, pengeluaran: expense, sisaDana: remaining,
-    belumDialokasikan: danaAwal - totalAllocated(),
-    rataPengeluaranPerHari: Math.round(avgDaily),
-    batasAmanPerHariSisaPeriode: Math.round(safeDaily),
-    proyeksiSisaDanaAkhirPeriode: projectedEnd === null ? null : Math.round(projectedEnd),
-    kategori: cats, pengeluaranTerbesar: topExpenses,
-    emas: { totalGram: gt.totalGrams, estimasiNilai: Math.round(gt.totalEst), modal: Math.round(gt.totalBuy), untungRugi: Math.round(gt.totalProfit) },
-    periodeSebelumnya: prev
-  };
-}
-
-function localAnalysis(snap){
-  const out = { metrics: [], findings: [], advice: [] };
-  const rp = formatRupiah;
-  const noData = snap.pemasukan === 0 && snap.pengeluaran === 0 && snap.kategori.length === 0;
-  if(noData){
-    out.findings.push('Belum ada transaksi atau kategori pada periode ini, jadi belum ada yang bisa dianalisis.');
-    out.advice.push('Mulai dengan membuat kategori (mis. Makan, Transport, Tabungan), beri alokasi dana, lalu catat transaksi harian.');
-    return out;
-  }
-  const hasProj = snap.proyeksiSisaDanaAkhirPeriode !== null;
-  const projCls = !hasProj ? '' : (snap.proyeksiSisaDanaAkhirPeriode < 0 ? 'bad' : (snap.proyeksiSisaDanaAkhirPeriode < snap.sisaDana*0.1 ? 'warn' : 'good'));
-  out.metrics.push({ k:'Sisa dana', v: rp(snap.sisaDana), cls: snap.sisaDana < 0 ? 'bad' : '' });
-  out.metrics.push({ k:'Rata-rata keluar / hari', v: rp(snap.rataPengeluaranPerHari), cls:'' });
-  out.metrics.push({ k:'Batas aman / hari (sisa periode)', v: rp(snap.batasAmanPerHariSisaPeriode), cls: !hasProj ? '' : (snap.rataPengeluaranPerHari > snap.batasAmanPerHariSisaPeriode ? 'warn' : 'good') });
-  out.metrics.push({ k:'Proyeksi sisa di akhir periode', v: hasProj ? rp(snap.proyeksiSisaDanaAkhirPeriode) : 'Menunggu data', cls: projCls });
-
-  // Laju belanja
-  if(snap.periode.sisaHari > 0 && !hasProj){
-    out.findings.push(`Periode baru berjalan ${snap.periode.hariKe} hari, proyeksi belanja akan muncul setelah hari ke-5. Batas aman belanja saat ini ${rp(snap.batasAmanPerHariSisaPeriode)}/hari.`);
-  }else if(snap.periode.sisaHari > 0){
-    if(snap.proyeksiSisaDanaAkhirPeriode < 0){
-      out.findings.push(`Dengan laju belanja saat ini (${rp(snap.rataPengeluaranPerHari)}/hari), dana diperkirakan kurang sekitar ${rp(Math.abs(snap.proyeksiSisaDanaAkhirPeriode))} sebelum periode berakhir.`);
-      out.advice.push(`Turunkan belanja harian ke ≤ ${rp(snap.batasAmanPerHariSisaPeriode)} untuk ${snap.periode.sisaHari} hari ke depan, dan tunda pembelian non-esensial.`);
-    }else{
-      out.findings.push(`Laju belanja masih aman: diperkirakan tersisa ${rp(snap.proyeksiSisaDanaAkhirPeriode)} di akhir periode.`);
-    }
-  }else{
-    out.findings.push(`Hari terakhir periode. Sisa dana ${rp(snap.sisaDana)} akan dibawa ke periode berikutnya.`);
-  }
-
-  // Kategori
-  const over = snap.kategori.filter(c=>c.allocated > 0 && c.remaining < 0);
-  const near = snap.kategori.filter(c=>c.allocated > 0 && c.remaining >= 0 && c.usedPct !== null && c.usedPct >= 80);
-  over.forEach(c=>out.findings.push(`Kategori ${c.name} melebihi alokasi sebesar ${rp(Math.abs(c.remaining))}.`));
-  near.forEach(c=>out.findings.push(`Kategori ${c.name} sudah terpakai ${Math.round(c.usedPct)}% dari alokasi.`));
-  if(over.length){
-    out.advice.push(`Pindahkan alokasi dari kategori yang masih longgar ke ${over.map(c=>c.name).join(', ')}, atau kurangi belanja di kategori itu.`);
-  }
-  const loose = snap.kategori.filter(c=>c.allocated > 0 && c.usedPct !== null && c.usedPct < 40 && snap.periode.hariKe/snap.periode.totalHari > 0.6);
-  if(loose.length){
-    out.findings.push(`Kategori ${loose.map(c=>c.name).join(', ')} baru terpakai di bawah 40% padahal periode sudah lewat 60%.`);
-  }
-
-  // Dana belum dialokasi
-  if(snap.belumDialokasikan > 0){
-    out.advice.push(`Ada ${rp(snap.belumDialokasikan)} dana yang belum dialokasikan. Alokasikan ke kategori tabungan/dana darurat agar tidak habis tanpa terasa.`);
-  }else if(snap.belumDialokasikan < 0){
-    out.findings.push(`Total alokasi kategori melebihi dana awal sebesar ${rp(Math.abs(snap.belumDialokasikan))}.`);
-    out.advice.push('Kurangi alokasi beberapa kategori agar totalnya tidak melebihi dana awal.');
-  }
-
-  // Dibanding periode sebelumnya
-  const prev = snap.periodeSebelumnya[0];
-  if(prev && prev.pengeluaran > 0 && snap.periode.hariKe >= 7){
-    const projectedExpense = snap.rataPengeluaranPerHari * snap.periode.totalHari;
-    const diff = ((projectedExpense - prev.pengeluaran) / prev.pengeluaran) * 100;
-    if(Math.abs(diff) >= 10){
-      out.findings.push(`Proyeksi pengeluaran periode ini sekitar ${Math.abs(Math.round(diff))}% ${diff>0?'lebih tinggi':'lebih rendah'} dibanding periode lalu (${rp(prev.pengeluaran)}).`);
-    }
-  }
-
-  // Tabungan
-  if(snap.pemasukan > 0){
-    const rate = ((snap.pemasukan - snap.pengeluaran) / snap.pemasukan) * 100;
-    if(rate < 10) out.advice.push('Rasio tabungan periode ini di bawah 10% dari pemasukan. Coba sisihkan di awal periode (bayar diri sendiri dulu), baru belanja dari sisanya.');
-    else if(rate >= 20) out.findings.push(`Rasio tabungan periode ini baik: sekitar ${Math.round(rate)}% dari pemasukan.`);
-  }
-
-  // Emas
-  if(snap.emas.totalGram > 0 && snap.emas.modal > 0){
-    const pct = (snap.emas.untungRugi / snap.emas.modal) * 100;
-    out.findings.push(`Tabungan emas ${formatGram(snap.emas.totalGram)} bernilai estimasi ${rp(snap.emas.estimasiNilai)} (${pct>=0?'untung':'rugi'} ${Math.abs(pct).toFixed(1)}% dari modal).`);
-  }
-  if(!out.advice.length) out.advice.push('Pertahankan kebiasaan mencatat dan cek halaman ini tiap beberapa hari untuk memantau laju belanja.');
-  return out;
-}
-
-function mdLite(text){
-  const lines = escapeHtml(text).split('\n');
-  let html = '', inList = false;
-  const inline = (t)=> t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-  lines.forEach(raw=>{
-    const line = raw.trim();
-    const li = line.match(/^[-*•]\s+(.*)$/) || line.match(/^\d+[.)]\s+(.*)$/);
-    if(li){
-      if(!inList){ html += '<ul>'; inList = true; }
-      html += `<li>${inline(li[1])}</li>`;
-      return;
-    }
-    if(inList){ html += '</ul>'; inList = false; }
-    if(!line) return;
-    const h = line.match(/^#{1,4}\s+(.*)$/);
-    html += h ? `<p><strong>${inline(h[1])}</strong></p>` : `<p>${inline(line)}</p>`;
-  });
-  if(inList) html += '</ul>';
-  return html;
-}
-
-async function callAI(snap){
-  const cfg = loadAIConfig();
-  const model = (cfg.model || '').trim() || AI_DEFAULT_MODELS[cfg.provider];
-  const system = 'Kamu adalah asisten keuangan pribadi yang ramah dan praktis untuk pengguna Indonesia. Jawab dalam Bahasa Indonesia, ringkas (maksimal sekitar 250 kata), pakai angka dari data yang diberikan saja dan jangan mengarang angka. Format: satu paragraf ringkasan, lalu "Temuan" (3 poin), lalu "Saran" (3 poin konkret dan bisa langsung dilakukan), lalu satu kalimat "Perhatian". Jangan memberi rekomendasi produk investasi tertentu.';
-  const user = 'Berikut data keuangan periode berjalan (JSON, satuan Rupiah). Berikan ringkasan dan saran finansial.\n' + JSON.stringify(snap);
-
-  if(cfg.provider === 'gemini'){
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'x-goog-api-key': cfg.apiKey },
-      body: JSON.stringify({
-        systemInstruction:{ parts:[{ text: system }] },
-        contents:[{ role:'user', parts:[{ text: user }] }],
-        generationConfig:{ temperature:0.5, maxOutputTokens:1200 }
-      })
-    });
-    const data = await res.json().catch(()=>({}));
-    if(!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
-    const txt = (data.candidates?.[0]?.content?.parts || []).map(p=>p.text||'').join('').trim();
-    if(!txt) throw new Error('AI tidak mengembalikan teks.');
-    return txt;
-  }
-  if(cfg.provider === 'claude'){
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'x-api-key': cfg.apiKey,
-        'anthropic-version':'2023-06-01',
-        'anthropic-dangerous-direct-browser-access':'true'
-      },
-      body: JSON.stringify({ model, max_tokens:1200, system, messages:[{ role:'user', content:user }] })
-    });
-    const data = await res.json().catch(()=>({}));
-    if(!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
-    const txt = (data.content || []).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
-    if(!txt) throw new Error('AI tidak mengembalikan teks.');
-    return txt;
-  }
-  if(OPENAI_COMPAT_URLS[cfg.provider]){
-    const res = await fetch(OPENAI_COMPAT_URLS[cfg.provider], {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
-      body: JSON.stringify({
-        model, temperature:0.5, max_tokens:1200,
-        messages:[{ role:'system', content:system }, { role:'user', content:user }]
-      })
-    });
-    const data = await res.json().catch(()=>({}));
-    if(!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
-    const txt = String(data.choices?.[0]?.message?.content || '').trim();
-    if(!txt) throw new Error('AI tidak mengembalikan teks.');
-    return txt;
-  }
-  throw new Error('Penyedia AI belum dipilih.');
-}
-
-function renderAIHeader(){
-  const per = currentPeriodInfo();
-  const line = document.getElementById('aiPeriodLine');
-  if(line) line.textContent = `📅 ${periodLabel(per.start, per.end)} · hari ke-${per.elapsed} dari ${per.totalDays}`;
-  const hint = document.getElementById('aiProviderHint');
-  if(hint){
-    const c = loadAIConfig();
-    hint.textContent = aiConfigured()
-      ? `Saran naratif memakai ${AI_PROVIDER_NAMES[c.provider] || c.provider} (diatur di ⚙ → AI).`
-      : 'Analisis lokal aktif. Untuk saran naratif dari AI, isi API key di ⚙ Pengaturan → AI.';
-  }
-}
-
-let aiRunning = false;
-async function runAIAdvice(){
-  if(aiRunning) return;
-  aiRunning = true;
-  const btn = document.getElementById('btnAiRun');
-  const out = document.getElementById('aiOutput');
-  btn.disabled = true;
-  const origText = btn.textContent;
-  btn.textContent = 'Menganalisis…';
-  try{
-    renderAIHeader();
-    const snap = buildFinanceSnapshot();
-    const la = localAnalysis(snap);
-    const li = (arr)=> arr.length ? `<ul>${arr.map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul>` : '';
-    let html = `<div class="ai-metrics">${la.metrics.map(m=>`<div class="ai-metric"><div class="k">${escapeHtml(m.k)}</div><div class="v ${m.cls||''}">${escapeHtml(m.v)}</div></div>`).join('')}</div>`;
-    if(la.findings.length) html += `<div class="ai-card"><h3>🔎 Temuan <span class="ai-tag">Analisis lokal</span></h3>${li(la.findings)}</div>`;
-    if(la.advice.length) html += `<div class="ai-card"><h3>💡 Saran <span class="ai-tag">Analisis lokal</span></h3>${li(la.advice)}</div>`;
-    if(aiConfigured()){
-      html += `<div class="ai-card" id="aiNarrative"><h3>🤖 Ringkasan dari AI</h3><div class="ai-loading">AI sedang menulis ringkasan…</div></div>`;
-    }
-    out.innerHTML = html;
-    if(aiConfigured()){
-      const box = document.getElementById('aiNarrative');
-      try{
-        const txt = await callAI(snap);
-        box.innerHTML = `<h3>🤖 Ringkasan dari AI</h3>${mdLite(txt)}`;
-      }catch(e){
-        console.error('callAI', e);
-        box.innerHTML = `<h3>🤖 Ringkasan dari AI</h3><p>Gagal mengambil saran dari AI: ${escapeHtml(errorMessage(e))}. Periksa API key &amp; koneksi di ⚙ Pengaturan → AI. Analisis lokal di atas tetap bisa dipakai.</p>`;
-      }
-    }
-  }finally{
-    btn.disabled = false;
-    btn.textContent = origText;
-    aiRunning = false;
-  }
-}
-document.getElementById('btnAiRun').addEventListener('click', runAIAdvice);
-
-function fillAISettings(){
-  const c = loadAIConfig();
-  document.getElementById('aiProviderSel').value = c.provider || '';
-  document.getElementById('aiKeyInput').value = c.apiKey || '';
-  document.getElementById('aiModelInput').value = c.model || '';
-}
-document.getElementById('btnSaveAI').addEventListener('click', ()=>{
-  const provider = document.getElementById('aiProviderSel').value;
-  const apiKey = document.getElementById('aiKeyInput').value.trim();
-  const model = document.getElementById('aiModelInput').value.trim();
-  if(provider && !apiKey){ showToast('Isi API key untuk penyedia AI yang dipilih', true); return; }
-  if(saveAIConfig({ provider, apiKey, model })){
-    showToast('Pengaturan AI disimpan ✅');
-    renderAIHeader();
-  }else{
-    showToast('Gagal menyimpan (penyimpanan browser tidak tersedia)', true);
-  }
-});
-
-// Cek penutupan periode lagi saat aplikasi kembali dibuka (mis. dibiarkan di latar belakang melewati pergantian periode)
-document.addEventListener('visibilitychange', ()=>{
-  if(document.visibilityState === 'visible'){
-    closingChecked = false;
-    maybeRunClosingCheck();
-  }
-});
-
-// ---------- Init ----------
-(function init(){
-  attachMoneyFormatting();
-  document.getElementById('txDate').value = todayISO();
-  document.getElementById('goldBuyDate').value = todayISO();
-  updateNotifBtn();
-  if('serviceWorker' in navigator){
-    window.addEventListener('load', ()=>{
-      navigator.serviceWorker.register('sw.js').catch(e=>console.warn('Gagal mendaftarkan service worker', e));
-    });
-  }
-  startApp();
-})();
-</script>
+<script src="boot.js?v=20261022c"></script>
+<script src="app.js?v=20261022" defer></script>
+<script src="sw-register.js?v=20261022c" defer></script>
+<script src="update-check.js" defer></script>
 </body>
 </html>

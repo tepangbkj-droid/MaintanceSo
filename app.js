@@ -764,8 +764,12 @@ const auth = {
         return { user: auth.currentUser, storeName: data.storeName };
     },
     createUserWithEmailAndPassword: async (email, password) => {
+        // HARDENING: pembuatan admin pertama butuh kunci setup (secret MIGRATE_KEY di Worker).
+        const setupKey = (window.prompt('Masukkan kunci setup admin (secret MIGRATE_KEY di Worker):') || '').trim();
+        if (!setupKey)
+            throw new Error('Kunci setup wajib diisi.');
         const res = await __apiFetch(`${WORKER_BASE}/api/bootstrap-admin`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Setup-Key': setupKey },
             body: JSON.stringify({ email, password }),
         });
         const data = await res.json();
@@ -2731,8 +2735,8 @@ function LoginScreen({ onLoggedIn }) {
         setLoading(true);
         try {
             if (adminExists === false) {
-                if (adminPassword.length < 8) {
-                    setError('Password minimal 8 karakter.');
+                if (adminPassword.length < 12) {
+                    setError('Password minimal 12 karakter.');
                     setLoading(false);
                     return;
                 }
@@ -13248,7 +13252,7 @@ function AdminOpsCard({ showAdminToast }) {
         const next = { ...cfg, ...patch };
         setCfg(next);
         try {
-            await pettyApi('/api/ops/config', { method: 'POST', body: { digestEnabled: next.digestEnabled, backupDays: next.backupDays } });
+            await pettyApi('/api/ops/config', { method: 'POST', body: { digestEnabled: next.digestEnabled, backupDays: next.backupDays, appUpdateAuto: next.appUpdateAuto, apkVersion: next.apkVersion || '', apkUrl: next.apkUrl || '' } });
             showAdminToast('✅ Tersimpan.');
         }
         catch (e) {
@@ -13288,6 +13292,16 @@ function AdminOpsCard({ showAdminToast }) {
             React.createElement("p", { className: "text-[10px] text-slate-500" }, `File dikirim ke Telegram admin${cfg.r2 ? ' dan disimpan di R2' : ''}. Berisi data sensitif: simpan di tempat aman.`),
             lb && React.createElement("p", { className: `text-[11px] font-semibold ${lb.ok ? 'text-emerald-700' : 'text-rose-700'}` }, `${lb.ok ? '✅' : '⚠️'} Terakhir: ${new Date(lb.ts).toLocaleString('id-ID')}${lb.size ? ` • ${(lb.size / 1024).toFixed(0)} KB • ${lb.rows} baris` : ''}${lb.error ? ' • ' + lb.error : ''}${lb.warn ? ' • ' + lb.warn : ''}`),
             React.createElement("button", { onClick: () => run('backup', () => pettyApi('/api/ops/backup/run', { method: 'POST', body: {} }), (d) => d.ok ? '✅ Cadangan selesai & terkirim.' : '⚠️ ' + (d.error || d.warn || 'Cadangan gagal')), disabled: busy === 'backup', className: "w-full bg-slate-100 text-slate-700 font-bold py-2 rounded-xl text-xs" }, busy === 'backup' ? 'Mencadangkan...' : 'Cadangkan sekarang')),
+        React.createElement("div", { className: "space-y-1.5" },
+            React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "🔄 Notifikasi update aplikasi"),
+            React.createElement("div", { className: "flex gap-1.5" }, [[false, 'Manual'], [true, 'Otomatis saat deploy']].map(([v, l]) => React.createElement("button", { key: l, onClick: () => saveCfg({ appUpdateAuto: v }), className: chip(!!cfg.appUpdateAuto === v) }, l))),
+            React.createElement("p", { className: "text-[10px] text-slate-500" }, "Setiap kali Anda mengunggah versi baru ke Vercel, pengguna web/PWA melihat banner \"Versi baru tersedia\", dan perangkat APK menerima notifikasi push (maks 1x per 6 jam)."),
+            !cfg.fcm && React.createElement("p", { className: "text-[10px] text-amber-700" }, "⚠️ FCM belum diatur di Worker, jadi push ke APK tidak terkirim. Banner di dalam aplikasi tetap muncul."),
+            cfg.app && cfg.app.ts > 0 && React.createElement("p", { className: "text-[11px] text-slate-600" }, `Terakhir diumumkan: ${new Date(cfg.app.ts).toLocaleString('id-ID')} • ${cfg.app.sent} perangkat${cfg.app.done ? '' : ' (sisanya menyusul)'}`),
+            React.createElement("input", { type: "text", value: cfg.apkVersion || '', onChange: e => setCfg(c => ({ ...c, apkVersion: e.target.value.replace(/[^0-9.]/g, '') })), placeholder: "Versi APK terbaru (mis. 1.2.0) — untuk APK yang bukan memuat web langsung", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs" }),
+            React.createElement("input", { type: "text", value: cfg.apkUrl || '', onChange: e => setCfg(c => ({ ...c, apkUrl: e.target.value.trim() })), placeholder: "Link unduh APK (https://...)", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs" }),
+            React.createElement("button", { onClick: () => saveCfg({}), className: "w-full bg-slate-100 text-slate-700 font-bold py-2 rounded-xl text-xs" }, "Simpan info APK"),
+            React.createElement("button", { onClick: () => run('announce', () => pettyApi('/api/ops/app/announce', { method: 'POST', body: {} }), (d) => `✅ Notifikasi update terkirim ke ${d.sent} perangkat${d.done ? '' : ' — tekan lagi untuk sisanya'}.`), disabled: busy === 'announce', className: "w-full bg-slate-100 text-slate-700 font-bold py-2 rounded-xl text-xs" }, busy === 'announce' ? 'Mengirim...' : 'Umumkan update sekarang')),
         React.createElement("div", { className: "space-y-1.5" },
             React.createElement("button", { onClick: async () => { if (audit) { setAudit(null); return; } try { const d = await pettyApi('/api/ops/audit?limit=60'); setAudit(d.items || []); } catch (e) { showAdminToast('⚠️ ' + e.message); } }, className: "w-full bg-slate-100 text-slate-700 font-bold py-2 rounded-xl text-xs" }, audit ? 'Sembunyikan riwayat aktivitas' : '🕵️ Lihat riwayat aktivitas pengguna'),
             audit && (audit.length === 0 ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "Belum ada aktivitas tercatat.") : audit.map((a, i) => React.createElement("p", { key: i, className: "text-[10px] text-slate-600 break-all" }, `${new Date(a.ts).toLocaleString('id-ID')} • ${a.role}${a.store_id ? ' (' + a.store_id + ')' : ''} • ${a.method} ${a.path}`))))));
@@ -15860,7 +15874,140 @@ function __initVoiceInput() {
         refresh(); });
 }
 
+// ===== PEMBERITAHU UPDATE APLIKASI (2026-10) =====
+// Web/PWA/APK-yang-memuat-URL-Vercel: banner "Versi baru tersedia" -> Perbarui (hapus cache + muat ulang).
+// APK yang membungkus file lokal (bundled): bandingkan versi APK terpasang dengan versi terbaru dari admin -> tombol Unduh.
+function __semverLess(a, b) {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const x = pa[i] || 0, y = pb[i] || 0;
+        if (x !== y)
+            return x < y;
+    }
+    return false;
+}
+function __initAppUpdateWatcher() {
+    if (window.__updInit)
+        return;
+    window.__updInit = true;
+    const KEY = 'tb_applied_fp';
+    const lsGet = () => { try {
+        return localStorage.getItem(KEY) || '';
+    }
+    catch (e) {
+        return '';
+    } };
+    const lsSet = (v) => { try {
+        localStorage.setItem(KEY, v);
+    }
+    catch (e) { } };
+    const seenGet = () => { try {
+        return sessionStorage.getItem('tb_upd_seen') || '';
+    }
+    catch (e) {
+        return '';
+    } };
+    const seenSet = (v) => { try {
+        sessionStorage.setItem('tb_upd_seen', v);
+    }
+    catch (e) { } };
+    const bundled = () => isNativeApp() && location.origin !== PUBLIC_APP_BASE;
+    let bar = null;
+    const hideBar = () => { if (bar) {
+        bar.remove();
+        bar = null;
+    } };
+    const showBar = (text, btnText, onClick, key) => {
+        if (seenGet() === key || bar)
+            return;
+        bar = document.createElement('div');
+        bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:100001;background:#6b21a8;color:#fff;display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.3)';
+        const t = document.createElement('span');
+        t.style.cssText = 'flex:1;font-weight:600';
+        t.textContent = text;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = btnText;
+        b.style.cssText = 'border:none;border-radius:9999px;padding:6px 14px;font-weight:700;font-size:12px;background:#fff;color:#6b21a8';
+        b.addEventListener('click', onClick);
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.textContent = '×';
+        x.setAttribute('aria-label', 'Tutup');
+        x.style.cssText = 'border:none;background:transparent;color:#fff;font-size:20px;line-height:1;padding:0 4px';
+        x.addEventListener('click', () => { seenSet(key); hideBar(); });
+        bar.append(t, b, x);
+        document.body.appendChild(bar);
+    };
+    const applyWeb = async (fp) => {
+        lsSet(fp);
+        try {
+            if ('serviceWorker' in navigator)
+                for (const r of await navigator.serviceWorker.getRegistrations())
+                    await r.unregister();
+            if (window.caches)
+                for (const k of await caches.keys())
+                    await caches.delete(k);
+        }
+        catch (e) { /* tetap muat ulang */ }
+        location.reload();
+    };
+    const openUrl = (url) => {
+        if (!/^https:\/\//.test(url))
+            return;
+        const br = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser;
+        if (br && br.open)
+            br.open({ url });
+        else
+            window.open(url, '_system');
+    };
+    async function check() {
+        try {
+            const res = await fetch(`${WORKER_BASE}/api/app/version`, { cache: 'no-store' });
+            const d = res.ok ? await res.json() : null;
+            if (!d)
+                return;
+            if (bundled()) {
+                const plug = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+                const info = plug && plug.getInfo ? await plug.getInfo() : null;
+                if (info && d.apkVersion && d.apkUrl && __semverLess(info.version, d.apkVersion))
+                    showBar('📲 Update aplikasi tersedia (v' + d.apkVersion + ')', 'Unduh', () => openUrl(d.apkUrl), 'apk' + d.apkVersion);
+                return;
+            }
+            if (!d.fp)
+                return;
+            const applied = lsGet();
+            if (!applied) {
+                lsSet(d.fp);
+                return;
+            } // pertama kali di perangkat ini: catat saja
+            if (applied !== d.fp)
+                showBar('🔄 Versi baru tersedia', 'Perbarui', () => applyWeb(d.fp), d.fp);
+        }
+        catch (e) { /* offline / gagal: diam saja */ }
+    }
+    setTimeout(check, 4000);
+    setInterval(() => { if (!document.hidden)
+        check(); }, 300000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden)
+        check(); });
+    try {
+        const plug = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+        if (plug && plug.addListener)
+            plug.addListener('appStateChange', (s) => { if (s && s.isActive)
+                check(); });
+    }
+    catch (e) { }
+    window.__updCheck = check;
+}
+
 const __startVoiceAssistant = () => { try {
+    __initAppUpdateWatcher();
+}
+catch (e) {
+    console.error('Pemberitahu update gagal dimulai:', e);
+}
+try {
     __initVoiceInput();
 }
 catch (e) {

@@ -8,10 +8,8 @@
 
   <meta name="description" content="Aplikasi internal Tarobun SO Mandiri Hub untuk pencatatan penjualan, stok inventory, dan koordinasi pusat.">
 
-  <!-- Pengerasan keamanan dasar sisi browser (mitigasi injeksi script/clickjacking) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://unpkg.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://unpkg.com https://fonts.gstatic.com; connect-src 'self' https://*.workers.dev https://unpkg.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self';">
-  <meta http-equiv="X-Content-Type-Options" content="nosniff">
-  <meta http-equiv="X-Frame-Options" content="DENY">
+  <!-- KEAMANAN: CSP, X-Frame-Options, nosniff, dll sekarang dikirim sebagai HEADER HTTP lewat vercel.json
+       (frame-ancestors & X-Frame-Options diabaikan browser bila hanya lewat tag <meta>). -->
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <!-- KEAMANAN (hardening, 2026-08): cegah web ini muncul di hasil pencarian Google/Bing dkk.
        Ini aplikasi internal toko, bukan halaman publik -- tidak perlu (dan tidak boleh)
@@ -27,159 +25,18 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-512.png">
 
-<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" defer></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" defer></script>
+<script src="vendor/react.production.min.js" defer></script>
+<script src="vendor/react-dom.production.min.js" defer></script>
 
 
 <!-- Firebase SDK dihapus — sudah diganti Cloudflare Worker (lihat shim di bawah) -->
 
 <!-- Lucide -->
-<script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.min.js" defer crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js" defer></script>
+<script src="vendor/lucide.min.js" defer></script>
+<script src="vendor/qrcode.min.js" defer></script>
 
-<!-- Tipografi: Inter (teks/UI/data, sangat jelas di ukuran kecil) + Plus Jakarta Sans (judul/heading,
-     lebih berkarakter & modern). Dimuat dari unpkg (sudah di-whitelist di CSP di atas) supaya tidak
-     perlu menambah domain baru (fonts.googleapis.com/fonts.gstatic.com TIDAK ada di CSP saat ini). -->
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/400.css" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/500.css" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/600.css" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/700.css" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/600.css" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/800.css" media="print" onload="this.media='all'">
-
-  <!-- Preconnect: siapkan koneksi ke CDN Tailwind lebih awal supaya lebih cepat & lebih kecil
-       kemungkinan timeout di jaringan lambat. -->
-
-  <script>
-    // PENTING: window.tailwind.config HARUS sudah ada SEBELUM script CDN Tailwind
-    // dieksekusi (bukan setelah window "load" seperti sebelumnya — itu bug, karena
-    // Tailwind CDN langsung men-scan & apply style begitu scriptnya jalan, bukan
-    // menunggu window load). Makanya config ini didefinisikan lebih dulu, lalu baru
-    // script Tailwind CDN kita masukkan lewat loader di bawah.
-    window.tailwind = window.tailwind || {};
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              purple: '#6D28D9',
-              dark: '#1E1B4B',
-              // Skala brand tambahan — dipakai utk gradient header/tombol utama yang lebih
-              // dalam & "premium" dibanding purple-800/indigo-900 polos, tetap satu keluarga
-              // warna dengan brand.purple yang sudah ada supaya identitas tidak berubah drastis.
-              50:  '#F5F3FF',
-              100: '#EDE9FE',
-              600: '#7C3AED',
-              700: '#6D28D9',
-              800: '#5B21B6',
-              900: '#3B1370',
-            },
-            // Aksen hangat (nuansa "roti panggang") — dipakai TIPIS-TIPIS untuk highlight,
-            // badge, atau progress, bukan warna dominan, supaya dashboard tidak monoton ungu.
-            wheat: {
-              50:  '#FFFBEB',
-              100: '#FEF3C7',
-              500: '#D97706',
-              600: '#B45309',
-            },
-            ink: '#1E1B2E',
-          },
-          fontFamily: {
-            // font-sans (body/UI/data) tetap default di seluruh app tanpa perlu ganti className
-            // manapun; font-display dipakai eksplisit hanya di judul-judul besar/hero.
-            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-            display: ['"Plus Jakarta Sans"', 'Inter', 'ui-sans-serif', 'sans-serif'],
-          },
-          boxShadow: {
-            // Bayangan lembut & "mengambang", lebih halus dari shadow-lg/xl bawaan Tailwind
-            // yang cenderung keras — dipakai utk kartu & modal supaya kesan "ringan".
-            soft: '0 2px 8px -2px rgba(30, 27, 46, 0.06), 0 8px 24px -8px rgba(30, 27, 46, 0.10)',
-            softHover: '0 4px 14px -2px rgba(30, 27, 46, 0.08), 0 16px 32px -12px rgba(30, 27, 46, 0.16)',
-          },
-          keyframes: {
-            shimmer: {
-              '100%': { transform: 'translateX(100%)' },
-            },
-          },
-          animation: {
-            shimmer: 'shimmer 1.6s ease-in-out infinite',
-          },
-        }
-      }
-    };
-  </script>
-
-  <!-- Loader Tailwind CDN dengan AUTO-RETRY (ditambahkan 2026-09): kalau gagal dimuat
-       karena jaringan lambat/putus (bukan diblokir CSP), otomatis dicoba ulang sampai
-       4 kali dengan jeda makin lama, sebelum akhirnya menampilkan tombol "Muat Ulang"
-       kalau memang semua percobaan gagal. Ini supaya tampilan tidak langsung polos
-       gara-gara satu kali gagal fetch seperti kemarin. -->
-  <script>
-    (function () {
-      // Beberapa jaringan/ISP (terutama filter DNS di Indonesia) salah mengklasifikasikan
-      // domain cdn.tailwindcss.com sebagai situs "gambling" dan memblokirnya di level DNS —
-      // ini masalah yang sudah dikenal luas, bukan soal server Tailwind down. Koneksi bisa
-      // saja cepat & normal, tapi domain SPESIFIK ini tetap gagal di-resolve.
-      //
-      // Solusinya: sediakan SUMBER CADANGAN dari domain lain (unpkg.com, yang sudah
-      // whitelisted di CSP situs ini) yang meng-hosting file identik lewat paket npm
-      // "tailwindcss-cdn". Kalau sumber utama gagal berkali-kali, otomatis pindah ke
-      // sumber cadangan — jadi tetap jalan meski domain utamanya diblokir jaringan.
-      var SOURCES = [
-        'https://cdn.tailwindcss.com',
-        'https://unpkg.com/tailwindcss-cdn@3.4.10/tailwindcss.js'
-      ];
-      var RETRY_PER_SOURCE = 2;
-      var sourceIndex = 0;
-      var attempt = 0;
-
-      function loadTailwindCDN() {
-        attempt++;
-        var s = document.createElement('script');
-        var base = SOURCES[sourceIndex];
-        var sep = base.indexOf('?') === -1 ? '?' : '&';
-        // parameter retry di URL cuma buat cache-busting supaya browser tidak
-        // memakai ulang response gagal/parsial yang mungkin sempat ke-cache.
-        s.src = base + sep + 'retry=' + attempt;
-        s.crossOrigin = 'anonymous';
-        s.onerror = function () {
-          if (attempt < RETRY_PER_SOURCE) {
-            setTimeout(loadTailwindCDN, attempt * 1000); // jeda 1s, 2s, ...
-          } else if (sourceIndex < SOURCES.length - 1) {
-            // sumber ini sudah dicoba beberapa kali & tetap gagal -> pindah ke cadangan
-            sourceIndex++;
-            attempt = 0;
-            loadTailwindCDN();
-          } else {
-            showReloadBanner();
-          }
-        };
-        document.head.appendChild(s);
-      }
-
-      function showReloadBanner() {
-        function append() {
-          var b = document.createElement('div');
-          b.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:999999;' +
-            'background:#B91C1C;color:#fff;padding:10px 14px;font-family:sans-serif;' +
-            'font-size:13px;text-align:center;';
-          b.innerHTML = 'Gagal memuat tampilan (koneksi bermasalah). ' +
-            '<button onclick="location.reload()" style="margin-left:8px;background:#fff;' +
-            'color:#B91C1C;border:none;padding:4px 10px;border-radius:4px;font-weight:600;">' +
-            'Muat Ulang</button>';
-          document.body.appendChild(b);
-        }
-        if (document.body) { append(); } else { document.addEventListener('DOMContentLoaded', append); }
-      }
-
-      // PERBAIKAN (2026-10): gaya Tailwind sekarang dari file statis tailwind.css (dibuat sekali saat build,
-      // sama persis hasilnya, tanpa menunggu CDN & tanpa kompilasi di HP) -> tampilan tidak bisa "polos"
-      // lagi gara-gara CDN lambat/diblokir. CDN ini TIDAK dimuat lagi kecuali tailwind.css gagal dimuat
-      // (lihat onerror pada <link> tailwind.css di bawah), sebagai cadangan terakhir.
-      window.__tbLoadTailwindCDN = loadTailwindCDN;
-    })();
-  </script>
+<!-- Tipografi: Inter + Plus Jakarta Sans, di-host sendiri (vendor/fonts.css) -> tidak ada dependensi CDN. -->
+<link rel="stylesheet" href="vendor/fonts.css">
 
   <!-- Animasi untuk pop-up notifikasi Update Sistem -->
   <style>
@@ -405,7 +262,7 @@
   </style>
   <!-- Gaya utama (Tailwind statis). Diletakkan PALING AKHIR di <head> supaya urutannya sama seperti dulu
        (Tailwind CDN menyisipkan <style>-nya setelah style inline halaman). -->
-  <link rel="stylesheet" href="tailwind.css?v=20261020" onerror="window.__tbLoadTailwindCDN&&window.__tbLoadTailwindCDN()">
+  <link rel="stylesheet" href="tailwind.css?v=20261020">
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
 
@@ -425,95 +282,9 @@
     </div>
   </div>
 
-<script>
-  // ==========================================
-  // FIX: konflik lucide.createIcons() vs React DOM reconciliation
-  // ==========================================
-  // lucide.createIcons() mengganti elemen <i data-lucide="..."> LANGSUNG di DOM nyata
-  // (di luar sepengetahuan React) menjadi <svg>. React tetap menyimpan elemen <i> lama
-  // di Fiber tree miliknya. Begitu React nanti perlu menghapus/memindah bagian itu (mis.
-  // tab berpindah, list berubah, komponen unmount), React memanggil
-  // parentNode.removeChild(elemenLamaYangSudahDiganti) -- tapi elemen itu SUDAH TIDAK ADA
-  // di DOM (sudah diganti Lucide), sehingga browser melempar:
-  //   "NotFoundError: Failed to execute 'removeChild' on 'Node': The node to be removed
-  //    is not a child of this node."
-  // Ini SELALU tertangkap oleh AppErrorBoundary sebagai "kendala tampilan" walau
-  // sebenarnya tidak ada bug pada data/logika aplikasi sama sekali -- murni konflik dua
-  // library yang sama-sama memanipulasi DOM.
-  //
-  // Perbaikan MENYELURUH (mengganti seluruh ikon jadi komponen React lucide-react) butuh
-  // menyentuh ribuan baris JSX, terlalu berisiko dilakukan sekaligus. Solusi standar &
-  // aman yang dipakai di sini: buat removeChild/insertBefore "defensif" -- kalau node yang
-  // diminta dihapus/disisipkan TERNYATA bukan child dari parent tsb (karena sudah
-  // diubah pihak lain di luar React), JANGAN lempar error, cukup diam saja (tidak ada apa
-  // pun yang perlu dihapus/dipindah lagi). Ini tidak mengubah tampilan/perilaku apa pun
-  // yang terlihat pengguna -- hanya mencegah crash akibat DOM sudah berubah duluan.
-  (function () {
-    const origRemoveChild = Node.prototype.removeChild;
-    Node.prototype.removeChild = function (child) {
-      if (child.parentNode !== this) {
-        if (console && console.warn) {
-          console.warn('[Tarobun] Diabaikan: removeChild pada node yang sudah tidak jadi child (biasanya akibat lucide.createIcons()).', child);
-        }
-        return child;
-      }
-      return origRemoveChild.call(this, child);
-    };
-
-    const origInsertBefore = Node.prototype.insertBefore;
-    Node.prototype.insertBefore = function (newNode, refNode) {
-      if (refNode && refNode.parentNode !== this) {
-        if (console && console.warn) {
-          console.warn('[Tarobun] Diabaikan: insertBefore dengan referenceNode yang sudah tidak jadi child (biasanya akibat lucide.createIcons()).', refNode);
-        }
-        return this.appendChild(newNode);
-      }
-      return origInsertBefore.call(this, newNode, refNode);
-    };
-  })();
-</script>
-<script>
-// PEMANTAU MUAT AWAL (2026-10): kalau aplikasi gagal/lama tampil, laporkan ke Admin (menu Monitoring)
-// dan beri tombol "Muat ulang" ke user. Berdiri sendiri (tidak butuh React) supaya tetap jalan
-// walau app.js / CDN gagal dimuat.
-(function () {
-  var API = 'https://tarobun-api.tepangbkj8.workers.dev', sent = {};
-  function did() { try { var d = localStorage.getItem('tbmon_did'); if (!d) { d = (Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 24); localStorage.setItem('tbmon_did', d); } return d; } catch (e) { return 'nols' + Date.now().toString(36); } }
-  function rep(msg, stack) {
-    if (sent[msg]) return; sent[msg] = 1;
-    try { fetch(API + '/api/monitor/report', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, keepalive: true, body: JSON.stringify({ events: [{ kind: 'boot', message: msg, stack: stack || '', path: location.pathname, deviceId: did(), appVer: '20261020', ua: navigator.userAgent.slice(0, 160) }] }) }).catch(function () {}); } catch (e) {}
-  }
-  window.addEventListener('error', function (e) {
-    if (!document.getElementById('boot-splash')) return;
-    var t = e && e.target;
-    if (t && t.tagName === 'SCRIPT') rep('Gagal memuat script: ' + String(t.src || '').split('?')[0].slice(0, 120));
-    else if (e && e.message && !/^Script error/i.test(e.message)) rep('Error saat memuat: ' + e.message, (e.filename || '') + ':' + (e.lineno || 0));
-  }, true);
-  setTimeout(function () {
-    var el = document.getElementById('boot-splash'); if (!el) return;
-    rep('Aplikasi belum tampil setelah 20 detik');
-    var t = el.lastElementChild && el.lastElementChild.lastElementChild;
-    if (t) t.innerHTML = 'Memuat lebih lama dari biasanya.<br><button onclick="location.reload()" style="margin-top:10px;padding:8px 18px;border:0;border-radius:10px;background:#fff;color:#581c87;font-weight:700;font-size:13px;">Muat ulang</button>';
-  }, 20000);
-})();
-</script>
+<script src="boot.js?v=20261022"></script>
 <script src="app.js?v=20261020" defer></script>
-  <script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      try {
-        // BUGFIX (2026-07-18): sama seperti Notification.requestPermission(), di
-        // sebagian WebView pendaftaran Service Worker juga bisa gagal SECARA SINKRON
-        // (bukan cuma promise reject), jadi .catch() saja tidak cukup — dibungkus
-        // try/catch juga. Kalau gagal, cukup diam saja; app tetap jalan normal tanpa
-        // fitur offline/notifikasi push, tidak menghalangi apa pun yang lain.
-        navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW gagal:', err));
-      } catch (err) {
-        console.log('SW gagal (sinkron):', err);
-      }
-    });
-  }
-</script>
+<script src="sw-register.js?v=20261022" defer></script>
 <script src="update-check.js" defer></script>
 </body>
 </html>

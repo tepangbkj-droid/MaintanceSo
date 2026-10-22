@@ -1,0 +1,13 @@
+# Taruh di repo sebagai: .github/dependabot.yml
+# Dependabot otomatis membuat Pull Request untuk menaikkan versi GitHub Actions & paket npm,
+# sehingga tidak ada versi lama yang rentan dibiarkan.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -2453,6 +2453,7 @@ function PsikotesScoresView({ test, stores, onBack }) {
                             React.createElement("button", { onClick: () => handleDeleteLink(l), className: "text-slate-400 hover:text-rose-600 p-1.5" },
                                 React.createElement("i", { "data-lucide": "trash-2", className: "w-3.5 h-3.5" })))) : statusBadge(l.attempt_status),
                         l.attempt_status === 'blocked' && (React.createElement("button", { onClick: () => handleUnblock(l.attempt_id), className: "text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg" }, "Buka Blokir")),
+                        l.status !== 'completed' && l.attempt_status !== 'completed' && (l.floating_request === 1 || l.allow_floating === 1) && (React.createElement("button", { onClick: async () => { await __apiFetch(`${WORKER_BASE}/api/psikotes/ojt-links/${l.id}/floating`, { method: 'POST', headers: { ...__authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ allow: l.allow_floating !== 1 }) }); loadLinks(); }, className: `text-[11px] font-bold px-2.5 py-1.5 rounded-lg ${l.allow_floating === 1 ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-800'}` }, l.allow_floating === 1 ? 'Ngambang: Diizinkan (Cabut)' : 'Izinkan Ngambang')),
                         l.attempt_id && (l.attempt_status === 'completed' || l.attempt_status === 'blocked') && (React.createElement("button", { onClick: () => openAnswerDetail(l.attempt_id), className: "text-[11px] font-bold bg-purple-100 text-purple-800 px-2.5 py-1.5 rounded-lg" }, answerDetailId === l.attempt_id ? 'Tutup' : 'Kunci Jawaban')))),
                 answerDetailId === l.attempt_id && (React.createElement(AnswerKeyPanel, { loading: answerDetailLoading, answers: answerDetail })))))))),
         React.createElement("div", { className: "space-y-3" },
@@ -14060,6 +14061,21 @@ function OjtLinksBox({ test, showToast }) {
     };
     useEffect(() => { load(); }, [test.id]);
     const mk = (token) => `${PUBLIC_APP_BASE}/psikotes.html?ojt=${token}`;
+    // (2026-10) Izin aplikasi ngambang & buka blokir oleh Store Leader.
+    const setFloating = async (l, allow) => {
+        try {
+            await pettyApi(`/api/ojt/tests/${test.id}/floating`, { method: 'POST', body: { linkId: l.id, allow } });
+            showToast(allow ? `✅ ${l.ojt_name} boleh memakai aplikasi ngambang` : `Izin aplikasi ngambang ${l.ojt_name} dicabut`);
+            await load();
+        } catch (e) { showToast('⚠️ ' + e.message); }
+    };
+    const unblockAttempt = async (l) => {
+        try {
+            await pettyApi(`/api/ojt/tests/${test.id}/unblock`, { method: 'POST', body: { attemptId: l.attempt_id } });
+            showToast(`✅ Blokir ${l.ojt_name} dibuka`);
+            await load();
+        } catch (e) { showToast('⚠️ ' + e.message); }
+    };
     // Hanya OJT terdaftar yang belum punya link di paket ini.
     const linked = new Set(links.map(l => l.person_id).filter(Boolean));
     const linkedNames = new Set(links.map(l => ojtMdNorm(l.ojt_name)));
@@ -14128,13 +14144,25 @@ function OjtLinksBox({ test, showToast }) {
             React.createElement("button", { onClick: add, disabled: busy || !personId, className: "bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold px-3 rounded-lg" }, busy ? '...' : 'Buat Link'))),
         loading ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "Memuat...") : links.length === 0 ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "Belum ada link.") : links.map(l => {
             const done = l.status === 'used' && l.attempt_status === 'completed';
-            return (React.createElement("div", { key: l.id, className: "flex items-center gap-2 bg-white rounded-lg border border-slate-200 px-2.5 py-2" },
+            const extra = !done && (l.floating_request === 1 || l.allow_floating === 1 || l.attempt_status === 'blocked')
+                ? React.createElement("div", { className: "flex flex-wrap items-center gap-1.5" },
+                    l.attempt_status === 'blocked' && React.createElement("span", { className: "text-[10px] bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded-md" }, "Diblokir: " + (l.blocked_reason || 'keluar halaman')),
+                    l.attempt_status === 'blocked' && React.createElement("button", { onClick: () => unblockAttempt(l), className: "text-[11px] font-bold bg-emerald-600 text-white px-2.5 py-1 rounded-md" }, "Buka Blokir"),
+                    l.floating_request === 1 && l.allow_floating !== 1 && React.createElement(React.Fragment, null,
+                        React.createElement("span", { className: "text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-1 rounded-md" }, "Minta izin aplikasi ngambang"),
+                        React.createElement("button", { onClick: () => setFloating(l, true), className: "text-[11px] font-bold bg-emerald-600 text-white px-2.5 py-1 rounded-md" }, "Izinkan"),
+                        React.createElement("button", { onClick: () => setFloating(l, false), className: "text-[11px] font-bold bg-slate-200 text-slate-700 px-2.5 py-1 rounded-md" }, "Tolak")),
+                    l.allow_floating === 1 && React.createElement(React.Fragment, null,
+                        React.createElement("span", { className: "text-[10px] bg-sky-100 text-sky-700 font-bold px-2 py-1 rounded-md" }, "Aplikasi ngambang diizinkan"),
+                        React.createElement("button", { onClick: () => setFloating(l, false), className: "text-[11px] font-bold bg-slate-200 text-slate-700 px-2.5 py-1 rounded-md" }, "Cabut")))
+                : null;
+            return (React.createElement("div", { key: l.id, className: "bg-white rounded-lg border border-slate-200 px-2.5 py-2 space-y-1.5" }, React.createElement("div", { className: "flex items-center gap-2" },
                 React.createElement("div", { className: "min-w-0 flex-1" },
                     React.createElement("p", { className: "text-xs font-semibold text-slate-800 truncate" }, l.ojt_name),
                     React.createElement("p", { className: "text-[10px] text-slate-400" }, l.status === 'used' ? (done ? `Selesai • skor ${l.auto_score ?? '-'}` : 'Sudah dibuka') : 'Belum dipakai')),
                 done && React.createElement("button", { onClick: () => sendTg(l), disabled: sending === l.id, className: "text-[11px] font-bold text-sky-700 px-2 py-1 bg-sky-50 disabled:opacity-50 rounded-md" }, sending === l.id ? 'Kirim...' : 'Kirim Telegram'),
                 !done && React.createElement("button", { onClick: () => copy(l), className: "text-[11px] font-bold text-indigo-700 px-2 py-1 bg-indigo-50 rounded-md" }, "Salin"),
-                l.status === 'unused' && React.createElement("button", { onClick: () => del(l), className: "text-[11px] font-bold text-rose-600 px-2 py-1 bg-rose-50 rounded-md" }, "Hapus")));
+                l.status === 'unused' && React.createElement("button", { onClick: () => del(l), className: "text-[11px] font-bold text-rose-600 px-2 py-1 bg-rose-50 rounded-md" }, "Hapus")), extra));
         })));
 }
 function LeaderOjtQuestionEditor({ test, onBack, showToast }) {

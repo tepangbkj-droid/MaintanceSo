@@ -140,6 +140,27 @@ function Shell({ children }) {
 // Yang TIDAK bisa dilakukan web: memblokir notifikasi, mendeteksi aplikasi ngambang secara
 // langsung, atau mengunci volume SISTEM HP. Itu dijaga lewat deklarasi peserta + deteksi perilaku.
 // ==========================================================================
+// Jembatan ke plugin native "PsikotesGuard" (hanya ada kalau halaman dibuka di APK Tarobun terbaru).
+// Native: deteksi aplikasi ngambang, blok notifikasi (Jangan Ganggu), alarm yang tetap bunyi di latar belakang.
+const NativeGuard = (() => {
+  const get = () => {
+    try {
+      const C = window.Capacitor;
+      if (!C || !C.isNativePlatform || !C.isNativePlatform()) return null;
+      if (C.isPluginAvailable && !C.isPluginAvailable('PsikotesGuard')) return null;
+      return (C.Plugins && C.Plugins.PsikotesGuard) || null;
+    } catch (e) { return null; }
+  };
+  return { plugin: get, available: () => !!get() };
+})();
+const natCall = (method, args) => {
+  try {
+    const p = NativeGuard.plugin();
+    if (!p || typeof p[method] !== 'function') return Promise.resolve(null);
+    return Promise.resolve(p[method](args || {})).catch(() => null);
+  } catch (e) { return Promise.resolve(null); }
+};
+
 const PsikotesGuard = (() => {
   let siren = null, ringing = false, armed = false, fsEntered = false;
   let enforceTimer = null, vibTimer = null, titleTimer = null, wakeLock = null;
@@ -170,6 +191,7 @@ const PsikotesGuard = (() => {
 
   // WAJIB dipanggil dari dalam tap/klik pengguna (syarat autoplay audio & fullscreen).
   function arm() {
+    if (NativeGuard.available()) { armed = true; return; } // di APK: alarm/layar dijaga native
     try {
       if (!siren) {
         siren = new Audio(buildSirenUrl());
@@ -222,6 +244,7 @@ const PsikotesGuard = (() => {
   }
 
   function release() {
+    natCall('end');
     stopAlarm();
     try { if (wakeLock) wakeLock.release(); } catch (e) {}
     wakeLock = null;
@@ -270,7 +293,10 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
   const [ackAlarm, setAckAlarm] = useState(false);
   const [blockReason, setBlockReason] = useState('leave');
   const [fsLost, setFsLost] = useState(false);
-  const checklistOk = (allowFloating || ackFloating) && ackNotif && ackAlarm;
+  const native = NativeGuard.available();           // true jika dibuka di APK Tarobun yang sudah punya plugin pengaman
+  const [nativeSt, setNativeSt] = useState(null);   // {overlay, dndGranted} dari native
+  const armedRef = useRef(false);
+  const checklistOk = (allowFloating || ackFloating) && (native ? !!(nativeSt && nativeSt.dndGranted) : (ackNotif && ackAlarm));
 
   useEffect(() => { scheduleLucideIcons(); });
 
@@ -391,6 +417,7 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
         setTimerSeconds(prev => (prev !== null ? prev : data.remainingSeconds));
       }
       if (data.allowFloating) setAllowFloating(true);
+      if (armedRef.current && NativeGuard.available()) await nativeBegin(att, data.allowFloating);
       setAttempt(att);
       return true;
     } catch (e) { return false; }
@@ -418,10 +445,35 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
     return () => clearInterval(iv);
   }, [assigned, floatingRequested, allowFloating, phase]);
 
+  // Di APK: pantau status native (izin Jangan Ganggu + deteksi aplikasi ngambang) selama di layar persiapan.
+  useEffect(() => {
+    if (!native) return;
+    if (!(phase === 'confirm' || phase === 'form' || (phase === 'taking' && !armedUi))) return;
+    let stop = false;
+    const tick = async () => { const st = await natCall('precheck'); if (!stop && st) setNativeSt(st); };
+    tick();
+    const iv = setInterval(tick, 1500);
+    return () => { stop = true; clearInterval(iv); };
+  }, [native, phase, armedUi]);
+
+  const nativeBegin = (att, allow) => natCall('begin', {
+    flagUrl: `${WORKER_BASE}/api/psikotes/public/attempt/${att.attemptId}/flag-leave`,
+    attemptSecret: att.attemptSecret,
+    allowFloating: !!allow,
+  });
+
   const handleStart = async () => {
     if (!assigned && (!name.trim() || !penempatan.trim())) return;
     if (!checklistOk) return;
-    PsikotesGuard.arm();   // di dalam tap pengguna: buka kunci alarm + layar penuh + jaga layar menyala
+    if (native) {
+      // Sentuhan pada tombol Mulai ini sendiri dipakai untuk memeriksa apakah ada aplikasi ngambang di atas layar.
+      const st = await natCall('precheck');
+      if (st && st.overlay && !allowFloating) { setErrorMsg('Terdeteksi aplikasi ngambang di atas layar. Tutup dulu semuanya, atau minta izin Store Leader.'); return; }
+      if (st && !st.dndGranted) { setErrorMsg('Izin "Jangan Ganggu" belum diberikan, notifikasi belum bisa diblokir.'); return; }
+      setErrorMsg('');
+    }
+    PsikotesGuard.arm();   // web: harus di dalam tap pengguna (buka kunci alarm + layar penuh); APK: ditangani native
+    armedRef.current = true;
     setArmedUi(true);
     setSubmittingStart(true);
     try {
@@ -434,6 +486,8 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       const attemptInfo = { attemptId: data.attemptId, attemptSecret: data.attemptSecret };
       localStorage.setItem(storageKey, JSON.stringify(attemptInfo));
       setAttempt(attemptInfo);
+      if (data.allowFloating) setAllowFloating(true);
+      if (native) await nativeBegin(attemptInfo, data.allowFloating || allowFloating);
       setQuestions(data.questions);
       if (data.timer_minutes) {
         setTimerSeconds(data.timer_minutes * 60);
@@ -474,28 +528,30 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
     if (phase !== 'taking' || !attempt || !armedUi) return;
     let blurTimer = null, resizeTimer = null, done = false;
     const isTouch = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
-    const flag = (reason) => {
+    const flag = (reason, fromNative) => {
       if (done) return; done = true;
-      const payload = JSON.stringify({ attemptSecret: attempt.attemptSecret, reason });
-      try {
-        navigator.sendBeacon
-          ? navigator.sendBeacon(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, new Blob([payload], { type: 'application/json' }))
-          : fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});
-      } catch (e) {}
-      PsikotesGuard.startAlarm();
+      if (!fromNative) {
+        const payload = JSON.stringify({ attemptSecret: attempt.attemptSecret, reason });
+        try {
+          navigator.sendBeacon
+            ? navigator.sendBeacon(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, new Blob([payload], { type: 'application/json' }))
+            : fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});
+        } catch (e) {}
+        if (native) natCall('reportViolation', { reason }); else PsikotesGuard.startAlarm();
+      }
       setBlockReason(reason);
       setPhase('blocked');
     };
     const onVisibility = () => { if (document.hidden) flag('leave'); };
     const onPageHide = () => flag('leave');
     const onBlur = () => {
-      if (allowFloating) return;
+      if (allowFloating || native) return; // di APK, fokus dijaga native
       clearTimeout(blurTimer);
       blurTimer = setTimeout(() => { if (!document.hidden && !document.hasFocus()) flag('focus'); }, 700);
     };
     const onFocus = () => clearTimeout(blurTimer);
     const onResize = () => {
-      if (allowFloating || !isTouch) return;
+      if (allowFloating || !isTouch || native) return; // di APK, split-screen sudah dilarang di manifest
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => { if (window.innerWidth < window.screen.width * 0.85) flag('resize'); }, 600);
     };
@@ -506,7 +562,22 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
     window.addEventListener('blur', onBlur);
     window.addEventListener('focus', onFocus);
     window.addEventListener('resize', onResize);
+    // APK: native yang mendeteksi (overlay/fokus/keluar). JS hanya menarik statusnya (juga jadi detak jantung watchdog native).
+    let natIv = null;
+    const onFocusIn = (e) => { if (e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) natCall('setImeActive', { active: true }); };
+    const onFocusOut = () => { natCall('setImeActive', { active: false }); };
+    if (native) {
+      document.addEventListener('focusin', onFocusIn);
+      document.addEventListener('focusout', onFocusOut);
+      natIv = setInterval(async () => {
+        const st = await natCall('getStatus');
+        if (st && st.violation) flag(st.violation, true);
+      }, 700);
+    }
     return () => {
+      clearInterval(natIv);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
       clearTimeout(blurTimer); clearTimeout(resizeTimer);
       document.removeEventListener('visibilitychange', onVisibility);
       document.removeEventListener('fullscreenchange', onFs);
@@ -515,7 +586,7 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('resize', onResize);
     };
-  }, [phase, attempt, armedUi, allowFloating]);
+  }, [phase, attempt, armedUi, allowFloating, native]);
 
   // Alarm berhenti begitu peserta kembali ke halaman ini (terlihat + fokus).
   useEffect(() => {
@@ -579,6 +650,23 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
     }
   };
 
+  const NativeStatusBox = () => {
+    const dndOk = !!(nativeSt && nativeSt.dndGranted);
+    const ovl = !!(nativeSt && nativeSt.overlay) && !allowFloating;
+    return (
+      <div className="space-y-1.5">
+        <div className={`text-[11px] rounded-lg px-2.5 py-2 border font-semibold ${dndOk ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+          {dndOk ? '✅ Notifikasi akan diblokir otomatis selama tes (mode Jangan Ganggu).' : (
+            <React.Fragment>⚠️ Izin "Jangan Ganggu" belum diberikan (wajib agar notifikasi diblokir). <button onClick={() => natCall('openDndSettings')} className="underline font-bold">Beri Izin</button>, lalu aktifkan "SO Mandiri Tarobun" dan kembali ke sini.</React.Fragment>
+          )}
+        </div>
+        {ovl && <div className="text-[11px] rounded-lg px-2.5 py-2 border bg-rose-100 border-rose-300 text-rose-800 font-bold">🚫 Terdeteksi aplikasi ngambang di atas layar. Tutup semuanya dulu, lalu ketuk layar sekali untuk memeriksa ulang.</div>}
+        <div className="text-[11px] text-slate-500">Volume alarm otomatis dimaksimalkan dan dikunci saat melanggar.</div>
+      </div>
+    );
+  };
+  const isAndroidBrowser = !native && /Android/i.test(navigator.userAgent) && !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  const appIntentUrl = `intent://${location.host}${location.pathname}${location.search}#Intent;scheme=https;package=com.tarobun.app;S.browser_fallback_url=${encodeURIComponent(location.origin + '/apk/tarobun.apk')};end`;
   const SecurityChecklist = () => (
     <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2.5">
       <p className="text-xs font-bold text-rose-800">🔒 Aturan Keamanan Psikotes</p>
@@ -591,14 +679,21 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
           <span>Saya sudah <strong>menutup/mematikan semua aplikasi ngambang</strong> (bubble chat, jendela melayang, pop-up video, overlay lain).</span>
         </label>
       )}
-      <label className="flex items-start gap-2 text-[11px] text-slate-700">
-        <input type="checkbox" checked={ackNotif} onChange={e => setAckNotif(e.target.checked)} className="mt-0.5" />
-        <span>Saya sudah mengaktifkan <strong>Jangan Ganggu</strong> / mematikan notifikasi HP selama tes (geser layar atas &rarr; ikon Jangan Ganggu).</span>
-      </label>
-      <label className="flex items-start gap-2 text-[11px] text-slate-700">
-        <input type="checkbox" checked={ackAlarm} onChange={e => setAckAlarm(e.target.checked)} className="mt-0.5" />
-        <span>Saya paham alarm akan berbunyi keras jika melanggar. Volume media HP saya sudah dinaikkan.</span>
-      </label>
+      {native ? NativeStatusBox() : (
+        <React.Fragment>
+          <label className="flex items-start gap-2 text-[11px] text-slate-700">
+            <input type="checkbox" checked={ackNotif} onChange={e => setAckNotif(e.target.checked)} className="mt-0.5" />
+            <span>Saya sudah mengaktifkan <strong>Jangan Ganggu</strong> / mematikan notifikasi HP selama tes (geser layar atas &rarr; ikon Jangan Ganggu).</span>
+          </label>
+          <label className="flex items-start gap-2 text-[11px] text-slate-700">
+            <input type="checkbox" checked={ackAlarm} onChange={e => setAckAlarm(e.target.checked)} className="mt-0.5" />
+            <span>Saya paham alarm akan berbunyi keras jika melanggar. Volume media HP saya sudah dinaikkan.</span>
+          </label>
+          {isAndroidBrowser && (
+            <a href={appIntentUrl} className="block text-center text-[11px] font-bold bg-purple-800 text-white rounded-lg py-2">📲 Buka di Aplikasi Tarobun (lebih aman: notifikasi diblokir otomatis)</a>
+          )}
+        </React.Fragment>
+      )}
       {assigned && !allowFloating && (
         <div className="pt-1">
           {floatingRequested ? (
@@ -635,7 +730,8 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       <i data-lucide="shield-alert" className="w-10 h-10 text-rose-500 mx-auto"></i>
       <h2 className="font-bold text-slate-800">Akses Diblokir</h2>
       <p className="text-sm text-slate-500">
-        {blockReason === 'focus' ? 'Layar psikotes kehilangan fokus (terindikasi aplikasi ngambang, jendela lain, atau panel notifikasi dibuka).'
+        {blockReason === 'overlay' ? 'Terdeteksi aplikasi ngambang di atas layar psikotes.'
+          : blockReason === 'focus' ? 'Layar psikotes kehilangan fokus (terindikasi aplikasi ngambang, jendela lain, atau panel notifikasi dibuka).'
           : blockReason === 'resize' ? 'Ukuran layar berubah (terindikasi split-screen atau jendela melayang).'
           : 'Kamu terdeteksi keluar dari halaman psikotes saat sedang mengerjakan.'}
         {' '}Alarm berhenti setelah kamu kembali ke halaman ini. Hubungi Store Leader/admin untuk membuka blokir. Halaman ini akan otomatis lanjut begitu diizinkan.
@@ -766,7 +862,20 @@ function PsikotesOjtPublicPage({ linkToken, assigned }) {
       <i data-lucide="shield-check" className="w-10 h-10 text-purple-700 mx-auto"></i>
       <h2 className="font-bold text-slate-800">Lanjutkan Psikotes</h2>
       <p className="text-xs text-slate-500">Pastikan aplikasi ngambang sudah ditutup dan notifikasi dimatikan. Jika keluar halaman, alarm akan berbunyi dan akses diblokir.</p>
-      <button onClick={() => { PsikotesGuard.arm(); setArmedUi(true); }} className="w-full bg-purple-800 hover:bg-purple-900 text-white font-bold py-3 rounded-xl text-sm">Lanjutkan Mengerjakan</button>
+      {native && NativeStatusBox()}
+      {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
+      <button disabled={native && !(nativeSt && nativeSt.dndGranted)} onClick={async () => {
+        if (native) {
+          const st = await natCall('precheck');
+          if (st && st.overlay && !allowFloating) { setErrorMsg('Terdeteksi aplikasi ngambang di atas layar. Tutup dulu, atau minta izin Store Leader.'); return; }
+          if (st && !st.dndGranted) { setErrorMsg('Izin "Jangan Ganggu" belum diberikan.'); return; }
+          setErrorMsg('');
+        }
+        PsikotesGuard.arm();
+        armedRef.current = true;
+        setArmedUi(true);
+        if (native && attempt) await nativeBegin(attempt, allowFloating);
+      }} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">Lanjutkan Mengerjakan</button>
     </div></Shell>;
   }
   if (phase === 'taking') {

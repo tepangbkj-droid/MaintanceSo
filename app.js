@@ -2799,7 +2799,7 @@ function LoginScreen({ onLoggedIn }) {
                 setError('Akun admin sudah pernah dibuat sebelumnya. Silakan masukkan password admin untuk login.');
             }
             else {
-                setError(adminExists === false ? (err.message || 'Gagal membuat akun admin.') : 'Password admin salah.');
+                setError((err && !err.status) ? 'Tidak bisa terhubung ke server (bukan password salah). Periksa internet atau alamat API, lalu coba lagi.' : (adminExists === false ? (err.message || 'Gagal membuat akun admin.') : 'Password admin salah.'));
             }
         }
         finally {

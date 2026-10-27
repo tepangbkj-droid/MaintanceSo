@@ -11,7 +11,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https://tarobun-api.tepangbkj8.workers.dev https://api.somandiritarobun.my.id; font-src 'self' data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev https://api.somandiritarobun.my.id https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'; upgrade-insecure-requests"
+          "value": "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https://tarobun-api.tepangbkj8.workers.dev https://api.somandiritarobun.my.id; font-src 'self' data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev https://api.somandiritarobun.my.id wss://tarobun-api.tepangbkj8.workers.dev wss://api.somandiritarobun.my.id https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'; upgrade-insecure-requests"
         },
         {
           "key": "Strict-Transport-Security",

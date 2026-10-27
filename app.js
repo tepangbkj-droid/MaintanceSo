@@ -2305,6 +2305,106 @@ function PsikotesQuestionEditor({ test, onBack }) {
         saveError && React.createElement("p", { className: "text-xs text-rose-600 font-semibold text-center" }, saveError),
         React.createElement("button", { onClick: handleSave, disabled: saving, className: "w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm" }, saving ? 'Menyimpan...' : 'Simpan Semua Soal')));
 }
+// ===== STATUS PSIKOTES REAL TIME (2026-10) =====
+// Hemat Cloudflare: 1 WebSocket ke Durable Object (hibernasi) -> server MENDORONG perubahan kecil (status + jumlah
+// terjawab). Tidak ada polling & tidak membaca D1 ulang per kejadian. Tab disembunyikan -> koneksi ditutup.
+// Bila WebSocket tidak tersedia (binding belum aktif / jaringan memblokir) -> otomatis polling 45 dtk, hanya saat tab terlihat.
+function usePsikotesLive(onMsg, onResync) {
+    const cb = React.useRef({ onMsg, onResync });
+    cb.current = { onMsg, onResync };
+    const [mode, setMode] = useState('connecting'); // connecting | live | polling
+    useEffect(() => {
+        let ws = null, stopped = false, retry = 0, fails = 0, retryTimer = null, pollTimer = null, hbTimer = null, renewTimer = null, hadOpen = false;
+        const clearSocketTimers = () => { clearInterval(hbTimer); clearTimeout(renewTimer); hbTimer = null; renewTimer = null; };
+        const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+        const startPolling = () => {
+            if (pollTimer) return;
+            setMode('polling');
+            pollTimer = setInterval(() => { if (!document.hidden && cb.current.onResync) cb.current.onResync(); }, 45000);
+        };
+        const closeSocket = () => { clearSocketTimers(); if (ws) { const w = ws; ws = null; w.onclose = null; try { w.close(); } catch (e) { } } };
+        const schedule = () => {
+            if (stopped || document.hidden) return;
+            if (fails >= 3) startPolling();
+            retry = Math.min(retry + 1, 6);
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(connect, Math.min(60000, 1500 * Math.pow(2, retry)));
+        };
+        const connect = async () => {
+            if (stopped || document.hidden || ws) return;
+            try {
+                const r = await __apiFetch(`${WORKER_BASE}/api/psikotes/live-ticket`, { method: 'POST', headers: __authHeaders() });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || !d.ticket) throw new Error('tiket');
+                if (stopped) return;
+                const sock = new WebSocket(`${WORKER_BASE.replace(/^http/i, 'ws')}/api/psikotes/live?t=${encodeURIComponent(d.ticket)}`);
+                ws = sock;
+                sock.onopen = () => {
+                    retry = 0; fails = 0; stopPolling(); setMode('live');
+                    if (hadOpen && cb.current.onResync) cb.current.onResync(); // sambung ulang -> tutup celah data
+                    hadOpen = true;
+                    hbTimer = setInterval(() => { try { sock.send('ping'); } catch (e) { } }, 55000); // dijawab otomatis tanpa membangunkan server
+                    renewTimer = setTimeout(() => { closeSocket(); connect(); }, 30 * 60 * 1000);     // tiket baru tiap 30 menit
+                };
+                sock.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m && m.t !== 'hello' && cb.current.onMsg) cb.current.onMsg(m); } catch (e) { } };
+                sock.onclose = () => { ws = null; clearSocketTimers(); fails++; schedule(); };
+                sock.onerror = () => { try { sock.close(); } catch (e) { } };
+            } catch (e) { ws = null; fails++; schedule(); }
+        };
+        const onVis = () => {
+            if (document.hidden) { closeSocket(); clearTimeout(retryTimer); }
+            else { retry = 0; connect(); if (hadOpen && cb.current.onResync) cb.current.onResync(); }
+        };
+        document.addEventListener('visibilitychange', onVis);
+        connect();
+        return () => { stopped = true; document.removeEventListener('visibilitychange', onVis); clearTimeout(retryTimer); stopPolling(); closeSocket(); };
+    }, []);
+    return mode;
+}
+function psikotesAgo(ts) {
+    const sec = Math.max(0, Math.round((Date.now() - Number(ts)) / 1000));
+    if (sec < 15) return 'baru saja';
+    if (sec < 60) return `${sec} dtk lalu`;
+    if (sec < 3600) return `${Math.floor(sec / 60)} mnt lalu`;
+    return `${Math.floor(sec / 3600)} jam lalu`;
+}
+function PsikotesLiveDot({ mode }) {
+    if (mode === 'live')
+        return React.createElement("span", { className: "inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600" },
+            React.createElement("span", { className: "w-2 h-2 rounded-full bg-emerald-500 animate-pulse" }), "Live");
+    if (mode === 'polling')
+        return React.createElement("span", { className: "text-[10px] font-semibold text-slate-400" }, "Diperbarui tiap 45 dtk");
+    return React.createElement("span", { className: "text-[10px] font-semibold text-slate-400" }, "Menyambung...");
+}
+function PsikotesStatusBadge({ status }) {
+    if (status === 'completed')
+        return React.createElement("span", { className: "text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md" }, "Selesai");
+    if (status === 'blocked')
+        return React.createElement("span", { className: "text-[10px] bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded-md" }, "Diblokir");
+    if (status === 'abandoned')
+        return React.createElement("span", { className: "text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-1 rounded-md" }, "Dibatalkan");
+    if (status === 'in_progress')
+        return React.createElement("span", { className: "inline-flex items-center gap-1 text-[10px] bg-sky-100 text-sky-700 font-bold px-2 py-1 rounded-md" },
+            React.createElement("span", { className: "w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" }), "Sedang Dikerjakan");
+    return React.createElement("span", { className: "text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-1 rounded-md" }, "Belum Dimulai");
+}
+function PsikotesProgress({ a }) {
+    const status = a.status;
+    const [, setTick] = useState(0);
+    useEffect(() => {
+        if (status !== 'in_progress') return;
+        const iv = setInterval(() => setTick(t => t + 1), 20000); // hanya memperbarui teks "aktif ... lalu" di layar, tanpa request
+        return () => clearInterval(iv);
+    }, [status]);
+    const total = Number(a.question_total) || 0, done = Math.min(Number(a.answered_count) || 0, total || 0);
+    if ((status !== 'in_progress' && status !== 'blocked') || !total) return null;
+    const pct = Math.round((done / total) * 100);
+    return React.createElement("div", { className: "mt-1.5", style: { maxWidth: 230 } },
+        React.createElement("div", { className: "h-1.5 bg-slate-100 rounded-full overflow-hidden" },
+            React.createElement("div", { className: "h-full bg-purple-700 rounded-full transition-all", style: { width: pct + '%' } })),
+        React.createElement("p", { className: "text-[10px] text-slate-500 mt-0.5" },
+            `${done}/${total} soal terjawab`, a.last_activity_at ? ` \u2022 aktif ${psikotesAgo(a.last_activity_at)}` : ''));
+}
 function PsikotesScoresView({ test, stores, onBack }) {
     const [attempts, setAttempts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -2353,16 +2453,18 @@ function PsikotesScoresView({ test, stores, onBack }) {
             setAnswerDetailLoading(false);
         }
     };
-    const load = async () => {
-        setLoading(true);
+    const load = async (silent) => {
+        if (silent !== true)
+            setLoading(true);
         const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/attempts`, { headers: __authHeaders() });
         const data = await res.json();
         if (res.ok)
             setAttempts(data.attempts);
         setLoading(false);
     };
-    const loadLinks = async () => {
-        setLinksLoading(true);
+    const loadLinks = async (silent) => {
+        if (silent !== true)
+            setLinksLoading(true);
         try {
             const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/ojt-links`, { headers: __authHeaders() });
             const data = await res.json();
@@ -2374,6 +2476,39 @@ function PsikotesScoresView({ test, stores, onBack }) {
         }
     };
     useEffect(() => { load(); loadLinks(); }, [test.id]);
+    // ---- Status real time (dorongan server; lihat usePsikotesLive) ----
+    const attemptsRef = React.useRef([]);
+    attemptsRef.current = attempts;
+    const reloadTimer = React.useRef(null);
+    const softReload = () => {
+        clearTimeout(reloadTimer.current);
+        reloadTimer.current = setTimeout(() => { load(true); loadLinks(true); }, 800);
+    };
+    useEffect(() => () => clearTimeout(reloadTimer.current), []);
+    const liveMode = usePsikotesLive((m) => {
+        if (m.t === 'refresh') { softReload(); return; }
+        if (m.t !== 'p' || !m.row) return;
+        const row = m.row;
+        if (row.test_id && row.test_id !== test.id) return;
+        if (attemptsRef.current.some(x => x.id === row.id)) {
+            setAttempts(prev => prev.map(x => x.id === row.id ? { ...x, ...row } : x));
+            setLinks(prev => prev.map(l => l.attempt_id === row.id ? {
+                ...l,
+                attempt_status: row.status || l.attempt_status,
+                auto_score: row.auto_score !== undefined ? row.auto_score : l.auto_score,
+                completed_at: row.completed_at !== undefined ? row.completed_at : l.completed_at,
+                answered_count: row.answered_count !== undefined ? row.answered_count : l.answered_count,
+                question_total: row.question_total !== undefined ? row.question_total : l.question_total,
+                last_activity_at: row.last_activity_at !== undefined ? row.last_activity_at : l.last_activity_at,
+            } : l));
+        }
+        else if (row.ojt_name) {
+            setAttempts(prev => [row, ...prev.filter(x => x.id !== row.id)]);
+            softReload(); // link OJT terkait baru saja berubah menjadi "dipakai"
+        }
+        else
+            softReload();
+    }, () => { load(true); loadLinks(true); });
     const handleUnblock = async (attemptId) => {
         await __apiFetch(`${WORKER_BASE}/api/psikotes/attempts/${attemptId}/unblock`, { method: 'POST', headers: __authHeaders() });
         load();
@@ -2517,6 +2652,7 @@ function PsikotesScoresView({ test, stores, onBack }) {
                     React.createElement("div", { className: "min-w-0" },
                         React.createElement("p", { className: "font-semibold text-slate-800 text-sm truncate" }, l.ojt_name),
                         React.createElement("p", { className: "text-xs text-slate-500 truncate" }, l.store_name),
+                        React.createElement(PsikotesProgress, { a: { status: l.attempt_status, answered_count: l.answered_count, question_total: l.question_total, last_activity_at: l.last_activity_at } }),
                         l.auto_score !== null && l.auto_score !== undefined && React.createElement("p", { className: "text-xs text-purple-700 font-bold mt-0.5" },
                             "Skor: ",
                             l.auto_score)),
@@ -2525,7 +2661,7 @@ function PsikotesScoresView({ test, stores, onBack }) {
                             React.createElement("span", { className: "text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-1 rounded-md" }, "Belum Dibuka"),
                             React.createElement("button", { onClick: () => copyLinkFor(l), className: "text-[11px] font-bold bg-slate-100 text-slate-700 px-2.5 py-1.5 rounded-lg" }, copiedLinkId === l.id ? 'Tersalin!' : 'Salin Link'),
                             React.createElement("button", { onClick: () => handleDeleteLink(l), className: "text-slate-400 hover:text-rose-600 p-1.5" },
-                                React.createElement("i", { "data-lucide": "trash-2", className: "w-3.5 h-3.5" })))) : statusBadge(l.attempt_status),
+                                React.createElement("i", { "data-lucide": "trash-2", className: "w-3.5 h-3.5" })))) : React.createElement(PsikotesStatusBadge, { status: l.attempt_status }),
                         l.attempt_status === 'blocked' && (React.createElement("button", { onClick: () => handleUnblock(l.attempt_id), className: "text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg" }, "Buka Blokir")),
                         l.status !== 'completed' && l.attempt_status !== 'completed' && (l.floating_request === 1 || l.allow_floating === 1) && (React.createElement("button", { onClick: async () => { await __apiFetch(`${WORKER_BASE}/api/psikotes/ojt-links/${l.id}/floating`, { method: 'POST', headers: { ...__authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ allow: l.allow_floating !== 1 }) }); loadLinks(); }, className: `text-[11px] font-bold px-2.5 py-1.5 rounded-lg ${l.allow_floating === 1 ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-800'}` }, l.allow_floating === 1 ? 'Ngambang: Diizinkan (Cabut)' : 'Izinkan Ngambang')),
                         l.attempt_id && (l.attempt_status === 'completed' || l.attempt_status === 'blocked') && (React.createElement("button", { onClick: () => openAnswerDetail(l.attempt_id), className: "text-[11px] font-bold bg-purple-100 text-purple-800 px-2.5 py-1.5 rounded-lg" }, answerDetailId === l.attempt_id ? 'Tutup' : 'Kunci Jawaban')))),
@@ -2535,18 +2671,21 @@ function PsikotesScoresView({ test, stores, onBack }) {
                     copiedLinkId === l.id && React.createElement("span", { className: "text-[10px] text-emerald-700 font-semibold" }, "Link baru tersalin")),
                 answerDetailId === l.attempt_id && (React.createElement(AnswerKeyPanel, { loading: answerDetailLoading, answers: answerDetail })))))))),
         React.createElement("div", { className: "space-y-3" },
-            React.createElement("h3", { className: "font-bold text-slate-700 text-sm" }, "Semua Hasil"),
+            React.createElement("div", { className: "flex items-center justify-between" },
+                React.createElement("h3", { className: "font-bold text-slate-700 text-sm" }, "Semua Hasil"),
+                React.createElement(PsikotesLiveDot, { mode: liveMode })),
             loading ? (React.createElement("div", { className: "text-center text-slate-400 text-sm py-8" },
                 React.createElement("i", { "data-lucide": "loader", className: "w-6 h-6 animate-spin mx-auto" }))) : attempts.length === 0 ? (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center text-slate-500 text-sm" }, "Belum ada OJT yang mengerjakan psikotes ini.")) : (React.createElement("div", { className: "space-y-2" }, attempts.map(a => (React.createElement("div", { key: a.id, className: "bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" },
                 React.createElement("div", { className: "p-4 flex items-center justify-between gap-3" },
                     React.createElement("div", null,
                         React.createElement("p", { className: "font-semibold text-slate-800 text-sm" }, a.ojt_name),
                         React.createElement("p", { className: "text-xs text-slate-500" }, a.penempatan),
+                        React.createElement(PsikotesProgress, { a: a }),
                         a.auto_score !== null && a.auto_score !== undefined && React.createElement("p", { className: "text-xs text-purple-700 font-bold mt-0.5" },
                             "Skor: ",
                             a.auto_score)),
                     React.createElement("div", { className: "flex items-center gap-2" },
-                        statusBadge(a.status),
+                        React.createElement(PsikotesStatusBadge, { status: a.status }),
                         a.status === 'blocked' && (React.createElement("button", { onClick: () => handleUnblock(a.id), className: "text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg" }, "Buka Blokir")),
                         (a.status === 'completed' || a.status === 'blocked') && (React.createElement("button", { onClick: () => openAnswerDetail(a.id), className: "text-[11px] font-bold bg-purple-100 text-purple-800 px-2.5 py-1.5 rounded-lg" }, answerDetailId === a.id ? 'Tutup' : 'Kunci Jawaban')),
                         React.createElement("button", { onClick: () => handleDeleteAttempt(a), className: "text-[11px] font-bold bg-rose-50 text-rose-600 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg", title: "Hapus hasil ini" },
@@ -14713,9 +14852,11 @@ function StorePsikotesTab({ hideStatus }) {
     const [detailId, setDetailId] = useState(null);
     const [detailAnswers, setDetailAnswers] = useState(null);
     const [detailLoading, setDetailLoading] = useState(false);
-    const load = async () => {
-        setLoading(true);
-        setLoadError('');
+    const load = async (silent) => {
+        if (silent !== true) {
+            setLoading(true);
+            setLoadError('');
+        }
         try {
             const res = await __apiFetch(`${WORKER_BASE}/api/store/psikotes/attempts`, { headers: __authHeaders() });
             const data = await res.json().catch(() => ({}));
@@ -14737,6 +14878,24 @@ function StorePsikotesTab({ hideStatus }) {
         }
     };
     useEffect(() => { load(); }, []);
+    // ---- Status real time: server hanya mengirim data outlet ini (tiket terikat storeId) ----
+    const attemptsRef = React.useRef([]);
+    attemptsRef.current = attempts;
+    const reloadTimer = React.useRef(null);
+    useEffect(() => () => clearTimeout(reloadTimer.current), []);
+    const liveMode = usePsikotesLive((m) => {
+        if (m.t === 'refresh') { clearTimeout(reloadTimer.current); reloadTimer.current = setTimeout(() => load(true), 800); return; }
+        if (m.t !== 'p' || !m.row) return;
+        const row = m.row;
+        if (attemptsRef.current.some(x => x.id === row.id))
+            setAttempts(prev => prev.map(x => x.id === row.id ? { ...x, ...row } : x));
+        else if (row.ojt_name)
+            setAttempts(prev => [row, ...prev.filter(x => x.id !== row.id)]);
+        else {
+            clearTimeout(reloadTimer.current);
+            reloadTimer.current = setTimeout(() => load(true), 800);
+        }
+    }, () => load(true));
     const openDetail = async (attemptId) => {
         if (detailId === attemptId) {
             setDetailId(null);
@@ -14771,7 +14930,7 @@ function StorePsikotesTab({ hideStatus }) {
     return (React.createElement("div", { className: "max-w-2xl mx-auto space-y-4" },
         React.createElement("div", null,
             React.createElement("h2", { className: "font-bold text-slate-700 text-base" }, "Progres OJT"),
-            React.createElement("p", { className: "text-xs text-slate-500 mt-0.5" }, "Skor & status psikotes OJT yang ditempatkan di toko ini oleh admin.")),
+            React.createElement("p", { className: "text-xs text-slate-500 mt-0.5" }, "Skor & status psikotes OJT yang ditempatkan di toko ini oleh admin. ", React.createElement(PsikotesLiveDot, { mode: liveMode }))),
         !hideStatus && React.createElement(StoreOjtStatusSection, null),
         loading ? (React.createElement("div", { className: "text-center text-slate-400 text-sm py-8" },
             React.createElement("i", { "data-lucide": "loader", className: "w-6 h-6 animate-spin mx-auto" }))) : loadError ? (React.createElement("div", { className: "bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center space-y-3" },
@@ -14782,12 +14941,13 @@ function StorePsikotesTab({ hideStatus }) {
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("p", { className: "font-semibold text-slate-800 text-sm truncate" }, a.ojt_name),
                     React.createElement("p", { className: "text-xs text-slate-500 truncate" }, a.test_title),
+                    React.createElement(PsikotesProgress, { a: a }),
                     a.auto_score !== null && a.auto_score !== undefined && React.createElement("p", { className: "text-xs text-purple-700 font-bold mt-0.5" },
                         "Skor: ",
                         a.auto_score,
                         a.manual_score !== null && a.manual_score !== undefined ? ` • Manual: ${a.manual_score}` : '')),
                 React.createElement("div", { className: "flex items-center gap-2 shrink-0" },
-                    statusBadge(a.status),
+                    React.createElement(PsikotesStatusBadge, { status: a.status }),
                     React.createElement("i", { "data-lucide": detailId === a.id ? 'chevron-up' : 'chevron-down', className: "w-4 h-4 text-slate-400" }))),
             detailId === a.id && (React.createElement("div", { className: "border-t border-slate-100 p-4 bg-slate-50 space-y-3" }, detailLoading ? (React.createElement("div", { className: "text-center text-slate-400 text-xs py-4" },
                 React.createElement("i", { "data-lucide": "loader", className: "w-4 h-4 animate-spin mx-auto" }))) : !detailAnswers || detailAnswers.length === 0 ? (React.createElement("p", { className: "text-xs text-slate-400 text-center py-2" }, "Belum ada jawaban tersimpan.")) : (detailAnswers.map((ans, i) => (React.createElement("div", { key: ans.question_id, className: "bg-white rounded-xl border border-slate-200 p-3 space-y-1.5" },

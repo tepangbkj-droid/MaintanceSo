@@ -1,0 +1,38 @@
+name: Build psikotes (CSP ketat)
+
+# Jalankan manual SEKALI: Actions -> "Build psikotes (CSP ketat)" -> Run workflow.
+# Mengompilasi psikotes.src.html -> psikotes.html (tanpa Babel/Tailwind CDN, tanpa unsafe-eval/unsafe-inline di script-src)
+# dan memperketat CSP /psikotes.html di vercel.json. Jalankan lagi setiap kali psikotes.src.html diubah.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pastikan vendor/ sudah ada
+        run: test -f vendor/react.production.min.js && test -f vendor/lucide.min.js && test -f vendor/fonts.css || { echo "::error::Jalankan dulu workflow 'Unduh vendor'."; exit 1; }
+      - name: Pasang kompiler (versi dipatok)
+        run: npm install --no-save --ignore-scripts esbuild@0.24.0 tailwindcss@3.4.14
+      - name: Kompilasi
+        run: node scripts/build-psikotes.mjs
+      - name: Cek tidak ada CDN / eval tersisa
+        run: |
+          ! grep -E "unpkg|cdn\.tailwindcss|unsafe-eval|text/babel" psikotes.html
+          grep -c "script-src 'self';" psikotes.html
+      - name: Commit hasil
+        run: |
+          rm -f tmp-psikotes-in.css
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f psikotes.html psikotes.app.js psikotes.patch.js psikotes.css tailwind.psikotes.config.cjs vercel.json
+          git commit -m "build: psikotes terkompilasi, CSP script-src 'self'" || echo "Tidak ada perubahan"
+          git push

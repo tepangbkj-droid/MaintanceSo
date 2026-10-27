@@ -2389,21 +2389,8 @@ function PsikotesStatusBadge({ status }) {
     return React.createElement("span", { className: "text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-1 rounded-md" }, "Belum Dimulai");
 }
 function PsikotesProgress({ a }) {
-    const status = a.status;
-    const [, setTick] = useState(0);
-    useEffect(() => {
-        if (status !== 'in_progress') return;
-        const iv = setInterval(() => setTick(t => t + 1), 20000); // hanya memperbarui teks "aktif ... lalu" di layar, tanpa request
-        return () => clearInterval(iv);
-    }, [status]);
-    const total = Number(a.question_total) || 0, done = Math.min(Number(a.answered_count) || 0, total || 0);
-    if ((status !== 'in_progress' && status !== 'blocked') || !total) return null;
-    const pct = Math.round((done / total) * 100);
-    return React.createElement("div", { className: "mt-1.5", style: { maxWidth: 230 } },
-        React.createElement("div", { className: "h-1.5 bg-slate-100 rounded-full overflow-hidden" },
-            React.createElement("div", { className: "h-full bg-purple-700 rounded-full transition-all", style: { width: pct + '%' } })),
-        React.createElement("p", { className: "text-[10px] text-slate-500 mt-0.5" },
-            `${done}/${total} soal terjawab`, a.last_activity_at ? ` \u2022 aktif ${psikotesAgo(a.last_activity_at)}` : ''));
+    // (2026-10) Hemat Cloudflare: live hanya STATUS (Sedang Dikerjakan / Terblokir / Selesai), tanpa progres per soal.
+    return null;
 }
 function PsikotesScoresView({ test, stores, onBack }) {
     const [attempts, setAttempts] = useState([]);
@@ -14207,10 +14194,21 @@ function OjtQuickSend({ people, showToast, onSent }) {
         React.createElement("p", { className: "text-xs font-bold text-sky-800" }, "Kirim Hasil Tes ke Telegram OJT"),
         React.createElement("select", { value: pid, onChange: e => pick(e.target.value), className: "w-full border border-sky-200 rounded-lg px-2.5 py-2 text-xs bg-white" },
             React.createElement("option", { value: "" }, "Pilih OJT..."),
-            people.map(p => React.createElement("option", { key: p.id, value: p.id }, p.name + (p.tes && p.tes.score !== null && p.tes.score !== undefined ? ` • skor tes ${p.tes.score}` : '')))),
+            people.map(p => React.createElement("option", { key: p.id, value: p.id }, p.name + (ojtTestsOf(p).filter(t => t.status === 'completed').length ? ` • ${ojtTestsOf(p).filter(t => t.status === 'completed').map(t => `${t.title} ${t.score}`).join(', ')}` : '')))),
         React.createElement("input", { value: tg, onChange: e => setTg(e.target.value.replace(/[^A-Za-z0-9_@]/g, '')), maxLength: 33, placeholder: "ID (angka) atau @username Telegram OJT", className: "w-full border border-sky-200 rounded-lg px-2.5 py-2 text-xs bg-white" }),
         React.createElement("button", { onClick: send, disabled: busy || !pid || !tg.trim(), className: "w-full bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-xs font-bold py-2.5 rounded-xl" }, busy ? 'Mengirim...' : 'Kirim ke Telegram OJT'),
         React.createElement("p", { className: "text-[10px] text-sky-700" }, "ID / username tersimpan otomatis. OJT cukup menekan Start di bot Telegram perusahaan sekali saja.")));
+}
+// (2026-10) Daftar semua tes yang dikerjakan satu OJT (Kompetensi, Ketelitian, dst) -- tiap tes dicatat sendiri.
+function ojtTestsOf(p) {
+    if (Array.isArray(p.tests) && p.tests.length) return p.tests;
+    if (p.tes && p.tes.score !== null && p.tes.score !== undefined) return [{ title: p.tes.title || 'Tes', status: 'completed', score: p.tes.score }];
+    return [];
+}
+function ojtTestStatusText(t) {
+    if (t.status === 'completed') return (t.score !== null && t.score !== undefined) ? String(t.score) : 'selesai';
+    if (t.status === 'blocked') return '\uD83D\uDD12 terblokir';
+    return '\u270D\uFE0F sedang dikerjakan';
 }
 function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram, selected, onToggleSelect }) {
     const [open, setOpen] = useState(false);
@@ -14268,8 +14266,10 @@ function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram
                 L.push(`${x.result === 'lolos' ? '✅ Lolos' : '❌ Belum lolos'} ${s.label} — nilai ${x.score}${x.note ? ` (${ojtMdEsc(x.note)})` : ''}`);
         });
         L.push(p.finished ? '✅ Sudah Selesai OJT' : '⏳ Belum selesai OJT');
-        if (p.tes && p.tes.score !== null && p.tes.score !== undefined)
-            L.push(`🧠 Skor tes OJT: ${p.tes.score}`);
+        if (ojtTestsOf(p).length) {
+            L.push('🧠 Skor tes OJT:');
+            ojtTestsOf(p).forEach(t => L.push(`   ${ojtMdEsc(t.title || 'Tes')}: ${ojtTestStatusText(t)}`));
+        }
         L.push('');
         L.push(st.canProceed ? '🎯 *Keputusan: SUDAH BISA lanjut ke tahap selanjutnya*' : `🎯 *Keputusan: BELUM bisa lanjut* — ${ojtMdEsc(String(st.label || '').replace(/^Belum bisa lanjut — /, ''))}`);
         if (p.finalNote)
@@ -14297,9 +14297,8 @@ function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram
             React.createElement("div", { className: "flex items-center justify-between gap-2" },
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("p", { className: "font-bold text-slate-800 text-sm truncate" }, p.name),
-                    p.tes && p.tes.score !== null && p.tes.score !== undefined && React.createElement("p", { className: "text-[11px] text-purple-700 font-semibold" },
-                        "Skor tes OJT: ",
-                        p.tes.score)),
+                    ojtTestsOf(p).length > 0 && React.createElement("div", { className: "text-[11px] text-purple-700 font-semibold space-y-0.5 mt-0.5" },
+                        ojtTestsOf(p).map((t, i) => React.createElement("p", { key: t.testId || i }, "\uD83E\uDDE0 ", t.title || 'Tes', ": ", React.createElement("b", null, ojtTestStatusText(t)))))),
                 React.createElement("i", { "data-lucide": open ? 'chevron-up' : 'chevron-down', className: "w-4 h-4 text-slate-400 shrink-0" })),
             React.createElement("div", { className: "flex flex-wrap gap-1.5" },
                 OJT_STAGE_DEFS.map(s => {
@@ -14722,9 +14721,8 @@ function OjtReadonlyCard({ p, showStore }) {
                     showStore && React.createElement("p", { className: "text-[11px] text-purple-700 font-semibold truncate" },
                         "\uD83C\uDFEA ",
                         p.storeName || p.storeId),
-                    p.tes && p.tes.score !== null && p.tes.score !== undefined && React.createElement("p", { className: "text-[11px] text-slate-500" },
-                        "Skor tes OJT: ",
-                        React.createElement("b", null, p.tes.score))),
+                    ojtTestsOf(p).length > 0 && React.createElement("div", { className: "text-[11px] text-slate-500 space-y-0.5" },
+                        ojtTestsOf(p).map((t, i) => React.createElement("p", { key: t.testId || i }, "\uD83E\uDDE0 ", t.title || 'Tes', ": ", React.createElement("b", null, ojtTestStatusText(t)))))),
                 React.createElement("i", { "data-lucide": open ? 'chevron-up' : 'chevron-down', className: "w-4 h-4 text-slate-400 shrink-0" })),
             React.createElement("div", { className: "flex flex-wrap gap-1.5" },
                 OJT_STAGE_DEFS.map(s => {

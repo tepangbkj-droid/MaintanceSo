@@ -86,7 +86,7 @@
 
 <script>
 (function () {
-  var WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
+  var WORKER_BASE = (/(^|\.)somandiritarobun\.my\.id$/.test(location.hostname) ? 'https://api.somandiritarobun.my.id' : 'https://tarobun-api.tepangbkj8.workers.dev');
   var params = new URLSearchParams(window.location.search);
   var token = params.get('token') || params.get('t') || '';
 

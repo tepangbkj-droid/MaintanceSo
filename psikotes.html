@@ -8,7 +8,7 @@
 
 <!-- Sama seperti index.html: halaman internal, tidak perlu ke-index search engine -->
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https://unpkg.com; media-src 'self' blob: data:; connect-src 'self' https://*.workers.dev https://api.somandiritarobun.my.id https://unpkg.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
 <meta http-equiv="X-Content-Type-Options" content="nosniff">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 
@@ -18,18 +18,1028 @@
 <!-- File ini SENGAJA berdiri sendiri, terpisah dari index.html (yang isinya seluruh app
      admin/toko, ~600KB). Tujuannya supaya OJT yang cuma perlu mengerjakan psikotes tidak
      harus memuat seluruh aplikasi admin -- cukup halaman ringan ini saja. -->
+<script src="https://unpkg.com/react@18/umd/react.development.js" defer></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" defer></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.js" defer></script>
+<script src="https://cdn.tailwindcss.com" defer></script>
+<script src="https://unpkg.com/lucide@latest" defer crossorigin="anonymous"></script>
 
-<link rel="stylesheet" href="vendor/fonts.css?v=20261027">
-<link rel="stylesheet" href="psikotes.css?v=20261027">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/400.css">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/600.css">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/inter@5.0.16/700.css">
+<link rel="stylesheet" href="https://unpkg.com/@fontsource/plus-jakarta-sans@5.0.16/700.css">
+
+<script>
+  // ==========================================
+  // FIX: konflik lucide.createIcons() vs React DOM reconciliation
+  // (SAMA seperti perbaikan di index.html -- halaman ini juga memakai
+  // scheduleLucideIcons()/lucide.createIcons() di useEffect tiap render,
+  // jadi rentan bug yang sama persis: React mencoba removeChild/insertBefore
+  // elemen <i data-lucide> yang SUDAH diganti Lucide jadi <svg> di luar
+  // sepengetahuan React, browser melempar NotFoundError, dan karena
+  // sebelumnya TIDAK ada ErrorBoundary di halaman ini, error tsb membuat
+  // SELURUH render React gagal -- hasilnya layar putih kosong total.
+  // Patch ini membuat removeChild/insertBefore "defensif": kalau node yang
+  // diminta dihapus/disisipkan ternyata bukan child dari parent tsb, jangan
+  // lempar error, cukup diam saja. Tidak mengubah tampilan apa pun yang
+  // terlihat pengguna -- hanya mencegah crash akibat DOM sudah berubah duluan.
+  // ==========================================
+  (function () {
+    const origRemoveChild = Node.prototype.removeChild;
+    Node.prototype.removeChild = function (child) {
+      if (child.parentNode !== this) {
+        if (console && console.warn) {
+          console.warn('[Psikotes] Diabaikan: removeChild pada node yang sudah tidak jadi child (biasanya akibat lucide.createIcons()).', child);
+        }
+        return child;
+      }
+      return origRemoveChild.call(this, child);
+    };
+
+    const origInsertBefore = Node.prototype.insertBefore;
+    Node.prototype.insertBefore = function (newNode, refNode) {
+      if (refNode && refNode.parentNode !== this) {
+        if (console && console.warn) {
+          console.warn('[Psikotes] Diabaikan: insertBefore dengan referenceNode yang sudah tidak jadi child (biasanya akibat lucide.createIcons()).', refNode);
+        }
+        return this.appendChild(newNode);
+      }
+      return origInsertBefore.call(this, newNode, refNode);
+    };
+  })();
+</script>
+
+<script>
+  window.addEventListener('load', function () {
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { brand: { purple: '#6D28D9', dark: '#1E1B4B' } },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            display: ['"Plus Jakarta Sans"', 'Inter', 'ui-sans-serif', 'sans-serif'],
+          },
+        },
+      },
+    };
+  });
+</script>
+<style>
+  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+  @keyframes tarobunFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fadeIn { animation: tarobunFadeIn 0.2s ease-out; }
+</style>
 </head>
 <body class="bg-slate-50">
 <div id="root"></div>
 
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
 
-<script src="vendor/react.production.min.js?v=20261027"></script>
-<script src="vendor/react-dom.production.min.js?v=20261027"></script>
-<script src="vendor/lucide.min.js?v=20261027"></script>
-<script src="psikotes.patch.js?v=20261027"></script>
-<script src="psikotes.app.js?v=20261027"></script>
+// ==========================================
+// KONEKSI KE CLOUDFLARE WORKER (backend yang sama dengan index.html)
+// ==========================================
+const WORKER_BASE = (/(^|\.)somandiritarobun\.my\.id$/.test(location.hostname) ? 'https://api.somandiritarobun.my.id' : 'https://tarobun-api.tepangbkj8.workers.dev');
+
+let _lucideScheduled = false;
+const scheduleLucideIcons = () => {
+  if (_lucideScheduled) return;
+  _lucideScheduled = true;
+  requestAnimationFrame(() => {
+    _lucideScheduled = false;
+    if (window.lucide) window.lucide.createIcons();
+  });
+};
+
+// ==========================================
+// HALAMAN PUBLIK: Psikotes OJT (dibuka lewat link, TANPA login)
+// ==========================================
+// Alur: form Nama+Penempatan (link umum, ?psikotes=) ATAU konfirmasi nama+toko yang sudah
+// ditentukan admin (link per-OJT, ?ojt=) -> kerjakan soal satu-satu -> selesai.
+// Anti-keluar: kalau tab/app di-minimize atau pindah tab saat status 'taking', langsung
+// dilaporkan ke server (flag-leave) dan attempt ditandai 'blocked'.
+// PERBAIKAN INPUT/KEYBOARD (penting): komponen ini SEBELUMNYA didefinisikan DI DALAM
+// PsikotesOjtPublicPage (dibuat ulang setiap render). Karena React menganggap komponen
+// yang "dibuat ulang" itu sebagai TIPE BARU, seluruh isi <Shell> (termasuk input Nama &
+// Lokasi Penempatan) ikut di-unmount+mount ulang SETIAP KALI state berubah -- termasuk
+// setiap kali user mengetik satu huruf. Akibatnya input kehilangan fokus dan keyboard HP
+// otomatis tertutup setelah tiap huruf, harus dibuka lagi manual. Dipindah jadi komponen
+// tingkat-atas (stabil, tidak dibuat ulang) supaya fokus/keyboard tetap terjaga saat mengetik.
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">{children}</div>
+    </div>
+  );
+}
+
+// ==========================================================================
+// PsikotesGuard (2026-10): pengaman best-effort saat psikotes berlangsung.
+// Yang BISA dilakukan web: alarm sirene (volume pemutar dipaksa 100%) + getar saat keluar
+// halaman/kehilangan fokus, layar dijaga tetap menyala, mode layar penuh.
+// Yang TIDAK bisa dilakukan web: memblokir notifikasi, mendeteksi aplikasi ngambang secara
+// langsung, atau mengunci volume SISTEM HP. Itu dijaga lewat deklarasi peserta + deteksi perilaku.
+// ==========================================================================
+// Jembatan ke plugin native "PsikotesGuard" (hanya ada kalau halaman dibuka di APK Tarobun terbaru).
+// Native: deteksi aplikasi ngambang, blok notifikasi (Jangan Ganggu), alarm yang tetap bunyi di latar belakang.
+const NativeGuard = (() => {
+  const get = () => {
+    try {
+      const C = window.Capacitor;
+      if (!C || !C.isNativePlatform || !C.isNativePlatform()) return null;
+      if (C.isPluginAvailable && !C.isPluginAvailable('PsikotesGuard')) return null;
+      return (C.Plugins && C.Plugins.PsikotesGuard) || null;
+    } catch (e) { return null; }
+  };
+  return { plugin: get, available: () => !!get() };
+})();
+const natCall = (method, args) => {
+  try {
+    const p = NativeGuard.plugin();
+    if (!p || typeof p[method] !== 'function') return Promise.resolve(null);
+    return Promise.resolve(p[method](args || {})).catch(() => null);
+  } catch (e) { return Promise.resolve(null); }
+};
+
+const PsikotesGuard = (() => {
+  let siren = null, ringing = false, armed = false, fsEntered = false;
+  let enforceTimer = null, vibTimer = null, titleTimer = null, wakeLock = null;
+  const baseTitle = document.title;
+
+  function buildSirenUrl() {
+    const rate = 16000, secs = 2, n = rate * secs;
+    const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    w(36, 'data'); v.setUint32(40, n * 2, true);
+    let ph = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / rate;
+      const f = 1100 + 500 * Math.sin(2 * Math.PI * 2 * t); // sapuan nada naik-turun 2x/detik
+      ph += 2 * Math.PI * f / rate;
+      const x = Math.max(-1, Math.min(1, Math.sin(ph) * 1.8)); // dipadatkan -> lebih nyaring
+      v.setInt16(44 + i * 2, Math.round(x * 32000), true);
+    }
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+
+  async function acquireWakeLock() {
+    try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {}
+  }
+
+  // WAJIB dipanggil dari dalam tap/klik pengguna (syarat autoplay audio & fullscreen).
+  function arm() {
+    if (NativeGuard.available()) { armed = true; return; } // di APK: alarm/layar dijaga native
+    try {
+      if (!siren) {
+        siren = new Audio(buildSirenUrl());
+        siren.loop = true; siren.preload = 'auto';
+        siren.setAttribute('playsinline', '');
+        siren.addEventListener('volumechange', () => { if (ringing && (siren.volume < 1 || siren.muted)) { siren.muted = false; siren.volume = 1; } });
+      }
+      // "Buka kunci" elemen audio: setelah ini browser mengizinkan play() otomatis saat pelanggaran.
+      siren.muted = true;
+      const pr = siren.play();
+      if (pr && pr.then) pr.then(() => { siren.pause(); siren.currentTime = 0; siren.muted = false; }).catch(() => { siren.muted = false; });
+    } catch (e) {}
+    try {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) { const r = req.call(el, { navigationUI: 'hide' }); if (r && r.then) r.then(() => { fsEntered = true; }).catch(() => {}); }
+    } catch (e) {}
+    acquireWakeLock();
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && armed) acquireWakeLock(); });
+    armed = true;
+  }
+
+  function startAlarm() {
+    if (ringing || !siren) return;
+    ringing = true;
+    const tick = () => {
+      if (!ringing) return;
+      try { siren.muted = false; siren.volume = 1; if (siren.paused) siren.play().catch(() => {}); } catch (e) {}
+    };
+    try { siren.currentTime = 0; } catch (e) {}
+    tick();
+    enforceTimer = setInterval(tick, 400);
+    const buzz = () => { try { navigator.vibrate && navigator.vibrate([700, 150, 700, 150, 700]); } catch (e) {} };
+    buzz(); vibTimer = setInterval(buzz, 2600);
+    let on = false;
+    titleTimer = setInterval(() => { on = !on; document.title = on ? '⚠️ KEMBALI KE PSIKOTES!' : baseTitle; }, 800);
+  }
+
+  function stopAlarm() {
+    if (!ringing) return;
+    ringing = false;
+    clearInterval(enforceTimer); clearInterval(vibTimer); clearInterval(titleTimer);
+    try { siren.pause(); siren.currentTime = 0; } catch (e) {}
+    try { navigator.vibrate && navigator.vibrate(0); } catch (e) {}
+    document.title = baseTitle;
+  }
+
+  function reenterFullscreen() {
+    try { const el = document.documentElement; const req = el.requestFullscreen || el.webkitRequestFullscreen; if (req) req.call(el, { navigationUI: 'hide' }); } catch (e) {}
+  }
+
+  function release() {
+    natCall('end');
+    stopAlarm();
+    try { if (wakeLock) wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+    try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); } catch (e) {}
+    fsEntered = false;
+  }
+
+  return { arm, startAlarm, stopAlarm, release, reenterFullscreen, isArmed: () => armed, isRinging: () => ringing, fullscreenWasEntered: () => fsEntered };
+})();
+
+function PsikotesOjtPublicPage({ linkToken, assigned }) {
+  const storageKey = `tarobun_psikotes_attempt_${linkToken}`;
+  const infoUrl = assigned ? `${WORKER_BASE}/api/psikotes/public/ojt/${linkToken}` : `${WORKER_BASE}/api/psikotes/public/${linkToken}`;
+  const startUrl = assigned ? `${WORKER_BASE}/api/psikotes/public/ojt/${linkToken}/start` : `${WORKER_BASE}/api/psikotes/public/${linkToken}/start`;
+  const [phase, setPhase] = useState('loading'); // loading | form | confirm | taking | blocked | done | locked | error
+  const [errorMsg, setErrorMsg] = useState('');
+  const [test, setTest] = useState(null);
+  const [name, setName] = useState('');
+  const [penempatan, setPenempatan] = useState('');
+  // ---- Kombobox "Pilih Toko/Outlet" untuk penempatan (link umum, ?psikotes=) ----
+  // Diambil dari data outlet SUNGGUHAN yang sudah terdaftar admin (storeDirectory), BUKAN
+  // lagi field teks bebas -- supaya penempatan yang dipilih OJT selalu cocok dengan data
+  // outlet yang ada (menghindari typo/nama toko yang salah/tidak baku).
+  const [storeDirectory, setStoreDirectory] = useState([]);
+  const [dirLoading, setDirLoading] = useState(true);
+  const [dirError, setDirError] = useState(false);
+  const [storeDropdownOpen, setStoreDropdownOpen] = useState(false);
+  const [storeSearchQuery, setStoreSearchQuery] = useState('');
+  const storeDropdownRef = useRef(null);
+  const [assignedInfo, setAssignedInfo] = useState(null);
+  const [submittingStart, setSubmittingStart] = useState(false);
+  const [attempt, setAttempt] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [qIndex, setQIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(null); // null = tidak ada timer
+  const [timerExpired, setTimerExpired] = useState(false);
+  // ---- Pengamanan (2026-10) ----
+  const [armedUi, setArmedUi] = useState(false);            // sudah ada tap pengguna -> alarm/fullscreen siap
+  const [allowFloating, setAllowFloating] = useState(false); // diizinkan Store Leader/Admin
+  const [floatingRequested, setFloatingRequested] = useState(false);
+  const [requestingFloating, setRequestingFloating] = useState(false);
+  const [ackFloating, setAckFloating] = useState(false);
+  const [ackNotif, setAckNotif] = useState(false);
+  const [ackAlarm, setAckAlarm] = useState(false);
+  const [blockReason, setBlockReason] = useState('leave');
+  const [fsLost, setFsLost] = useState(false);
+  const native = NativeGuard.available();           // true jika dibuka di APK Tarobun yang sudah punya plugin pengaman
+  const [nativeSt, setNativeSt] = useState(null);   // {overlay, dndGranted} dari native
+  const armedRef = useRef(false);
+  const checklistOk = (allowFloating || ackFloating) && (native ? !!(nativeSt && nativeSt.dndGranted) : (ackNotif && ackAlarm));
+
+  useEffect(() => { scheduleLucideIcons(); });
+
+  // Ambil daftar outlet/toko sungguhan (dipakai kombobox "Lokasi Penempatan") -- hanya
+  // perlu untuk link umum (?psikotes=, assigned=false), karena link per-OJT (?ojt=) sudah
+  // punya penempatan tetap yang ditentukan admin sebelumnya (lihat fase 'confirm').
+  // Endpoint ini publik (tidak perlu login), sama seperti yang dipakai layar login toko.
+  useEffect(() => {
+    if (assigned) { setDirLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${WORKER_BASE}/api/psikotes/public/stores`);
+        const data = await res.json();
+        if (cancelled) return;
+        const dir = data.value || {};
+        const list = Object.keys(dir).map(id => ({ id, name: dir[id] })).sort((a, b) => a.name.localeCompare(b.name));
+        setStoreDirectory(list);
+      } catch (e) {
+        if (!cancelled) setDirError(true);
+      } finally {
+        if (!cancelled) setDirLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [assigned]);
+
+  // Tutup dropdown "Lokasi Penempatan" saat klik/tap di luar area kombobox.
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (storeDropdownRef.current && !storeDropdownRef.current.contains(e.target)) {
+        setStoreDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  const filteredStoreDirectory = storeDirectory.filter(s =>
+    !storeSearchQuery.trim() || s.name.toLowerCase().includes(storeSearchQuery.trim().toLowerCase())
+  );
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(infoUrl);
+        const data = await res.json();
+        if (!res.ok) { setErrorMsg(data.error || 'Link tidak valid'); setPhase('error'); return; }
+        setTest(data.test);
+        if (assigned) setAssignedInfo({ ojtName: data.ojtName, storeName: data.storeName });
+        if (assigned) { setAllowFloating(!!data.allowFloating); setFloatingRequested(!!data.floatingRequested); }
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            const statusRes = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${parsed.attemptId}/status?attemptSecret=${encodeURIComponent(parsed.attemptSecret)}`);
+            const statusData = await statusRes.json();
+            if (statusRes.ok) {
+              if (statusData.status === 'blocked') { setAttempt(parsed); setPhase('blocked'); return; }
+              if (statusData.status === 'completed') { setPhase('done'); return; }
+              if (statusData.status === 'in_progress') { if (await restoreSession(parsed)) { setPhase('taking'); return; } }
+            }
+          } catch (e) { /* kalau gagal cek, biarkan lanjut ke form biasa */ }
+        }
+        if (assigned && data.alreadyUsed) {
+          setErrorMsg('Link ini sudah pernah dipakai untuk memulai psikotes. Kalau ini bukan kamu, hubungi admin/toko.');
+          setPhase('error');
+          return;
+        }
+        if (data.test.locked) { setPhase('locked'); return; }
+        setPhase(assigned ? 'confirm' : 'form');
+      } catch (e) {
+        setErrorMsg('Gagal memuat halaman psikotes. Periksa koneksi internet.');
+        setPhase('error');
+      }
+    })();
+  }, [linkToken]);
+
+  // ---- BUGFIX AC-01: pulihkan sesi ujian (soal + jawaban + nomor terakhir + sisa waktu) ----
+  const progressKey = `${storageKey}_progress`;
+  const readLocalProgress = () => {
+    try { return JSON.parse(localStorage.getItem(progressKey) || '{}') || {}; } catch (e) { return {}; }
+  };
+  const writeLocalProgress = (patch) => {
+    try { localStorage.setItem(progressKey, JSON.stringify({ ...readLocalProgress(), ...patch })); } catch (e) {}
+  };
+  // Mengembalikan true kalau sesi berhasil dipulihkan & siap dikerjakan, false kalau gagal
+  // (pemanggil TIDAK boleh pindah ke fase 'taking' kalau false -> mencegah layar kosong).
+  const restoreSession = async (att) => {
+    try {
+      const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${att.attemptId}/resume?attemptSecret=${encodeURIComponent(att.attemptSecret)}`);
+      const data = await res.json();
+      if (!res.ok || data.status !== 'in_progress' || !Array.isArray(data.questions) || data.questions.length === 0) return false;
+      const local = readLocalProgress();
+      const localAnswers = local.answers || {};
+      const merged = { ...localAnswers, ...(data.answers || {}) };
+      // Jawaban yang sempat tersimpan lokal tapi gagal terkirim ke server -> kirim ulang
+      for (const q of data.questions) {
+        if (localAnswers[q.id] !== undefined && localAnswers[q.id] !== '' && (data.answers || {})[q.id] === undefined) {
+          merged[q.id] = localAnswers[q.id];
+          fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${att.attemptId}/answer`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attemptSecret: att.attemptSecret, questionId: q.id, answer: localAnswers[q.id] }),
+          }).catch(() => {});
+        }
+      }
+      // Nomor terakhir: pakai posisi tersimpan; kalau tidak ada, soal pertama yang belum dijawab
+      let idx = Number.isInteger(local.qIndex) ? local.qIndex : -1;
+      if (idx < 0 || idx >= data.questions.length) {
+        idx = data.questions.findIndex(q => merged[q.id] === undefined || merged[q.id] === '');
+        if (idx < 0) idx = data.questions.length - 1;
+      }
+      setQuestions(data.questions);
+      setAnswers(merged);
+      setQIndex(idx);
+      // Timer: pertahankan sisa waktu yang sudah berjalan di layar; kalau belum ada pakai dari server
+      if (data.remainingSeconds !== null && data.remainingSeconds !== undefined) {
+        setTimerSeconds(prev => (prev !== null ? prev : data.remainingSeconds));
+      }
+      if (data.allowFloating) setAllowFloating(true);
+      if (armedRef.current && NativeGuard.available()) await nativeBegin(att, data.allowFloating);
+      setAttempt(att);
+      return true;
+    } catch (e) { return false; }
+  };
+
+  // Minta izin Store Leader untuk aplikasi ngambang (hanya link per-OJT yang punya SL/outlet).
+  const requestFloating = async () => {
+    setRequestingFloating(true);
+    try {
+      const res = await fetch(`${WORKER_BASE}/api/psikotes/public/ojt/${linkToken}/request-floating`, { method: 'POST' });
+      if (res.ok) setFloatingRequested(true);
+    } catch (e) {}
+    setRequestingFloating(false);
+  };
+
+  // Selama menunggu keputusan SL, cek izin tiap 4 detik.
+  useEffect(() => {
+    if (!assigned || !floatingRequested || allowFloating || (phase !== 'confirm')) return;
+    const iv = setInterval(async () => {
+      try {
+        const res = await fetch(infoUrl); const data = await res.json();
+        if (res.ok) { if (data.allowFloating) setAllowFloating(true); if (!data.floatingRequested) setFloatingRequested(false); }
+      } catch (e) {}
+    }, 4000);
+    return () => clearInterval(iv);
+  }, [assigned, floatingRequested, allowFloating, phase]);
+
+  // Di APK: pantau status native (izin Jangan Ganggu + deteksi aplikasi ngambang) selama di layar persiapan.
+  useEffect(() => {
+    if (!native) return;
+    if (!(phase === 'confirm' || phase === 'form' || (phase === 'taking' && !armedUi))) return;
+    let stop = false;
+    const tick = async () => { const st = await natCall('precheck'); if (!stop && st) setNativeSt(st); };
+    tick();
+    const iv = setInterval(tick, 1500);
+    return () => { stop = true; clearInterval(iv); };
+  }, [native, phase, armedUi]);
+
+  const nativeBegin = (att, allow) => natCall('begin', {
+    flagUrl: `${WORKER_BASE}/api/psikotes/public/attempt/${att.attemptId}/flag-leave`,
+    attemptSecret: att.attemptSecret,
+    allowFloating: !!allow,
+  });
+
+  const handleStart = async () => {
+    if (!assigned && (!name.trim() || !penempatan.trim())) return;
+    if (!checklistOk) return;
+    if (native) {
+      // Sentuhan pada tombol Mulai ini sendiri dipakai untuk memeriksa apakah ada aplikasi ngambang di atas layar.
+      const st = await natCall('precheck');
+      if (st && st.overlay && !allowFloating) { setErrorMsg('Terdeteksi aplikasi ngambang di atas layar. Tutup dulu semuanya, atau minta izin Store Leader.'); return; }
+      if (st && !st.dndGranted) { setErrorMsg('Izin "Jangan Ganggu" belum diberikan, notifikasi belum bisa diblokir.'); return; }
+      setErrorMsg('');
+    }
+    PsikotesGuard.arm();   // web: harus di dalam tap pengguna (buka kunci alarm + layar penuh); APK: ditangani native
+    armedRef.current = true;
+    setArmedUi(true);
+    setSubmittingStart(true);
+    try {
+      const res = await fetch(startUrl, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(assigned ? {} : { name: name.trim(), penempatan: penempatan.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErrorMsg(data.error || 'Gagal memulai psikotes'); setSubmittingStart(false); return; }
+      const attemptInfo = { attemptId: data.attemptId, attemptSecret: data.attemptSecret };
+      localStorage.setItem(storageKey, JSON.stringify(attemptInfo));
+      setAttempt(attemptInfo);
+      if (data.allowFloating) setAllowFloating(true);
+      if (native) await nativeBegin(attemptInfo, data.allowFloating || allowFloating);
+      setQuestions(data.questions);
+      if (data.timer_minutes) {
+        setTimerSeconds(data.timer_minutes * 60);
+      }
+      setPhase('taking');
+    } catch (e) {
+      setErrorMsg('Gagal memulai psikotes. Periksa koneksi internet.');
+    } finally {
+      setSubmittingStart(false);
+    }
+  };
+
+  useEffect(() => { if (phase === 'taking') writeLocalProgress({ qIndex }); }, [qIndex, phase]);
+
+  // ---- Countdown timer ----
+  useEffect(() => {
+    if (phase !== 'taking' || timerSeconds === null) return;
+    if (timerSeconds <= 0) {
+      setTimerExpired(true);
+      handleFinish(); // otomatis kumpulkan begitu waktu habis
+      return;
+    }
+    const interval = setInterval(() => {
+      setTimerSeconds(s => {
+        if (s <= 1) { clearInterval(interval); setTimerExpired(true); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [phase, timerSeconds]);
+
+  // ---- Deteksi pelanggaran saat mengerjakan ----
+  //  leave  : tab/aplikasi disembunyikan, layar mati, halaman ditutup  -> selalu dianggap pelanggaran
+  //  focus  : halaman masih terlihat tapi kehilangan fokus (jendela/aplikasi ngambang, panel notifikasi)
+  //  resize : lebar layar menyusut (split-screen / jendela melayang) -- hanya di HP/tablet
+  // Untuk 'focus' & 'resize' dilewati kalau Store Leader/Admin mengizinkan aplikasi ngambang.
+  useEffect(() => {
+    if (phase !== 'taking' || !attempt || !armedUi) return;
+    let blurTimer = null, resizeTimer = null, done = false;
+    const isTouch = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+    const flag = (reason, fromNative) => {
+      if (done) return; done = true;
+      if (!fromNative) {
+        const payload = JSON.stringify({ attemptSecret: attempt.attemptSecret, reason });
+        try {
+          navigator.sendBeacon
+            ? navigator.sendBeacon(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, new Blob([payload], { type: 'application/json' }))
+            : fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/flag-leave`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});
+        } catch (e) {}
+        if (native) natCall('reportViolation', { reason }); else PsikotesGuard.startAlarm();
+      }
+      setBlockReason(reason);
+      setPhase('blocked');
+    };
+    const onVisibility = () => { if (document.hidden) flag('leave'); };
+    const onPageHide = () => flag('leave');
+    const onBlur = () => {
+      if (allowFloating || native) return; // di APK, fokus dijaga native
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => { if (!document.hidden && !document.hasFocus()) flag('focus'); }, 700);
+    };
+    const onFocus = () => clearTimeout(blurTimer);
+    const onResize = () => {
+      if (allowFloating || !isTouch || native) return; // di APK, split-screen sudah dilarang di manifest
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => { if (window.innerWidth < window.screen.width * 0.85) flag('resize'); }, 600);
+    };
+    const onFs = () => { if (PsikotesGuard.fullscreenWasEntered() && !document.fullscreenElement) setFsLost(true); else setFsLost(false); };
+    document.addEventListener('visibilitychange', onVisibility);
+    document.addEventListener('fullscreenchange', onFs);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('resize', onResize);
+    // APK: native yang mendeteksi (overlay/fokus/keluar). JS hanya menarik statusnya (juga jadi detak jantung watchdog native).
+    let natIv = null;
+    const onFocusIn = (e) => { if (e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) natCall('setImeActive', { active: true }); };
+    const onFocusOut = () => { natCall('setImeActive', { active: false }); };
+    if (native) {
+      document.addEventListener('focusin', onFocusIn);
+      document.addEventListener('focusout', onFocusOut);
+      natIv = setInterval(async () => {
+        const st = await natCall('getStatus');
+        if (st && st.violation) flag(st.violation, true);
+      }, 700);
+    }
+    return () => {
+      clearInterval(natIv);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+      clearTimeout(blurTimer); clearTimeout(resizeTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('fullscreenchange', onFs);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [phase, attempt, armedUi, allowFloating, native]);
+
+  // Alarm berhenti begitu peserta kembali ke halaman ini (terlihat + fokus).
+  useEffect(() => {
+    if (phase !== 'blocked') return;
+    const check = () => { if (!document.hidden && document.hasFocus()) PsikotesGuard.stopAlarm(); };
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', check);
+    const iv = setInterval(check, 500);
+    check();
+    return () => { document.removeEventListener('visibilitychange', check); window.removeEventListener('focus', check); clearInterval(iv); };
+  }, [phase]);
+
+  // Selesai / error -> lepas alarm, layar penuh, dan penjaga layar.
+  useEffect(() => { if (phase === 'done') PsikotesGuard.release(); }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'blocked' || !attempt) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/status?attemptSecret=${encodeURIComponent(attempt.attemptSecret)}`);
+        const data = await res.json();
+        if (res.ok && data.status === 'in_progress') { if (await restoreSession(attempt)) setPhase('taking'); }
+      } catch (e) { /* diamkan, coba lagi di interval berikutnya */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [phase, attempt]);
+
+  const saveAnswer = async (questionId, value) => {
+    setAnswers(prev => {
+      const next = { ...prev, [questionId]: value };
+      writeLocalProgress({ answers: next });
+      return next;
+    });
+    try {
+      await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/answer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attemptSecret: attempt.attemptSecret, questionId, answer: value }),
+      });
+    } catch (e) { /* best-effort; jawaban lokal tetap kelihatan tersimpan di UI */ }
+  };
+
+  const handleFinish = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${WORKER_BASE}/api/psikotes/public/attempt/${attempt.attemptId}/finish`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attemptSecret: attempt.attemptSecret }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(progressKey);
+        setPhase('done');
+      } else {
+        setErrorMsg(data.error || 'Gagal mengumpulkan jawaban');
+      }
+    } catch (e) {
+      setErrorMsg('Gagal mengumpulkan jawaban. Periksa koneksi internet lalu coba lagi.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const NativeStatusBox = () => {
+    const dndOk = !!(nativeSt && nativeSt.dndGranted);
+    const ovl = !!(nativeSt && nativeSt.overlay) && !allowFloating;
+    return (
+      <div className="space-y-1.5">
+        <div className={`text-[11px] rounded-lg px-2.5 py-2 border font-semibold ${dndOk ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+          {dndOk ? '✅ Notifikasi akan diblokir otomatis selama tes (mode Jangan Ganggu).' : (
+            <React.Fragment>⚠️ Izin "Jangan Ganggu" belum diberikan (wajib agar notifikasi diblokir). <button onClick={() => natCall('openDndSettings')} className="underline font-bold">Beri Izin</button>, lalu aktifkan "SO Mandiri Tarobun" dan kembali ke sini.</React.Fragment>
+          )}
+        </div>
+        {ovl && <div className="text-[11px] rounded-lg px-2.5 py-2 border bg-rose-100 border-rose-300 text-rose-800 font-bold">🚫 Terdeteksi aplikasi ngambang di atas layar. Tutup semuanya dulu, lalu ketuk layar sekali untuk memeriksa ulang.</div>}
+        <div className="text-[11px] text-slate-500">Volume alarm otomatis dimaksimalkan dan dikunci saat melanggar.</div>
+      </div>
+    );
+  };
+  const isAndroidBrowser = !native && /Android/i.test(navigator.userAgent) && !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  const appIntentUrl = `intent://${location.host}${location.pathname}${location.search}#Intent;scheme=https;package=com.tarobun.app;S.browser_fallback_url=${encodeURIComponent(location.origin + '/apk/tarobun.apk')};end`;
+  const SecurityChecklist = () => (
+    <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2.5">
+      <p className="text-xs font-bold text-rose-800">🔒 Aturan Keamanan Psikotes</p>
+      <p className="text-[11px] text-rose-700">Jika kamu keluar dari halaman ini (pindah aplikasi, membuka aplikasi ngambang, panel notifikasi, layar mati), HP akan <strong>berbunyi sirene keras + bergetar</strong> sampai kamu kembali, dan akses langsung <strong>diblokir</strong>.</p>
+      {allowFloating ? (
+        <div className="text-[11px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg px-2.5 py-2 font-semibold">✅ Store Leader mengizinkan aplikasi ngambang untuk kamu.</div>
+      ) : (
+        <label className="flex items-start gap-2 text-[11px] text-slate-700">
+          <input type="checkbox" checked={ackFloating} onChange={e => setAckFloating(e.target.checked)} className="mt-0.5" />
+          <span>Saya sudah <strong>menutup/mematikan semua aplikasi ngambang</strong> (bubble chat, jendela melayang, pop-up video, overlay lain).</span>
+        </label>
+      )}
+      {native ? NativeStatusBox() : (
+        <React.Fragment>
+          <label className="flex items-start gap-2 text-[11px] text-slate-700">
+            <input type="checkbox" checked={ackNotif} onChange={e => setAckNotif(e.target.checked)} className="mt-0.5" />
+            <span>Saya sudah mengaktifkan <strong>Jangan Ganggu</strong> / mematikan notifikasi HP selama tes (geser layar atas &rarr; ikon Jangan Ganggu).</span>
+          </label>
+          <label className="flex items-start gap-2 text-[11px] text-slate-700">
+            <input type="checkbox" checked={ackAlarm} onChange={e => setAckAlarm(e.target.checked)} className="mt-0.5" />
+            <span>Saya paham alarm akan berbunyi keras jika melanggar. Volume media HP saya sudah dinaikkan.</span>
+          </label>
+          {isAndroidBrowser && (
+            <a href={appIntentUrl} className="block text-center text-[11px] font-bold bg-purple-800 text-white rounded-lg py-2">📲 Buka di Aplikasi Tarobun (lebih aman: notifikasi diblokir otomatis)</a>
+          )}
+        </React.Fragment>
+      )}
+      {assigned && !allowFloating && (
+        <div className="pt-1">
+          {floatingRequested ? (
+            <p className="text-[11px] text-amber-700 font-semibold">⏳ Permintaan izin terkirim. Menunggu persetujuan Store Leader…</p>
+          ) : (
+            <button onClick={requestFloating} disabled={requestingFloating} className="text-[11px] font-bold text-purple-800 underline disabled:opacity-50">
+              {requestingFloating ? 'Mengirim…' : 'Aplikasi ngambang saya memang penting? Minta izin Store Leader'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  if (phase === 'loading') {
+    return <Shell><div className="text-center text-slate-500"><i data-lucide="loader" className="w-8 h-8 animate-spin mx-auto mb-2"></i>Memuat...</div></Shell>;
+  }
+  if (phase === 'error') {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-2">
+      <i data-lucide="alert-triangle" className="w-10 h-10 text-rose-500 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Tidak Bisa Membuka Psikotes</h2>
+      <p className="text-sm text-slate-500">{errorMsg}</p>
+    </div></Shell>;
+  }
+  if (phase === 'locked') {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-2">
+      <i data-lucide="lock" className="w-10 h-10 text-amber-500 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Psikotes Dikunci</h2>
+      <p className="text-sm text-slate-500">Psikotes ini sedang dikunci oleh admin. Hubungi admin/toko untuk info lebih lanjut.</p>
+    </div></Shell>;
+  }
+  if (phase === 'blocked') {
+    return <Shell><div className="bg-white rounded-2xl border border-rose-200 shadow-sm p-6 text-center space-y-2">
+      <i data-lucide="shield-alert" className="w-10 h-10 text-rose-500 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Akses Diblokir</h2>
+      <p className="text-sm text-slate-500">
+        {blockReason === 'overlay' ? 'Terdeteksi aplikasi ngambang di atas layar psikotes.'
+          : blockReason === 'focus' ? 'Layar psikotes kehilangan fokus (terindikasi aplikasi ngambang, jendela lain, atau panel notifikasi dibuka).'
+          : blockReason === 'resize' ? 'Ukuran layar berubah (terindikasi split-screen atau jendela melayang).'
+          : 'Kamu terdeteksi keluar dari halaman psikotes saat sedang mengerjakan.'}
+        {' '}Alarm berhenti setelah kamu kembali ke halaman ini. Hubungi Store Leader/admin untuk membuka blokir. Halaman ini akan otomatis lanjut begitu diizinkan.
+      </p>
+    </div></Shell>;
+  }
+  if (phase === 'done') {
+    return <Shell><div className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-6 text-center space-y-2">
+      <i data-lucide="check-circle-2" className="w-10 h-10 text-emerald-500 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Psikotes Selesai</h2>
+      <p className="text-sm text-slate-500">Terima kasih, jawabanmu sudah tersimpan. Hasilnya akan direview oleh admin/toko.</p>
+    </div></Shell>;
+  }
+  if (phase === 'confirm') {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div className="text-center space-y-1">
+        <i data-lucide="clipboard-list" className="w-9 h-9 text-purple-700 mx-auto"></i>
+        <h2 className="font-bold text-slate-800 text-lg">{test?.title}</h2>
+        {test?.description && <p className="text-xs text-slate-500">{test.description}</p>}
+      </div>
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+        <div className="flex justify-between text-xs"><span className="text-slate-500">Nama</span><span className="font-semibold text-slate-800">{assignedInfo?.ojtName}</span></div>
+        <div className="flex justify-between text-xs"><span className="text-slate-500">Penempatan Toko</span><span className="font-semibold text-slate-800">{assignedInfo?.storeName}</span></div>
+      </div>
+      {SecurityChecklist()}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+        Link ini hanya bisa dipakai satu kali. Halaman akan masuk layar penuh saat tes dimulai.
+      </div>
+      {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
+      <button onClick={handleStart} disabled={submittingStart || !checklistOk} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+        {submittingStart ? 'Memulai...' : 'Mulai Psikotes'}
+      </button>
+    </div></Shell>;
+  }
+  if (phase === 'form') {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div className="text-center space-y-1">
+        <i data-lucide="clipboard-list" className="w-9 h-9 text-purple-700 mx-auto"></i>
+        <h2 className="font-bold text-slate-800 text-lg">{test?.title}</h2>
+        {test?.description && <p className="text-xs text-slate-500">{test.description}</p>}
+      </div>
+      {SecurityChecklist()}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
+        Isi <strong>Nama Lengkap</strong> dan pilih <strong>Lokasi Penempatan</strong> sesuai data sebenarnya. Data ini dipakai admin/toko untuk merekap hasil psikotes kamu — kalau nama atau toko yang dipilih salah, hasilnya bisa tertukar dengan OJT lain.
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-slate-600">Nama Lengkap</label>
+        <input value={name} onChange={e => setName(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Nama kamu" />
+      </div>
+      <div ref={storeDropdownRef} className="relative">
+        <label className="text-xs font-semibold text-slate-600">Lokasi Penempatan</label>
+        {/* Kombobox "Pilih Toko/Outlet": daftar diambil dari data outlet yang sudah terdaftar
+            admin (storeDirectory), bukan lagi ketikan bebas -- supaya penempatan yang dipilih
+            OJT pasti cocok dengan data outlet yang ada. Daftar dibatasi tinggi & bisa discroll,
+            plus ada kolom pencarian, supaya saat toko banyak tidak menutupi seluruh layar. */}
+        <button
+          type="button"
+          disabled={dirLoading}
+          onClick={() => setStoreDropdownOpen(o => !o)}
+          className="mt-1 w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm bg-white flex items-center justify-between gap-2 disabled:opacity-60 text-left"
+        >
+          <span className={`truncate ${penempatan ? 'text-slate-800' : 'text-slate-400'}`}>
+            {dirLoading ? 'Memuat daftar toko...' : (penempatan || (storeDirectory.length === 0 ? 'Pilih toko/outlet' : '-- Pilih Toko/Outlet --'))}
+          </span>
+          <i data-lucide="chevron-down" className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${storeDropdownOpen ? 'rotate-180' : ''}`}></i>
+        </button>
+
+        {storeDropdownOpen && !dirLoading && storeDirectory.length > 0 && (
+          <div className="absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg animate-fadeIn overflow-hidden">
+            {storeDirectory.length > 4 && (
+              <div className="p-2 border-b border-slate-100">
+                <div className="relative">
+                  <i data-lucide="search" className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={storeSearchQuery}
+                    onChange={e => setStoreSearchQuery(e.target.value)}
+                    placeholder="Cari nama toko/outlet..."
+                    className="w-full pl-8 pr-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+              </div>
+            )}
+            {/* Dibatasi tinggi supaya HANYA ~4 toko yang terlihat sekaligus (tidak menutupi
+                layar saat daftar toko banyak) -- sisanya wajib discroll atau dicari. */}
+            <ul className="max-h-[168px] overflow-y-auto py-1 overscroll-contain">
+              {filteredStoreDirectory.length === 0 && (
+                <li className="px-3 py-2.5 text-xs text-slate-400 text-center">Tidak ada toko yang cocok dengan "{storeSearchQuery}".</li>
+              )}
+              {filteredStoreDirectory.map(s => (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    onClick={() => { setPenempatan(s.name); setStoreDropdownOpen(false); setStoreSearchQuery(''); }}
+                    className={`w-full text-left px-3 py-2 text-sm truncate ${penempatan === s.name ? 'bg-purple-50 text-purple-800 font-semibold' : 'text-slate-700 hover:bg-slate-50'}`}
+                  >
+                    {s.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Fallback: kalau daftar outlet gagal/kosong dimuat, tetap izinkan ketik manual
+            supaya OJT tidak terjebak tidak bisa mulai psikotes sama sekali. */}
+        {!dirLoading && storeDirectory.length === 0 && (
+          <input value={penempatan} onChange={e => setPenempatan(e.target.value)} className="mt-2 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Contoh: Toko Cabang A" />
+        )}
+        {dirError && <p className="text-[11px] text-amber-600 mt-1">Gagal memuat daftar toko dari server. Kamu masih bisa ketik nama toko secara manual di atas.</p>}
+      </div>
+      {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
+      <button onClick={handleStart} disabled={submittingStart || !name.trim() || !penempatan.trim() || !checklistOk} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+        {submittingStart ? 'Memulai...' : 'Mulai Psikotes'}
+      </button>
+    </div></Shell>;
+  }
+  // ✅ PERBAIKAN: Tambah if statement yang hilang!
+  if (phase === 'taking' && questions.length === 0) {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-3">
+      <p className="text-sm text-slate-500">Memuat soal...</p>
+      <button onClick={async () => { if (!(await restoreSession(attempt))) setPhase('blocked'); }} className="bg-purple-800 text-white font-semibold px-4 py-2 rounded-xl text-sm">Muat Ulang Soal</button>
+    </div></Shell>;
+  }
+  if (phase === 'taking' && !armedUi) {
+    return <Shell><div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 text-center">
+      <i data-lucide="shield-check" className="w-10 h-10 text-purple-700 mx-auto"></i>
+      <h2 className="font-bold text-slate-800">Lanjutkan Psikotes</h2>
+      <p className="text-xs text-slate-500">Pastikan aplikasi ngambang sudah ditutup dan notifikasi dimatikan. Jika keluar halaman, alarm akan berbunyi dan akses diblokir.</p>
+      {native && NativeStatusBox()}
+      {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
+      <button disabled={native && !(nativeSt && nativeSt.dndGranted)} onClick={async () => {
+        if (native) {
+          const st = await natCall('precheck');
+          if (st && st.overlay && !allowFloating) { setErrorMsg('Terdeteksi aplikasi ngambang di atas layar. Tutup dulu, atau minta izin Store Leader.'); return; }
+          if (st && !st.dndGranted) { setErrorMsg('Izin "Jangan Ganggu" belum diberikan.'); return; }
+          setErrorMsg('');
+        }
+        PsikotesGuard.arm();
+        armedRef.current = true;
+        setArmedUi(true);
+        if (native && attempt) await nativeBegin(attempt, allowFloating);
+      }} className="w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">Lanjutkan Mengerjakan</button>
+    </div></Shell>;
+  }
+  if (phase === 'taking') {
+    const q = questions[qIndex];
+    const allAnswered = questions.every(qq => answers[qq.id] !== undefined && answers[qq.id] !== '');
+    return (
+      <div className="min-h-screen bg-slate-50 p-4">
+        {fsLost && (
+          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
+            <div className="bg-white rounded-2xl p-5 text-center space-y-3 max-w-xs">
+              <p className="font-bold text-slate-800 text-sm">Layar penuh terlepas</p>
+              <p className="text-xs text-slate-500">Kembali ke layar penuh untuk melanjutkan psikotes.</p>
+              <button onClick={() => { PsikotesGuard.reenterFullscreen(); setFsLost(false); }} className="w-full bg-purple-800 text-white font-bold py-2.5 rounded-xl text-sm">Kembali ke Layar Penuh</button>
+            </div>
+          </div>
+        )}
+        <div className="max-w-md mx-auto space-y-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sticky top-4 z-10">
+            <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
+              <span>Soal {qIndex + 1} dari {questions.length}</span>
+              <div className="flex items-center gap-3">
+                {timerSeconds !== null && (
+                  <span className={`font-bold tabular-nums ${timerSeconds <= 60 ? 'text-rose-600' : timerSeconds <= 300 ? 'text-amber-600' : 'text-slate-600'}`}>
+                    ⏱ {String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:{String(timerSeconds % 60).padStart(2, '0')}
+                  </span>
+                )}
+                <span>{Object.keys(answers).length}/{questions.length} terjawab</span>
+              </div>
+            </div>
+            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-purple-700 rounded-full transition-all" style={{ width: `${((qIndex + 1) / questions.length) * 100}%` }}></div>
+            </div>
+          </div>
+
+          {q && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+              <p className="font-semibold text-slate-800 text-sm whitespace-pre-wrap">{q.text}</p>
+              {q.image_url && (
+                <img src={`${WORKER_BASE}/api/media/file/${q.image_url}`} alt="Gambar soal" className="w-full rounded-xl border border-slate-200 object-contain max-h-64" />
+              )}
+              {q.type === 'pilihan_ganda' ? (
+                <div className="space-y-2">
+                  {q.options.map((opt, i) => (
+                    <button key={i} onClick={() => saveAnswer(q.id, String(i))}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-all ${String(answers[q.id]) === String(i) ? 'bg-purple-800 text-white border-purple-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <textarea value={answers[q.id] || ''} onChange={e => saveAnswer(q.id, e.target.value)} rows={4}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" placeholder="Tulis jawabanmu di sini..." />
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button onClick={() => setQIndex(i => Math.max(0, i - 1))} disabled={qIndex === 0}
+              className="flex-1 bg-white border border-slate-200 disabled:opacity-40 text-slate-700 font-semibold py-2.5 rounded-xl text-sm">Sebelumnya</button>
+            {qIndex < questions.length - 1 ? (
+              <button onClick={() => setQIndex(i => Math.min(questions.length - 1, i + 1))}
+                className="flex-1 bg-purple-800 hover:bg-purple-900 text-white font-semibold py-2.5 rounded-xl text-sm">Selanjutnya</button>
+            ) : (
+              <button onClick={handleFinish} disabled={saving || !allAnswered}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">
+                {saving ? 'Mengirim...' : 'Kumpulkan Jawaban'}
+              </button>
+            )}
+          </div>
+          {!allAnswered && qIndex === questions.length - 1 && (
+            <p className="text-xs text-center text-slate-400">Jawab semua soal dulu sebelum mengumpulkan.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+}
+
+function App() {
+  const params = new URLSearchParams(window.location.search);
+  const ojtToken = params.get('ojt');
+  const psikotesToken = params.get('psikotes');
+
+  if (ojtToken) return <PsikotesOjtPublicPage linkToken={ojtToken} assigned={true} />;
+  if (psikotesToken) return <PsikotesOjtPublicPage linkToken={psikotesToken} assigned={false} />;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center space-y-2 max-w-md">
+        <i data-lucide="link-2-off" className="w-10 h-10 text-slate-400 mx-auto"></i>
+        <h2 className="font-bold text-slate-800">Link Tidak Lengkap</h2>
+        <p className="text-sm text-slate-500">Buka halaman ini menggunakan link psikotes yang dibagikan admin/toko.</p>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// ErrorBoundary (SAMA seperti index.html): jaring pengaman terakhir.
+// Kalau ada error React yang lolos dari patch removeChild/insertBefore di
+// atas (atau sebab lain), tanpa ini layar akan putih kosong tanpa keterangan
+// apa pun. Dengan ini, error tertangkap dan pengguna melihat pesan jelas +
+// tombol "Muat Ulang" -- bukan halaman kosong yang membingungkan.
+// ==========================================
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, errorInfo: '', errorStack: '', showDetail: false };
+  }
+  static getDerivedStateFromError(error) {
+    return {
+      hasError: true,
+      errorInfo: (error && error.message) ? error.message : String(error),
+      errorStack: (error && error.stack) ? error.stack : '',
+    };
+  }
+  componentDidCatch(error, info) {
+    console.error('Psikotes App Error (ditangkap ErrorBoundary):', error, info);
+  }
+  handleReload = () => {
+    this.setState({ hasError: false, errorInfo: '', errorStack: '', showDetail: false });
+    window.location.reload();
+  };
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 max-w-sm w-full text-center space-y-3">
+            <div className="w-14 h-14 rounded-full bg-rose-50 flex items-center justify-center mx-auto">
+              <i data-lucide="alert-triangle" className="w-7 h-7 text-rose-500"></i>
+            </div>
+            <h2 className="font-bold text-slate-800 text-lg">Ups, terjadi kendala tampilan</h2>
+            <p className="text-xs text-slate-500">Silakan muat ulang halaman untuk melanjutkan.</p>
+            <button
+              onClick={this.handleReload}
+              className="w-full bg-purple-800 hover:bg-purple-900 text-white font-bold py-2.5 rounded-xl text-sm"
+            >
+              Muat Ulang Halaman
+            </button>
+            <button
+              type="button"
+              onClick={() => this.setState(s => ({ showDetail: !s.showDetail }))}
+              className="text-[10px] text-slate-400 underline"
+            >
+              {this.state.showDetail ? 'Sembunyikan detail teknis' : 'Lihat detail teknis'}
+            </button>
+            {this.state.showDetail && (
+              <pre className="text-left text-[9px] text-rose-600 bg-rose-50 rounded-lg p-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">{this.state.errorInfo}{this.state.errorStack ? '\n' + this.state.errorStack : ''}</pre>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Psikotes App - Promise ditolak tanpa ditangani:', event.reason);
+});
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<AppErrorBoundary><App /></AppErrorBoundary>);
+window.addEventListener('load', () => { if (window.lucide) window.lucide.createIcons(); });
+</script>
 </body>
 </html>

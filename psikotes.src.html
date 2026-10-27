@@ -8,7 +8,7 @@
 
 <!-- Sama seperti index.html: halaman internal, tidak perlu ke-index search engine -->
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https://unpkg.com; media-src 'self' blob: data:; connect-src 'self' https://*.workers.dev https://unpkg.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https://unpkg.com; media-src 'self' blob: data:; connect-src 'self' https://*.workers.dev https://api.somandiritarobun.my.id https://unpkg.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none';">
 <meta http-equiv="X-Content-Type-Options" content="nosniff">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 
@@ -99,7 +99,7 @@ const { useState, useEffect, useRef } = React;
 // ==========================================
 // KONEKSI KE CLOUDFLARE WORKER (backend yang sama dengan index.html)
 // ==========================================
-const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
+const WORKER_BASE = (/(^|\.)somandiritarobun\.my\.id$/.test(location.hostname) ? 'https://api.somandiritarobun.my.id' : 'https://tarobun-api.tepangbkj8.workers.dev');
 
 let _lucideScheduled = false;
 const scheduleLucideIcons = () => {

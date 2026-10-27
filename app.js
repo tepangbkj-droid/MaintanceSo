@@ -1,7 +1,7 @@
 // Hasil kompilasi dari index.source.html (JSX -> JS). Jangan diedit manual.
 "use strict";
 const { useState, useEffect } = React;
-const WORKER_BASE = 'https://tarobun-api.tepangbkj8.workers.dev';
+const WORKER_BASE = (/(^|\.)somandiritarobun\.my\.id$/.test(location.hostname) ? 'https://api.somandiritarobun.my.id' : 'https://tarobun-api.tepangbkj8.workers.dev');
 const __ACCESS_KEY_LS = 'tbkey_access';
 const __getAccessKey = () => { try {
     return localStorage.getItem(__ACCESS_KEY_LS) || '';
@@ -143,7 +143,7 @@ window.addEventListener('unhandledrejection', (e) => {
         }
     };
 })();
-const PUBLIC_APP_BASE = 'https://so-mandiri-tarobun.vercel.app';
+const PUBLIC_APP_BASE = 'https://app.somandiritarobun.my.id';
 function todayWIB(ts) { return new Date((ts === undefined ? Date.now() : ts) + 7 * 3600000).toISOString().slice(0, 10); }
 let __sessionTokenFallback = null;
 try {
@@ -12899,6 +12899,32 @@ function AdminAccountSecurityCard() {
             btn('Simpan password', changePw, null, !pw || !newPw || !newPw2 || (enabled && !otp)),
             btn('Batal', reset, 'bg-slate-100 text-slate-700')));
 }
+function LegacyWebCard() {
+    const h = React.createElement;
+    const [st, setSt] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const [msg, setMsg] = React.useState('');
+    const load = async () => { try { setSt(await pettyApi('/api/security/legacy-web')); } catch (e) { setMsg(e.message); } };
+    React.useEffect(() => { load(); }, []);
+    const toggle = async (on) => {
+        if (!on && !window.confirm('Matikan alamat web lama (vercel.app) dan APK versi lama? Pengguna di sana tidak bisa login/memakai aplikasi sampai Anda menyalakannya lagi. Link psikotes tetap bisa dibuka.'))
+            return;
+        setBusy(true); setMsg('');
+        try { await pettyApi('/api/security/legacy-web', { method: 'POST', body: { on } }); await load(); setMsg(on ? 'Web lama DINYALAKAN.' : 'Web lama DIMATIKAN.'); }
+        catch (e) { setMsg(e.message); }
+        finally { setBusy(false); }
+    };
+    return h(SecCard, null,
+        h('div', { className: 'flex items-start justify-between gap-3' },
+            h('div', null,
+                h('h3', { className: 'font-bold text-slate-800 text-base' }, 'Akses Alamat Web Lama'),
+                h('p', { className: 'text-xs text-slate-500' }, 'Alamat lama (so-mandiri-tarobun.vercel.app) dan APK lama memakai mode login yang kurang aman (token terbaca JavaScript). Matikan setelah semua staf pindah ke alamat baru.')),
+            st ? h(ToggleSwitch, { on: !!st.on, disabled: busy || !st.modernConfigured, onChange: () => toggle(!st.on) }) : null),
+        st && h('p', { className: 'text-xs text-slate-600' }, 'Status: ', h('b', { className: st.on ? 'text-amber-700' : 'text-emerald-700' }, st.on ? 'MENYALA (web lama masih bisa dipakai)' : 'MATI (hanya web baru)')),
+        st && !st.modernConfigured && h('p', { className: 'text-[11px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2' }, 'Domain web baru belum diatur di Worker (variabel MODERN_ORIGINS), jadi tombol belum bisa dipakai.'),
+        st && st.viaLegacy && h('p', { className: 'text-[11px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2' }, `Anda membuka lewat alamat lama. Untuk mematikannya, buka ${st.modernOrigin || 'alamat web baru'} lalu login di sana.`),
+        msg && h('p', { className: 'text-xs bg-slate-50 text-slate-700 rounded-lg px-3 py-2' }, msg));
+}
 function AdminSecurityTab() {
     const [acc, setAcc] = React.useState(null);
     const [msg, setMsg] = React.useState('');
@@ -12981,6 +13007,7 @@ function AdminSecurityTab() {
             React.createElement("h2", { className: "font-extrabold text-lg" }, "Keamanan"),
             React.createElement("p", { className: "text-xs text-purple-200 mt-0.5" }, "Atur siapa yang bisa membuka aplikasi dan amankan token yang tersimpan di server.")),
         React.createElement(AdminAccountSecurityCard, null),
+        React.createElement(LegacyWebCard, null),
         React.createElement(SecCard, null,
             React.createElement("div", { className: "flex items-start justify-between gap-3" },
                 React.createElement("div", null,

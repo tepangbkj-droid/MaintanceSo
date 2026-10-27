@@ -11,7 +11,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https://tarobun-api.tepangbkj8.workers.dev; font-src 'self' data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'; upgrade-insecure-requests"
+          "value": "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https://tarobun-api.tepangbkj8.workers.dev https://api.somandiritarobun.my.id; font-src 'self' data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev https://api.somandiritarobun.my.id https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'; upgrade-insecure-requests"
         },
         {
           "key": "Strict-Transport-Security",
@@ -48,7 +48,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https://unpkg.com; media-src 'self' blob: data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev https://api.somandiritarobun.my.id https://unpkg.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
         },
         {
           "key": "Strict-Transport-Security",

@@ -52,7 +52,7 @@
 //   (maksimal 1x per 5 menit supaya tidak looping). Bila masih macet, tampil tombol "Muat ulang".
 (function () {
   var BUILD = '20261022';
-  var API = 'https://tarobun-api.tepangbkj8.workers.dev', sent = {};
+  var API = (/(^|\.)somandiritarobun\.my\.id$/.test(location.hostname) ? 'https://api.somandiritarobun.my.id' : 'https://tarobun-api.tepangbkj8.workers.dev'), sent = {};
   var K_BUILD = 'tb_build', K_HEAL = 'tb_heal_at', HEAL_GAP = 5 * 60 * 1000;
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }

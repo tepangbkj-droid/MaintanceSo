@@ -33,7 +33,7 @@ writeFileSync('tailwind.psikotes.config.cjs', `module.exports = {
 execFileSync('npx', ['tailwindcss', '-c', 'tailwind.psikotes.config.cjs', '-i', 'tmp-psikotes-in.css', '-o', 'psikotes.css', '--minify'], { stdio: 'inherit' });
 
 // 3) HTML akhir
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'";
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' https://tarobun-api.tepangbkj8.workers.dev https://api.somandiritarobun.my.id; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'";
 const V = '?v=' + new Date().toISOString().slice(0, 10).replace(/-/g, '');
 let html = src
   .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, `<meta http-equiv="Content-Security-Policy" content="${CSP}">`)

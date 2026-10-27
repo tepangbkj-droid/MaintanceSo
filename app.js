@@ -1911,6 +1911,38 @@ function AdminPsikotesTab({ stores }) {
     const [editingTest, setEditingTest] = useState(null);
     const [viewingScores, setViewingScores] = useState(null);
     const [createError, setCreateError] = useState('');
+    const [renewOpen, setRenewOpen] = useState(null);
+    const [renewBusy, setRenewBusy] = useState(false);
+    const [renewMsg, setRenewMsg] = useState('');
+    // (2026-10) Perbarui link paket (link lama yang sudah tersebar mati). reuse=true -> semua link per-OJT diganti & soal bisa dipakai ulang; hasil tetap tersimpan.
+    const renewLink = async (test, reuse) => {
+        const warn = reuse
+            ? `Reset link paket "${test.title}"?\n\n• Link umum & semua link per-OJT diganti baru (link lama mati)\n• Hasil & jawaban peserta yang sudah ada TETAP TERSIMPAN\n• Soal bisa dipakai lagi lewat link baru\n\nLanjutkan?`
+            : `Perbarui link paket "${test.title}"?\n\nLink lama (termasuk link pendek /s/...) langsung tidak bisa dipakai. Hasil yang sudah ada tetap aman.`;
+        if (!window.confirm(warn))
+            return;
+        setRenewBusy(true);
+        setRenewMsg('');
+        try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/tests/${test.id}/regenerate-link`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+                body: JSON.stringify({ reuse }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setRenewMsg('⚠️ ' + (data.error || `Gagal memperbarui link (status ${res.status}).`));
+                return;
+            }
+            setRenewMsg(reuse ? '✅ Link direset (hasil peserta tetap aman). Klik "Salin Link" untuk membagikan link baru.' : '✅ Link diperbarui. Klik "Salin Link" untuk membagikan link baru.');
+            await loadTests();
+        }
+        catch (e) {
+            setRenewMsg('⚠️ Gagal terhubung ke server. Coba lagi.');
+        }
+        finally {
+            setRenewBusy(false);
+        }
+    };
     const loadTests = async () => {
         setLoading(true);
         setLoadError('');
@@ -2101,7 +2133,14 @@ function AdminPsikotesTab({ stores }) {
                 React.createElement("button", { onClick: () => setViewingScores({ id: test.id, title: test.title }), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700" }, "Lihat Hasil"),
                 React.createElement("button", { onClick: () => copyLink(test), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700" }, linkCopied === test.id ? 'Tersalin!' : 'Salin Link'),
                 React.createElement("button", { onClick: () => toggleLock(test), className: `text-xs font-semibold px-3 py-1.5 rounded-lg ${test.locked ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}` }, test.locked ? 'Buka Kunci' : 'Kunci'),
-                React.createElement("button", { onClick: () => handleDelete(test), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 ml-auto" }, "Hapus")))))))));
+                React.createElement("button", { onClick: () => { setRenewMsg(''); setRenewOpen(renewOpen === test.id ? null : test.id); }, className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800" }, "Perbarui Link"),
+                React.createElement("button", { onClick: () => handleDelete(test), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 ml-auto" }, "Hapus")),
+            renewOpen === test.id && React.createElement("div", { className: "bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2" },
+                React.createElement("p", { className: "text-[11px] text-amber-900" }, "Dipakai kalau link sudah tersebar / ada orang iseng ikut mengisi. Link lama langsung mati."),
+                React.createElement("div", { className: "flex flex-wrap gap-2" },
+                    React.createElement("button", { onClick: () => renewLink(test, false), disabled: renewBusy, className: "text-xs font-bold px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-900 disabled:opacity-50" }, "Perbarui Link Saja"),
+                    React.createElement("button", { onClick: () => renewLink(test, true), disabled: renewBusy, className: "text-xs font-bold px-3 py-1.5 rounded-lg bg-amber-600 text-white disabled:opacity-50" }, "Reset Semua Link (Hasil Tetap Aman)")),
+                renewMsg && React.createElement("p", { className: "text-[11px] font-semibold text-slate-700" }, renewMsg)))))))));
 }
 function PsikotesQuestionEditor({ test, onBack }) {
     const [questions, setQuestions] = useState([]);
@@ -2403,6 +2442,33 @@ function PsikotesScoresView({ test, stores, onBack }) {
             setTimeout(() => setCopiedLinkId(null), 2000);
         });
     };
+    // (2026-10) Perbarui link satu OJT (link lama mati). Kalau sudah dipakai -> reset: OJT bisa mengulang, hasil lama tetap tersimpan.
+    const handleRegenLink = async (link, reset) => {
+        const msg = reset
+            ? `Reset link ${link.ojt_name}?\n\nLink LAMA mati dan ${link.ojt_name} bisa mengerjakan ulang lewat link baru. Hasil tes yang sudah ada TETAP TERSIMPAN.`
+            : `Perbarui link ${link.ojt_name}?\n\nLink lama langsung tidak bisa dipakai.`;
+        if (!window.confirm(msg))
+            return;
+        try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/ojt-links/${link.id}/regenerate`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+                body: JSON.stringify({ reset }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                window.alert(data.error || `Gagal memperbarui link (status ${res.status}).`);
+                return;
+            }
+            await copyToClipboardSafe(`${PUBLIC_APP_BASE}/psikotes.html?ojt=${data.linkToken}`);
+            setCopiedLinkId(link.id);
+            setTimeout(() => setCopiedLinkId(null), 3000);
+        }
+        catch (e) {
+            window.alert('Gagal terhubung ke server. Coba lagi.');
+        }
+        load();
+        loadLinks();
+    };
     const handleDeleteLink = async (link) => {
         if (!window.confirm(`Hapus link OJT "${link.ojt_name}" (${link.store_name})? Link ini belum dipakai.`))
             return;
@@ -2412,6 +2478,8 @@ function PsikotesScoresView({ test, stores, onBack }) {
     const statusBadge = (status) => {
         if (status === 'blocked')
             return React.createElement("span", { className: "text-[10px] bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded-md" }, "Diblokir");
+        if (status === 'abandoned')
+            return React.createElement("span", { className: "text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-1 rounded-md" }, "Dihentikan (link direset)");
         if (status === 'completed')
             return React.createElement("span", { className: "text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md" }, "Selesai");
         return React.createElement("span", { className: "text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-1 rounded-md" }, "Mengerjakan");
@@ -2461,6 +2529,10 @@ function PsikotesScoresView({ test, stores, onBack }) {
                         l.attempt_status === 'blocked' && (React.createElement("button", { onClick: () => handleUnblock(l.attempt_id), className: "text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg" }, "Buka Blokir")),
                         l.status !== 'completed' && l.attempt_status !== 'completed' && (l.floating_request === 1 || l.allow_floating === 1) && (React.createElement("button", { onClick: async () => { await __apiFetch(`${WORKER_BASE}/api/psikotes/ojt-links/${l.id}/floating`, { method: 'POST', headers: { ...__authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ allow: l.allow_floating !== 1 }) }); loadLinks(); }, className: `text-[11px] font-bold px-2.5 py-1.5 rounded-lg ${l.allow_floating === 1 ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-800'}` }, l.allow_floating === 1 ? 'Ngambang: Diizinkan (Cabut)' : 'Izinkan Ngambang')),
                         l.attempt_id && (l.attempt_status === 'completed' || l.attempt_status === 'blocked') && (React.createElement("button", { onClick: () => openAnswerDetail(l.attempt_id), className: "text-[11px] font-bold bg-purple-100 text-purple-800 px-2.5 py-1.5 rounded-lg" }, answerDetailId === l.attempt_id ? 'Tutup' : 'Kunci Jawaban')))),
+                React.createElement("div", { className: "px-4 pb-3 flex flex-wrap items-center gap-2" }, l.status === 'unused'
+                    ? React.createElement("button", { onClick: () => handleRegenLink(l, false), className: "text-[11px] font-bold bg-amber-50 text-amber-800 px-2.5 py-1.5 rounded-lg" }, "Perbarui Link")
+                    : React.createElement("button", { onClick: () => handleRegenLink(l, true), className: "text-[11px] font-bold bg-amber-100 text-amber-800 px-2.5 py-1.5 rounded-lg" }, "Reset & Link Baru"),
+                    copiedLinkId === l.id && React.createElement("span", { className: "text-[10px] text-emerald-700 font-semibold" }, "Link baru tersalin")),
                 answerDetailId === l.attempt_id && (React.createElement(AnswerKeyPanel, { loading: answerDetailLoading, answers: answerDetail })))))))),
         React.createElement("div", { className: "space-y-3" },
             React.createElement("h3", { className: "font-bold text-slate-700 text-sm" }, "Semua Hasil"),
@@ -13857,6 +13929,9 @@ function LeaderOjtStatusPanel({ storeName, showToast, sendToStoreTelegram }) {
     const [err, setErr] = useState('');
     const [newName, setNewName] = useState('');
     const [adding, setAdding] = useState(false);
+    const [sel, setSel] = useState({});
+    const [sharing, setSharing] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const load = async () => {
         try {
             const d = await pettyApi('/api/ojt/people');
@@ -13889,19 +13964,76 @@ function LeaderOjtStatusPanel({ storeName, showToast, sendToStoreTelegram }) {
             setAdding(false);
         }
     };
+    // (2026-10) Pilih beberapa OJT lalu kirim hasilnya SEKALIGUS ke grup Telegram toko.
+    const selectedIds = people.filter(p => sel[p.id]).map(p => p.id);
+    const allSelected = people.length > 0 && selectedIds.length === people.length;
+    const toggleSel = (id) => setSel(prev => ({ ...prev, [id]: !prev[id] }));
+    const selectAll = () => {
+        const n = {};
+        if (!allSelected)
+            people.forEach(p => { n[p.id] = true; });
+        setSel(n);
+    };
+    const shareSelected = async () => {
+        if (!selectedIds.length)
+            return;
+        if (!window.confirm(`Kirim hasil ${selectedIds.length} OJT ke grup Telegram toko?`))
+            return;
+        setSharing(true);
+        try {
+            const d = await pettyApi('/api/ojt/share-group', { method: 'POST', body: { ids: selectedIds } });
+            const t = d.telegram || {};
+            if (t.sent) {
+                showToast(`📨 Hasil ${d.count} OJT terkirim ke grup Telegram`);
+                setSel({});
+            }
+            else {
+                showToast('⚠️ ' + (t.reason || 'Gagal mengirim ke grup Telegram.'));
+            }
+        }
+        catch (e) {
+            showToast('⚠️ ' + e.message);
+        }
+        finally {
+            setSharing(false);
+        }
+    };
+    // (2026-10) Tarik peserta yang sudah terlanjur daftar psikotes sendiri (sebelum otomatis) ke daftar ini.
+    const syncSelf = async () => {
+        setSyncing(true);
+        try {
+            const d = await pettyApi('/api/ojt/people/sync-self', { method: 'POST', body: {} });
+            showToast(d.added ? `✅ ${d.added} peserta daftar mandiri ditambahkan` : 'Tidak ada peserta daftar mandiri yang baru.');
+            await load();
+        }
+        catch (e) {
+            showToast('⚠️ ' + e.message);
+        }
+        finally {
+            setSyncing(false);
+        }
+    };
     return (React.createElement("div", { className: "space-y-3" },
         React.createElement("div", null,
             React.createElement("h2", { className: "font-bold text-slate-700 text-base" }, "Status OJT"),
-            React.createElement("p", { className: "text-xs text-slate-500 mt-0.5" }, "Nilai tiap stage (Bakery, Filler, Kasir) lalu tandai Selesai OJT. Sistem menyimpulkan apakah OJT sudah bisa lanjut ke tahap selanjutnya.")),
+            React.createElement("p", { className: "text-xs text-slate-500 mt-0.5" }, "Nilai tiap stage (Bakery, Filler, Kasir) lalu tandai Selesai OJT. Peserta yang daftar psikotes sendiri otomatis muncul di sini dan bisa kamu nilai & buka blokirnya.")),
         React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-3 flex gap-2" },
             React.createElement("input", { value: newName, onChange: e => setNewName(e.target.value), onKeyDown: e => { if (e.key === 'Enter')
                     add(); }, placeholder: "Nama OJT baru", className: "flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm" }),
             React.createElement("button", { onClick: add, disabled: adding || !newName.trim(), className: "bg-purple-800 disabled:opacity-50 text-white text-xs font-bold px-4 rounded-xl" }, adding ? '...' : 'Tambah')),
+        !loading && !err && React.createElement("div", { className: "flex justify-end" },
+            React.createElement("button", { onClick: syncSelf, disabled: syncing, className: "text-[11px] font-bold text-violet-700 underline disabled:opacity-50" }, syncing ? 'Memeriksa...' : 'Tarik peserta yang daftar psikotes mandiri')),
         !loading && !err && React.createElement(OjtQuickSend, { people: people, showToast: showToast, onSent: load }),
+        !loading && !err && people.length > 0 && React.createElement("div", { className: "bg-sky-50 border border-sky-200 rounded-2xl p-3 flex flex-wrap items-center gap-2" },
+            React.createElement("button", { onClick: selectAll, className: "text-xs font-bold text-sky-800 bg-white border border-sky-200 px-3 py-1.5 rounded-lg" }, allSelected ? 'Batal Pilih Semua' : 'Pilih Semua'),
+            React.createElement("span", { className: "text-[11px] text-sky-700 font-semibold" }, selectedIds.length + ' dipilih'),
+            React.createElement("button", { onClick: shareSelected, disabled: sharing || selectedIds.length === 0, className: "ml-auto bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5" },
+                React.createElement("i", { "data-lucide": "send", className: "w-3.5 h-3.5" }),
+                sharing ? 'Mengirim...' : `Kirim ke Grup Telegram (${selectedIds.length})`)),
         loading ? (React.createElement("div", { className: "text-center text-slate-400 text-sm py-8" },
             React.createElement("i", { "data-lucide": "loader", className: "w-6 h-6 animate-spin mx-auto" }))) : err ? (React.createElement("div", { className: "bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center space-y-2" },
             React.createElement("p", { className: "text-xs text-rose-700 font-semibold" }, err),
-            React.createElement("button", { onClick: () => { setLoading(true); load(); }, className: "bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl" }, "Coba Lagi"))) : people.length === 0 ? (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm" }, "Belum ada OJT. Tambahkan nama OJT di atas untuk mulai menilai.")) : (people.map(p => React.createElement(OjtPersonCard, { key: p.id, p: p, storeName: storeName, onChanged: load, showToast: showToast, sendToStoreTelegram: sendToStoreTelegram })))));
+            React.createElement("button", { onClick: () => { setLoading(true); load(); }, className: "bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl" }, "Coba Lagi"))) : people.length === 0 ? (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm" }, "Belum ada OJT. Tambahkan nama OJT di atas untuk mulai menilai.")) : (people.map(p => React.createElement(OjtPersonCard, { key: p.id, p: p, storeName: storeName, onChanged: load, showToast: showToast, sendToStoreTelegram: sendToStoreTelegram, selected: !!sel[p.id], onToggleSelect: () => toggleSel(p.id) })))));
 }
 function OjtQuickSend({ people, showToast, onSent }) {
     const [pid, setPid] = useState('');
@@ -13941,7 +14073,7 @@ function OjtQuickSend({ people, showToast, onSent }) {
         React.createElement("button", { onClick: send, disabled: busy || !pid || !tg.trim(), className: "w-full bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-xs font-bold py-2.5 rounded-xl" }, busy ? 'Mengirim...' : 'Kirim ke Telegram OJT'),
         React.createElement("p", { className: "text-[10px] text-sky-700" }, "ID / username tersimpan otomatis. OJT cukup menekan Start di bot Telegram perusahaan sekali saja.")));
 }
-function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram }) {
+function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram, selected, onToggleSelect }) {
     const [open, setOpen] = useState(false);
     const [forms, setForms] = useState(() => {
         const f = {};
@@ -14014,7 +14146,14 @@ function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram
             showToast('✅ Status OJT terkirim ke Telegram');
     };
     const chip = (cls, text) => React.createElement("span", { className: `text-[10px] font-bold px-2 py-1 rounded-md ${cls}` }, text);
+    // (2026-10) Store Leader membuka blokir langsung dari kartu Status OJT.
+    const unblock = () => run('unb', () => pettyApi(`/api/ojt/people/${p.id}/unblock`, { method: 'POST', body: { attemptId: p.attempt.id } }), `✅ Blokir ${p.name} dibuka — peserta bisa lanjut mengerjakan`);
     return (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" },
+        onToggleSelect && React.createElement("div", { className: "flex items-center gap-2 px-4 pt-3" },
+            React.createElement("label", { className: "flex items-center gap-2 text-[11px] font-semibold text-slate-500" },
+                React.createElement("input", { type: "checkbox", checked: !!selected, onChange: onToggleSelect }),
+                "Pilih untuk dibagikan"),
+            p.source === 'self' && React.createElement("span", { className: "ml-auto text-[10px] bg-violet-100 text-violet-700 font-bold px-2 py-0.5 rounded-md" }, "Daftar mandiri")),
         React.createElement("button", { onClick: () => setOpen(o => !o), className: "w-full text-left p-4 space-y-2.5" },
             React.createElement("div", { className: "flex items-center justify-between gap-2" },
                 React.createElement("div", { className: "min-w-0" },
@@ -14036,6 +14175,10 @@ function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram
             React.createElement("div", { className: `text-xs font-bold rounded-xl px-3 py-2 ${st.canProceed ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}` },
                 st.canProceed ? '✅ ' : '⏳ ',
                 st.label)),
+        p.attempt && p.attempt.status === 'blocked' && React.createElement("div", { className: "mx-4 mb-3 flex flex-wrap items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2" },
+            React.createElement("span", { className: "text-[11px] font-bold text-rose-700 flex-1 min-w-0" }, '🔒 Tes diblokir: ' + (p.attempt.blockedReason || 'keluar dari halaman tes')),
+            React.createElement("button", { onClick: unblock, disabled: busy === 'unb', className: "text-[11px] font-bold bg-emerald-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg" }, busy === 'unb' ? '...' : 'Buka Blokir')),
+        p.attempt && p.attempt.status === 'in_progress' && React.createElement("p", { className: "mx-4 mb-3 text-[11px] font-semibold text-indigo-700 bg-indigo-50 rounded-lg px-3 py-1.5" }, '✍️ Sedang mengerjakan tes' + (p.attempt.title ? ` (${p.attempt.title})` : '')),
         open && (React.createElement("div", { className: "border-t border-slate-100 bg-slate-50 p-4 space-y-3" },
             OJT_STAGE_DEFS.map(s => {
                 const f = forms[s.key];
@@ -14118,6 +14261,19 @@ function LeaderOjtQuestionsPanel({ showToast }) {
             setCreating(false);
         }
     };
+    // (2026-10) Reset link paket buatan SL: semua link OJT diganti baru, soal bisa dipakai lagi. Hasil lama TETAP ADA.
+    const resetAll = async (t) => {
+        if (!window.confirm(`Reset link paket "${t.title}"?\n\n• Semua link OJT diganti baru (link lama yang sudah tersebar mati)\n• Hasil & jawaban yang sudah ada TETAP TERSIMPAN\n• Soal bisa dipakai lagi lewat link baru\n\nLanjutkan?`))
+            return;
+        try {
+            await pettyApi(`/api/ojt/tests/${t.id}/regenerate-link`, { method: 'POST', body: { reuse: true } });
+            showToast('✅ Link paket direset. Buka "Link OJT" untuk menyalin link baru.');
+            await load();
+        }
+        catch (e) {
+            showToast('⚠️ ' + e.message);
+        }
+    };
     const remove = async (t) => {
         if (!window.confirm(`Hapus paket soal "${t.title}"? Link & hasil tes di paket ini ikut terhapus.`))
             return;
@@ -14164,6 +14320,7 @@ function LeaderOjtQuestionsPanel({ showToast }) {
                     ? React.createElement("button", { onClick: () => setEditing({ id: t.id, title: t.title, readOnly: true }), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700" }, "Lihat Soal")
                     : t.attempt_count === 0 && React.createElement("button", { onClick: () => setEditing({ id: t.id, title: t.title }), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700" }, "Edit Soal"),
                 React.createElement("button", { onClick: () => setLinksOpen(linksOpen === t.id ? null : t.id), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700" }, "Link OJT"),
+                !t.from_admin && React.createElement("button", { onClick: () => resetAll(t), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800" }, "Reset Link"),
                 !t.from_admin && React.createElement("button", { onClick: () => remove(t), className: "text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 ml-auto" }, "Hapus")),
             linksOpen === t.id && React.createElement(OjtLinksBox, { test: t, showToast: showToast }))))));
 }
@@ -14230,6 +14387,23 @@ function OjtLinksBox({ test, showToast }) {
         }
     };
     const copy = async (l) => { showToast((await ojtCopy(mk(l.link_token))) ? '✅ Link disalin' : '⚠️ Gagal menyalin'); };
+    // (2026-10) Perbarui link (link lama mati) atau Reset (link baru, OJT bisa mengulang; hasil lama tetap tersimpan).
+    const regen = async (l, reset) => {
+        const msg = reset
+            ? `Reset link ${l.ojt_name}?\n\nLink LAMA tidak berlaku lagi dan ${l.ojt_name} bisa mengerjakan ulang lewat link baru. Hasil tes yang sudah ada TETAP TERSIMPAN.`
+            : `Perbarui link ${l.ojt_name}?\n\nLink lama langsung tidak bisa dipakai. Link baru otomatis disalin.`;
+        if (!window.confirm(msg))
+            return;
+        try {
+            const d = await pettyApi(`/api/ojt/tests/${test.id}/regenerate-ojt-link`, { method: 'POST', body: { linkId: l.id, reset } });
+            const ok = await ojtCopy(mk(d.linkToken));
+            showToast(ok ? '✅ Link baru dibuat & disalin' : '✅ Link baru dibuat (salin dari daftar)');
+            await load();
+        }
+        catch (e) {
+            showToast('⚠️ ' + e.message);
+        }
+    };
     const del = async (l) => {
         if (!window.confirm(`Hapus link untuk ${l.ojt_name}?`))
             return;
@@ -14293,7 +14467,10 @@ function OjtLinksBox({ test, showToast }) {
                     React.createElement("p", { className: "text-[10px] text-slate-400" }, l.status === 'used' ? (done ? `Selesai • skor ${l.auto_score ?? '-'}` : 'Sudah dibuka') : 'Belum dipakai')),
                 done && React.createElement("button", { onClick: () => sendTg(l), disabled: sending === l.id, className: "text-[11px] font-bold text-sky-700 px-2 py-1 bg-sky-50 disabled:opacity-50 rounded-md" }, sending === l.id ? 'Kirim...' : 'Kirim Telegram'),
                 !done && React.createElement("button", { onClick: () => copy(l), className: "text-[11px] font-bold text-indigo-700 px-2 py-1 bg-indigo-50 rounded-md" }, "Salin"),
-                l.status === 'unused' && React.createElement("button", { onClick: () => del(l), className: "text-[11px] font-bold text-rose-600 px-2 py-1 bg-rose-50 rounded-md" }, "Hapus")), extra));
+                l.status === 'unused' && React.createElement("button", { onClick: () => del(l), className: "text-[11px] font-bold text-rose-600 px-2 py-1 bg-rose-50 rounded-md" }, "Hapus")), extra,
+                React.createElement("div", { className: "flex gap-1.5" }, l.status === 'unused'
+                    ? React.createElement("button", { onClick: () => regen(l, false), className: "text-[10px] font-bold text-slate-600 px-2 py-1 bg-slate-100 rounded-md" }, "Perbarui Link")
+                    : React.createElement("button", { onClick: () => regen(l, true), className: "text-[10px] font-bold text-amber-800 px-2 py-1 bg-amber-100 rounded-md" }, "Reset & Link Baru"))));
         })));
 }
 function LeaderOjtQuestionEditor({ test, onBack, showToast }) {
@@ -14400,7 +14577,9 @@ function OjtReadonlyCard({ p, showStore }) {
         React.createElement("button", { onClick: () => setOpen(o => !o), className: "w-full text-left p-4 space-y-2.5" },
             React.createElement("div", { className: "flex items-center justify-between gap-2" },
                 React.createElement("div", { className: "min-w-0" },
-                    React.createElement("p", { className: "font-bold text-slate-800 text-sm truncate" }, p.name),
+                    React.createElement("p", { className: "font-bold text-slate-800 text-sm truncate" },
+                        p.name,
+                        p.source === 'self' && React.createElement("span", { className: "ml-1.5 text-[10px] bg-violet-100 text-violet-700 font-bold px-1.5 py-0.5 rounded-md align-middle" }, "Daftar mandiri")),
                     showStore && React.createElement("p", { className: "text-[11px] text-purple-700 font-semibold truncate" },
                         "\uD83C\uDFEA ",
                         p.storeName || p.storeId),

@@ -714,14 +714,20 @@ const auth = {
         __authListeners.push(cb);
         return () => { __authListeners = __authListeners.filter(l => l !== cb); };
     },
-    signInWithEmailAndPassword: async (email, password) => {
+    signInWithEmailAndPassword: async (email, password, otp) => {
         let res, data;
         if (email === 'admin@tarobun-app.internal') {
             res = await __apiFetch(`${WORKER_BASE}/api/login/admin`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password }),
+                body: JSON.stringify(otp ? { email, password, otp } : { email, password }),
             });
             data = await res.json();
+            if (data && data.mfaRequired && (!res.ok || !data.ok)) {
+                const e = new Error(data.error || 'Masukkan kode verifikasi 6 digit.');
+                e.status = res.status;
+                e.mfaRequired = true;
+                throw e;
+            }
             if (!res.ok) {
                 const e = new Error(data.error || 'Login gagal');
                 e.status = res.status;
@@ -2519,6 +2525,8 @@ function LoginScreen({ onLoggedIn }) {
     const storeDropdownRef = React.useRef(null);
     const [adminPassword, setAdminPassword] = useState('');
     const [adminPassword2, setAdminPassword2] = useState('');
+    const [adminOtp, setAdminOtp] = useState('');
+    const [needOtp, setNeedOtp] = useState(false);
     useEffect(() => {
         scheduleLucideIcons();
     });
@@ -2753,8 +2761,8 @@ function LoginScreen({ onLoggedIn }) {
         setLoading(true);
         try {
             if (adminExists === false) {
-                if (adminPassword.length < 12) {
-                    setError('Password minimal 12 karakter.');
+                if (adminPassword.length < 12 || [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((re) => re.test(adminPassword)).length < 3) {
+                    setError('Password minimal 12 karakter dan gabungkan minimal 3 jenis: huruf kecil, huruf besar, angka, simbol.');
                     setLoading(false);
                     return;
                 }
@@ -2770,12 +2778,18 @@ function LoginScreen({ onLoggedIn }) {
                 onLoggedIn({ role: 'admin' });
                 return;
             }
-            await auth.signInWithEmailAndPassword(ADMIN_EMAIL, adminPassword);
+            await auth.signInWithEmailAndPassword(ADMIN_EMAIL, adminPassword, needOtp ? adminOtp.trim() : '');
             saveSession('admin', {});
             onLoggedIn({ role: 'admin' });
         }
         catch (err) {
-            if (err && err.status === 429) {
+            if (err && err.mfaRequired) {
+                const first = !needOtp;
+                setNeedOtp(true);
+                setAdminOtp('');
+                setError(first ? '' : (err.message || 'Kode verifikasi salah.'));
+            }
+            else if (err && err.status === 429) {
                 setError(err.message || 'Terlalu banyak percobaan login gagal. Coba lagi beberapa saat lagi.');
             }
             else if (adminExists === false && /sudah/i.test(err.message || '')) {
@@ -2785,7 +2799,7 @@ function LoginScreen({ onLoggedIn }) {
                 setError('Akun admin sudah pernah dibuat sebelumnya. Silakan masukkan password admin untuk login.');
             }
             else {
-                setError(adminExists === false ? 'Gagal membuat akun admin.' : 'Password admin salah.');
+                setError(adminExists === false ? (err.message || 'Gagal membuat akun admin.') : 'Password admin salah.');
             }
         }
         finally {
@@ -2862,10 +2876,14 @@ function LoginScreen({ onLoggedIn }) {
                 adminCheckError && adminExists === null && (React.createElement("div", { className: "bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg px-3 py-2" }, "Gagal memeriksa status akun admin, tapi Anda tetap bisa mencoba masuk di bawah ini.")),
                 React.createElement("div", null,
                     React.createElement("label", { htmlFor: "adminPassword", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Password Admin"),
-                    React.createElement("input", { id: "adminPassword", type: "password", value: adminPassword, onChange: (e) => setAdminPassword(e.target.value), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm", required: true, autoComplete: adminExists === false ? 'new-password' : 'current-password', minLength: adminExists === false ? 8 : undefined })),
+                    React.createElement("input", { id: "adminPassword", type: "password", value: adminPassword, onChange: (e) => setAdminPassword(e.target.value), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm", required: true, autoComplete: adminExists === false ? 'new-password' : 'current-password', minLength: adminExists === false ? 12 : undefined, readOnly: needOtp })),
+                needOtp && adminExists !== false && (React.createElement("div", null,
+                    React.createElement("label", { htmlFor: "adminOtp", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Kode Verifikasi (Google Authenticator)"),
+                    React.createElement("input", { id: "adminOtp", type: "text", inputMode: "numeric", autoComplete: "one-time-code", autoFocus: true, maxLength: 32, value: adminOtp, onChange: (e) => setAdminOtp(e.target.value), placeholder: "6 digit, atau kode pemulihan", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm tracking-widest font-mono", required: true }),
+                    React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Buka aplikasi autentikator di HP Anda. Kehilangan HP? Pakai salah satu kode pemulihan (sekali pakai)."))),
                 adminExists === false && (React.createElement("div", null,
                     React.createElement("label", { htmlFor: "adminPassword2", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Konfirmasi Password"),
-                    React.createElement("input", { id: "adminPassword2", type: "password", value: adminPassword2, onChange: (e) => setAdminPassword2(e.target.value), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm", required: true, minLength: 8 }))),
+                    React.createElement("input", { id: "adminPassword2", type: "password", value: adminPassword2, onChange: (e) => setAdminPassword2(e.target.value), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm", required: true, minLength: 12 }))),
                 React.createElement("button", { type: "submit", disabled: loading, className: "w-full bg-indigo-900 hover:bg-indigo-950 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm" }, loading ? 'Memproses...' : (adminExists === false ? 'Buat Akun Admin' : 'Masuk sebagai Admin')))))));
 }
 function PresenceDot({ isOnline, size = 'w-2.5 h-2.5' }) {
@@ -4228,8 +4246,8 @@ function AdminPanel({ onLogout }) {
             return;
         }
         const value = customTokenInput.trim();
-        if (value.length < 6) {
-            setCustomTokenError('Token minimal 6 karakter.');
+        if (value.length < 10) {
+            setCustomTokenError('Token minimal 10 karakter.');
             return;
         }
         if (!/^[A-Za-z0-9._-]+$/.test(value)) {
@@ -12796,6 +12814,91 @@ function AccessBlockedScreen({ onUnlocked }) {
             React.createElement("p", { className: "text-[11px] text-slate-400 mt-4" }, "Belum punya link? Hubungi admin Tarobun."))));
 }
 function SecCard({ children }) { return React.createElement("div", { className: "bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3" }, children); }
+function AdminAccountSecurityCard() {
+    const h = React.createElement;
+    const [st, setSt] = React.useState(null);
+    const [stage, setStage] = React.useState('idle'); // idle | setup | codes | disable | pwd
+    const [pw, setPw] = React.useState('');
+    const [otp, setOtp] = React.useState('');
+    const [sec, setSec] = React.useState(null); // { secret, qr }
+    const [codes, setCodes] = React.useState([]);
+    const [newPw, setNewPw] = React.useState('');
+    const [newPw2, setNewPw2] = React.useState('');
+    const [busy, setBusy] = React.useState(false);
+    const [msg, setMsg] = React.useState('');
+    const [err, setErr] = React.useState('');
+    const load = async () => { try { setSt(await pettyApi('/api/admin/mfa/status')); } catch (e) { setErr(e.message); } };
+    React.useEffect(() => { load(); }, []);
+    const reset = () => { setStage('idle'); setPw(''); setOtp(''); setNewPw(''); setNewPw2(''); setSec(null); setErr(''); };
+    const run = async (fn) => { setBusy(true); setErr(''); setMsg(''); try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
+    const startSetup = () => run(async () => {
+        const d = await pettyApi('/api/admin/mfa/setup', { method: 'POST', body: { password: pw } });
+        setSec({ secret: d.secret, qr: makeQrDataUrl(d.otpauth) });
+        setPw(''); setStage('setup');
+    });
+    const confirmEnable = () => run(async () => {
+        const d = await pettyApi('/api/admin/mfa/enable', { method: 'POST', body: { otp } });
+        setCodes(d.recoveryCodes || []); setOtp(''); setSec(null); setStage('codes'); load();
+    });
+    const disable = () => run(async () => {
+        await pettyApi('/api/admin/mfa/disable', { method: 'POST', body: { password: pw, otp } });
+        reset(); setMsg('MFA dinonaktifkan.'); load();
+    });
+    const changePw = () => run(async () => {
+        if (newPw !== newPw2) throw new Error('Konfirmasi password baru tidak cocok.');
+        const d = await pettyApi('/api/admin/password', { method: 'POST', body: { password: pw, newPassword: newPw, otp: otp || undefined } });
+        __setSessionTokenFallback(d._token);
+        reset(); setMsg('Password diganti. Semua perangkat lain otomatis keluar.');
+    });
+    const inputCls = 'w-full px-3 py-2 border border-slate-300 rounded-xl text-sm';
+    const btn = (label, onClick, cls, disabled) => h('button', { type: 'button', onClick, disabled: busy || disabled, className: `${cls || 'bg-purple-800 hover:bg-purple-900 text-white'} disabled:opacity-50 font-bold py-2.5 rounded-xl text-sm w-full` }, busy ? 'Memproses...' : label);
+    const field = (label, value, set, type, extra) => h('div', null, h('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, label), h('input', { type: type || 'password', value, onChange: (e) => set(e.target.value), className: inputCls, autoComplete: 'off', ...(extra || {}) }));
+    const enabled = !!(st && st.enabled);
+    return h(SecCard, null,
+        h('div', { className: 'flex items-start justify-between gap-3' },
+            h('div', null,
+                h('h3', { className: 'font-bold text-slate-800 text-base' }, 'Verifikasi 2 Langkah (MFA) Admin'),
+                h('p', { className: 'text-xs text-slate-500' }, 'Login admin butuh password + kode 6 digit dari Google Authenticator / Authy. Password bocor saja tidak cukup untuk masuk.')),
+            h('span', { className: `shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-full ${enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}` }, st ? (enabled ? 'AKTIF' : 'BELUM AKTIF') : '...')),
+        msg && h('p', { className: 'text-xs bg-emerald-50 text-emerald-700 rounded-lg px-3 py-2' }, msg),
+        err && h('p', { className: 'text-xs bg-rose-50 text-rose-700 rounded-lg px-3 py-2' }, err),
+        stage === 'idle' && st && h('div', { className: 'space-y-2' },
+            enabled ? h('p', { className: 'text-xs text-slate-600' }, `Kode pemulihan tersisa: ${st.recoveryLeft}`) : null,
+            enabled
+                ? btn('Nonaktifkan MFA', () => { setStage('disable'); setErr(''); setMsg(''); }, 'bg-slate-100 hover:bg-slate-200 text-slate-700')
+                : btn('Aktifkan MFA', () => { setStage('start'); setErr(''); setMsg(''); }),
+            btn('Ganti Password Admin', () => { setStage('pwd'); setErr(''); setMsg(''); }, 'bg-slate-800 hover:bg-slate-900 text-white')),
+        stage === 'start' && h('div', { className: 'space-y-2' },
+            h('p', { className: 'text-xs text-slate-600' }, 'Masukkan password admin untuk melanjutkan.'),
+            field('Password admin', pw, setPw),
+            btn('Lanjut', startSetup, null, !pw),
+            btn('Batal', reset, 'bg-slate-100 text-slate-700')),
+        stage === 'setup' && sec && h('div', { className: 'space-y-2' },
+            h('p', { className: 'text-xs text-slate-600' }, '1) Buka Google Authenticator/Authy, pilih tambah akun, lalu scan QR ini (atau ketik kunci manual).'),
+            sec.qr ? h('img', { src: sec.qr, alt: 'QR MFA', className: 'w-44 h-44 mx-auto border border-slate-200 rounded-xl' }) : null,
+            h('div', { className: 'bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-[11px] font-mono break-all select-all text-center' }, sec.secret),
+            h('p', { className: 'text-xs text-slate-600' }, '2) Masukkan kode 6 digit yang muncul untuk memastikan berhasil.'),
+            field('Kode 6 digit', otp, setOtp, 'text', { inputMode: 'numeric', maxLength: 8, autoComplete: 'one-time-code' }),
+            btn('Aktifkan', confirmEnable, null, !otp),
+            btn('Batal', reset, 'bg-slate-100 text-slate-700')),
+        stage === 'codes' && h('div', { className: 'space-y-2' },
+            h('p', { className: 'text-xs font-bold text-emerald-700' }, 'MFA aktif. Simpan kode pemulihan ini SEKARANG (hanya tampil sekali, tiap kode sekali pakai):'),
+            h('div', { className: 'grid grid-cols-2 gap-1.5 bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs font-mono select-all' }, codes.map((c) => h('span', { key: c }, c))),
+            h('p', { className: 'text-[10px] text-slate-500' }, 'Simpan di pengelola password atau cetak dan simpan di tempat aman. Tanpa kode ini dan tanpa HP, akun admin tidak bisa dibuka (reset lewat database D1).'),
+            btn('Saya sudah menyimpannya', () => { setCodes([]); reset(); }, null)),
+        stage === 'disable' && h('div', { className: 'space-y-2' },
+            field('Password admin', pw, setPw),
+            field('Kode 6 digit / kode pemulihan', otp, setOtp, 'text', { maxLength: 32 }),
+            btn('Nonaktifkan', disable, 'bg-rose-600 hover:bg-rose-700 text-white', !pw || !otp),
+            btn('Batal', reset, 'bg-slate-100 text-slate-700')),
+        stage === 'pwd' && h('div', { className: 'space-y-2' },
+            field('Password saat ini', pw, setPw),
+            field('Password baru (min 12, campur huruf besar/kecil/angka/simbol)', newPw, setNewPw, 'password', { minLength: 12 }),
+            field('Ulangi password baru', newPw2, setNewPw2),
+            enabled ? field('Kode 6 digit / kode pemulihan', otp, setOtp, 'text', { maxLength: 32 }) : null,
+            btn('Simpan password', changePw, null, !pw || !newPw || !newPw2 || (enabled && !otp)),
+            btn('Batal', reset, 'bg-slate-100 text-slate-700')));
+}
 function AdminSecurityTab() {
     const [acc, setAcc] = React.useState(null);
     const [msg, setMsg] = React.useState('');
@@ -12877,6 +12980,7 @@ function AdminSecurityTab() {
         React.createElement("div", { className: "bg-gradient-to-br from-slate-800 to-purple-900 text-white rounded-2xl p-5" },
             React.createElement("h2", { className: "font-extrabold text-lg" }, "Keamanan"),
             React.createElement("p", { className: "text-xs text-purple-200 mt-0.5" }, "Atur siapa yang bisa membuka aplikasi dan amankan token yang tersimpan di server.")),
+        React.createElement(AdminAccountSecurityCard, null),
         React.createElement(SecCard, null,
             React.createElement("div", { className: "flex items-start justify-between gap-3" },
                 React.createElement("div", null,
@@ -15643,7 +15747,7 @@ function __initVoiceInput() {
     setMode('fill');
     engEl.textContent = SR ? 'Mesin suara: Google (bawaan browser) — paling akurat' : 'Mesin suara: Whisper (server) — kurang akurat dari Google. Untuk hasil terbaik buka lewat Chrome, atau pakai tombol 🎤 di keyboard HP.';
     const show = (html) => { outEl.innerHTML = html; };
-    const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const esc = (t) => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const tabAllowed = () => cfg.enabled && (cfg.allTabs || cfg.tabs.includes(String(window.__voiceTab || '')));
     const syncVisibility = () => {
         const ok = tabAllowed();

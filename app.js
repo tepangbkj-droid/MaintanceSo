@@ -2393,7 +2393,15 @@ function PsikotesProgress({ a }) {
     return null;
 }
 // ===== (2026-10) TOKEN AKSES per soal: dibuat sistem, berlaku 30 menit, dilihat Admin & Store Leader =====
-function AccessTokenRow({ title, subtitle, active, busy, onIssue, showToast }) {
+const TOKEN_DUR_OPTIONS = [[5, '5 menit'], [15, '15 menit'], [30, '30 menit'], [60, '1 jam'], [120, '2 jam'], [240, '4 jam'], [480, '8 jam'], [720, '12 jam']];
+function TokenDurationPick({ mins, setMins, max }) {
+    return (React.createElement("label", { className: "flex items-center gap-2 text-[11px] text-slate-600" },
+        React.createElement("span", { className: "font-semibold" }, "\u23F3 Durasi token"),
+        React.createElement("select", { value: mins, onChange: e => { const v = Number(e.target.value); setMins(v); try { localStorage.setItem('tb_token_mins', String(v)); } catch (err) { } }, className: "border border-amber-200 rounded-lg px-2 py-1 text-[11px] bg-white font-bold text-amber-900" },
+            TOKEN_DUR_OPTIONS.filter(o => o[0] <= (max || 240)).map(o => React.createElement("option", { key: o[0], value: o[0] }, o[1])))));
+}
+function AccessTokenRow({ title, subtitle, active, busy, onIssue, showToast, maxMinutes }) {
+    const [mins, setMins] = useState(() => { try { const v = Number(localStorage.getItem('tb_token_mins')); return v > 0 && v <= (maxMinutes || 240) ? v : 30; } catch (e) { return 30; } });
     const [now, setNow] = useState(Date.now());
     const live = !!active && active.expiresAt > now;
     useEffect(() => {
@@ -2425,7 +2433,8 @@ function AccessTokenRow({ title, subtitle, active, busy, onIssue, showToast }) {
             React.createElement("div", { className: "min-w-0" },
                 React.createElement("p", { className: "text-xs font-bold text-slate-800 truncate" }, title),
                 subtitle && React.createElement("p", { className: "text-[10px] text-slate-400" }, subtitle)),
-            React.createElement("button", { onClick: onIssue, disabled: busy, className: "shrink-0 text-[11px] font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg" }, busy ? '...' : (live ? 'Token Baru' : 'Buat Token'))),
+            React.createElement("button", { onClick: () => onIssue(mins), disabled: busy, className: "shrink-0 text-[11px] font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg" }, busy ? '...' : (live ? 'Token Baru' : 'Buat Token'))),
+        React.createElement(TokenDurationPick, { mins: mins, setMins: setMins, max: maxMinutes }),
         live
             ? React.createElement("div", { className: "flex items-center gap-3" },
                 React.createElement("button", { onClick: copy, title: "Salin token", className: "font-mono font-extrabold text-2xl tracking-[0.28em] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2" }, active.token),
@@ -2444,11 +2453,11 @@ function PsikotesTokenCard({ testId }) {
         pettyApi(`/api/psikotes/tests/${testId}/token`).then(d => { if (!dead) setInfo(d); }).catch(e => { if (!dead) setErr(e.message); });
         return () => { dead = true; };
     }, [testId]);
-    const issue = async () => {
+    const issue = async (mins) => {
         setBusy(true);
         setErr('');
         try {
-            const d = await pettyApi(`/api/psikotes/tests/${testId}/token`, { method: 'POST' });
+            const d = await pettyApi(`/api/psikotes/tests/${testId}/token`, { method: 'POST', body: { ttlMinutes: mins } });
             setInfo(i => ({ ...(i || {}), active: { token: d.token, expiresAt: d.expiresAt } }));
         }
         catch (e) {
@@ -2461,7 +2470,7 @@ function PsikotesTokenCard({ testId }) {
     if (info && info.required === false)
         return null;
     return (React.createElement("div", { className: "space-y-1" },
-        React.createElement(AccessTokenRow, { title: "\uD83D\uDD11 Token Akses Soal", subtitle: "Dibuat sistem \u2022 berlaku 30 menit \u2022 wajib diisi peserta saat Mulai", active: info && info.active ? info.active : null, busy: busy, onIssue: issue }),
+        React.createElement(AccessTokenRow, { title: "\uD83D\uDD11 Token Akses Soal", subtitle: "Dibuat sistem \u2022 durasi diatur Admin \u2022 wajib diisi peserta saat Mulai", active: info && info.active ? info.active : null, busy: busy, onIssue: issue, maxMinutes: 720 }),
         err && React.createElement("p", { className: "text-[11px] text-rose-600" }, err)));
 }
 // Store Leader: token semua paket soal yang bisa dipakai outletnya.
@@ -2477,10 +2486,10 @@ function LeaderTokenPanel({ showToast }) {
         return () => { dead = true; };
     }, []);
     useEffect(() => { scheduleLucideIcons(); });
-    const issue = async (t) => {
+    const issue = async (t, mins) => {
         setBusyId(t.id);
         try {
-            const d = await pettyApi(`/api/ojt/tests/${t.id}/token`, { method: 'POST' });
+            const d = await pettyApi(`/api/ojt/tests/${t.id}/token`, { method: 'POST', body: { ttlMinutes: mins } });
             setTests(list => (list || []).map(x => x.id === t.id ? { ...x, token: { token: d.token, expiresAt: d.expiresAt } } : x));
         }
         catch (e) {
@@ -2492,17 +2501,19 @@ function LeaderTokenPanel({ showToast }) {
     };
     if (!required)
         return null;
-    const list = (tests || []).filter(t => !t.locked);
+    const list = (tests || []).filter(t => !t.locked && !t.from_admin);
+    const adminCount = (tests || []).filter(t => !t.locked && t.from_admin).length;
     return (React.createElement("div", { className: "bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-2" },
         React.createElement("button", { onClick: () => setOpen(o => !o), className: "w-full flex items-center justify-between text-left" },
-            React.createElement("span", { className: "text-xs font-bold text-amber-900" }, "\uD83D\uDD11 Token Tes (berlaku 30 menit)"),
+            React.createElement("span", { className: "text-xs font-bold text-amber-900" }, "\uD83D\uDD11 Token Tes (durasi bisa diatur)"),
             React.createElement("span", { className: "text-[10px] font-bold text-amber-700" }, open ? 'Tutup' : 'Buka')),
         open && React.createElement(React.Fragment, null,
             React.createElement("p", { className: "text-[11px] text-amber-800" }, "Berikan token ke peserta yang sedang hadir. Peserta wajib memasukkannya saat menekan Mulai. Token baru langsung menggantikan yang lama."),
             err && React.createElement("p", { className: "text-[11px] text-rose-600" }, err),
             tests === null && !err && React.createElement("p", { className: "text-[11px] text-slate-400" }, "Memuat..."),
-            tests !== null && list.length === 0 && React.createElement("p", { className: "text-[11px] text-slate-500" }, "Belum ada paket soal yang aktif."),
-            list.map(t => React.createElement(AccessTokenRow, { key: t.id, title: t.title, subtitle: t.from_admin ? 'Paket dari admin' : 'Paket outlet ini', active: t.token, busy: busyId === t.id, onIssue: () => issue(t), showToast: showToast })))));
+            tests !== null && list.length === 0 && React.createElement("p", { className: "text-[11px] text-slate-500" }, "Belum ada paket soal buatan outlet ini."),
+            adminCount > 0 && React.createElement("p", { className: "text-[10px] text-amber-700" }, `${adminCount} paket soal buatan Admin: token-nya dibuat oleh Admin.`),
+            list.map(t => React.createElement(AccessTokenRow, { key: t.id, title: t.title, subtitle: t.from_admin ? 'Paket dari admin' : 'Paket outlet ini', active: t.token, busy: busyId === t.id, onIssue: (m) => issue(t, m), maxMinutes: 240, showToast: showToast })))));
 }
 function PsikotesScoresView({ test, stores, onBack }) {
     const [attempts, setAttempts] = useState([]);
@@ -13416,6 +13427,21 @@ const OJT_STAGE_DEFS = [
     { key: 'filler', label: 'Filler' },
     { key: 'kasir', label: 'Kasir' },
 ];
+// (2026-10) Unduh rekap OJT sebagai PDF (modul ojt-rekap.js). Dipakai Store Leader & Admin.
+const ojtDownloadRekap = (list, label, showToast) => {
+    if (!window.OjtRekapPdf) {
+        if (showToast) showToast('\u26A0\uFE0F Modul PDF belum termuat. Muat ulang halaman lalu coba lagi.');
+        return;
+    }
+    try {
+        const safe = String(label || 'OJT').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'OJT';
+        window.OjtRekapPdf.download(list, { storeLabel: label, filename: `Rekap-OJT-${safe}-${new Date().toISOString().slice(0, 10)}.pdf` });
+        if (showToast) showToast(`\u2705 Rekap PDF ${list.length} peserta dibuat`);
+    }
+    catch (e) {
+        if (showToast) showToast('\u26A0\uFE0F Gagal membuat PDF: ' + (e && e.message ? e.message : e));
+    }
+};
 const ojtMdEsc = (t) => String(t === null || t === undefined ? '' : t).replace(/([_*`\[])/g, '\\$1');
 const ojtFmtDate = (ms) => ms ? new Date(ms).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 const ojtMdNorm = (t) => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -14230,6 +14256,11 @@ function LeaderOjtStatusPanel({ storeName, showToast, sendToStoreTelegram }) {
             people.forEach(p => { n[p.id] = true; });
         setSel(n);
     };
+    const downloadPdf = () => {
+        if (!selectedIds.length)
+            return;
+        ojtDownloadRekap(people.filter(p => sel[p.id]).map(p => ({ ...p, storeName: storeName })), storeName, showToast);
+    };
     const shareSelected = async () => {
         if (!selectedIds.length)
             return;
@@ -14283,7 +14314,8 @@ function LeaderOjtStatusPanel({ storeName, showToast, sendToStoreTelegram }) {
         !loading && !err && people.length > 0 && React.createElement("div", { className: "bg-sky-50 border border-sky-200 rounded-2xl p-3 flex flex-wrap items-center gap-2" },
             React.createElement("button", { onClick: selectAll, className: "text-xs font-bold text-sky-800 bg-white border border-sky-200 px-3 py-1.5 rounded-lg" }, allSelected ? 'Batal Pilih Semua' : 'Pilih Semua'),
             React.createElement("span", { className: "text-[11px] text-sky-700 font-semibold" }, selectedIds.length + ' dipilih'),
-            React.createElement("button", { onClick: shareSelected, disabled: sharing || selectedIds.length === 0, className: "ml-auto bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5" },
+            React.createElement("button", { onClick: downloadPdf, disabled: selectedIds.length === 0, className: "ml-auto bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white text-xs font-bold px-3 py-2 rounded-xl" }, `\uD83D\uDCC4 Unduh Rekap PDF (${selectedIds.length})`),
+            React.createElement("button", { onClick: shareSelected, disabled: sharing || selectedIds.length === 0, className: "bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5" },
                 React.createElement("i", { "data-lucide": "send", className: "w-3.5 h-3.5" }),
                 sharing ? 'Mengirim...' : `Kirim ke Grup Telegram (${selectedIds.length})`)),
         loading ? (React.createElement("div", { className: "text-center text-slate-400 text-sm py-8" },
@@ -14934,6 +14966,9 @@ function StoreOjtStatusSection() {
                     : people.map(p => React.createElement(OjtReadonlyCard, { key: p.id, p: p, showStore: false }))));
 }
 function AdminOjtStatusPanel({ stores }) {
+    const [sel, setSel] = useState({});
+    const [notice, setNotice] = useState('');
+    const showToast = (m) => { setNotice(String(m || '')); setTimeout(() => setNotice(''), 4000); };
     const [people, setPeople] = useState([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState('');
@@ -14957,6 +14992,11 @@ function AdminOjtStatusPanel({ stores }) {
     useEffect(() => { scheduleLucideIcons(); });
     const shown = people.filter(p => (!storeFilter || p.storeId === storeFilter) && (decFilter === 'all' || (decFilter === 'lanjut' ? p.status.canProceed : !p.status.canProceed)));
     const lanjutCount = people.filter(p => p.status.canProceed).length;
+    const keyOf = (p) => p.storeId + '|' + p.id;
+    const pickedList = shown.filter(p => sel[keyOf(p)]);
+    const allShownPicked = shown.length > 0 && pickedList.length === shown.length;
+    const pickAll = () => { const n = { ...sel }; shown.forEach(p => { n[keyOf(p)] = !allShownPicked; }); setSel(n); };
+    const downloadPdf = () => { if (pickedList.length) ojtDownloadRekap(pickedList, storeFilter ? (((stores || []).find(s => s.id === storeFilter) || {}).name || storeFilter) : 'Semua Outlet', showToast); };
     return (React.createElement("div", { className: "space-y-3" },
         React.createElement("div", { className: "grid grid-cols-3 gap-2 text-center" },
             React.createElement("div", { className: "bg-white rounded-xl border border-slate-200 p-2" },
@@ -14977,13 +15017,20 @@ function AdminOjtStatusPanel({ stores }) {
                 React.createElement("option", { value: "lanjut" }, "Bisa lanjut"),
                 React.createElement("option", { value: "belum" }, "Belum bisa")),
             React.createElement("button", { onClick: load, className: "px-3 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl" }, "\u21BB")),
+        notice && React.createElement("div", { className: "bg-slate-800 text-white text-xs font-semibold rounded-xl px-3 py-2" }, notice),
+        !loading && !err && shown.length > 0 && React.createElement("div", { className: "bg-purple-50 border border-purple-200 rounded-2xl p-3 flex flex-wrap items-center gap-2" },
+            React.createElement("button", { onClick: pickAll, className: "text-xs font-bold text-purple-800 bg-white border border-purple-200 px-3 py-1.5 rounded-lg" }, allShownPicked ? 'Batal Pilih Semua' : 'Pilih Semua'),
+            React.createElement("span", { className: "text-[11px] text-purple-700 font-semibold" }, pickedList.length + ' dipilih'),
+            React.createElement("button", { onClick: downloadPdf, disabled: pickedList.length === 0, className: "ml-auto bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white text-xs font-bold px-3 py-2 rounded-xl" }, `\uD83D\uDCC4 Unduh Rekap PDF (${pickedList.length})`)),
         loading ? React.createElement("div", { className: "text-center text-slate-400 text-sm py-8" },
             React.createElement("i", { "data-lucide": "loader", className: "w-6 h-6 animate-spin mx-auto" }))
             : err ? React.createElement("div", { className: "bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center space-y-2" },
                 React.createElement("p", { className: "text-xs text-rose-700 font-semibold" }, err),
                 React.createElement("button", { onClick: load, className: "bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl" }, "Coba Lagi"))
                 : shown.length === 0 ? React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-sm" }, "Tidak ada data OJT untuk filter ini.")
-                    : shown.map(p => React.createElement(OjtReadonlyCard, { key: p.storeId + p.id, p: p, showStore: true }))));
+                    : shown.map(p => React.createElement("div", { key: p.storeId + p.id, className: "flex items-start gap-2" },
+                        React.createElement("input", { type: "checkbox", checked: !!sel[keyOf(p)], onChange: () => setSel(prev => ({ ...prev, [keyOf(p)]: !prev[keyOf(p)] })), className: "mt-5 w-4 h-4 shrink-0 accent-purple-700", "aria-label": 'Pilih ' + p.name }),
+                        React.createElement("div", { className: "flex-1 min-w-0" }, React.createElement(OjtReadonlyCard, { p: p, showStore: true }))))));
 }
 function StorePsikotesTab({ hideStatus }) {
     const [attempts, setAttempts] = useState([]);

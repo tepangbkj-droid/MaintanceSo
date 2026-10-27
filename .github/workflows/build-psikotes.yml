@@ -27,7 +27,7 @@ jobs:
       - name: Cek tidak ada CDN / eval tersisa
         run: |
           ! grep -E "unpkg|cdn\.tailwindcss|unsafe-eval|text/babel" psikotes.html
-          grep -c "script-src 'self';" psikotes.html
+          grep -c "script-src 'self' https://challenges.cloudflare.com;" psikotes.html
       - name: Commit hasil
         run: |
           rm -f tmp-psikotes-in.css

@@ -2392,6 +2392,118 @@ function PsikotesProgress({ a }) {
     // (2026-10) Hemat Cloudflare: live hanya STATUS (Sedang Dikerjakan / Terblokir / Selesai), tanpa progres per soal.
     return null;
 }
+// ===== (2026-10) TOKEN AKSES per soal: dibuat sistem, berlaku 30 menit, dilihat Admin & Store Leader =====
+function AccessTokenRow({ title, subtitle, active, busy, onIssue, showToast }) {
+    const [now, setNow] = useState(Date.now());
+    const live = !!active && active.expiresAt > now;
+    useEffect(() => {
+        if (!active)
+            return;
+        const iv = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(iv);
+    }, [active && active.token]);
+    const left = active ? Math.max(0, Math.floor((active.expiresAt - now) / 1000)) : 0;
+    const mmss = `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`;
+    const copy = async () => {
+        let ok = false;
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(active.token);
+                ok = true;
+            }
+        }
+        catch (e) { }
+        if (ok) {
+            if (showToast)
+                showToast('✅ Token tersalin');
+        }
+        else
+            window.prompt('Salin token ini secara manual:', active.token);
+    };
+    return (React.createElement("div", { className: "bg-white rounded-2xl border border-amber-200 p-3 space-y-2" },
+        React.createElement("div", { className: "flex items-start justify-between gap-2" },
+            React.createElement("div", { className: "min-w-0" },
+                React.createElement("p", { className: "text-xs font-bold text-slate-800 truncate" }, title),
+                subtitle && React.createElement("p", { className: "text-[10px] text-slate-400" }, subtitle)),
+            React.createElement("button", { onClick: onIssue, disabled: busy, className: "shrink-0 text-[11px] font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg" }, busy ? '...' : (live ? 'Token Baru' : 'Buat Token'))),
+        live
+            ? React.createElement("div", { className: "flex items-center gap-3" },
+                React.createElement("button", { onClick: copy, title: "Salin token", className: "font-mono font-extrabold text-2xl tracking-[0.28em] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2" }, active.token),
+                React.createElement("div", { className: "leading-tight" },
+                    React.createElement("p", { className: `text-sm font-bold tabular-nums ${left <= 300 ? 'text-rose-600' : 'text-emerald-700'}` }, "\u23F1 ", mmss),
+                    React.createElement("p", { className: "text-[10px] text-slate-400" }, "ketuk token untuk menyalin")))
+            : React.createElement("p", { className: "text-[11px] text-slate-500" }, active ? 'Token kedaluwarsa. Buat token baru lalu berikan ke peserta yang hadir.' : 'Belum ada token aktif. Buat token lalu berikan ke peserta yang hadir.')));
+}
+// Admin: token satu paket soal (di halaman hasil paket).
+function PsikotesTokenCard({ testId }) {
+    const [info, setInfo] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState('');
+    useEffect(() => {
+        let dead = false;
+        pettyApi(`/api/psikotes/tests/${testId}/token`).then(d => { if (!dead) setInfo(d); }).catch(e => { if (!dead) setErr(e.message); });
+        return () => { dead = true; };
+    }, [testId]);
+    const issue = async () => {
+        setBusy(true);
+        setErr('');
+        try {
+            const d = await pettyApi(`/api/psikotes/tests/${testId}/token`, { method: 'POST' });
+            setInfo(i => ({ ...(i || {}), active: { token: d.token, expiresAt: d.expiresAt } }));
+        }
+        catch (e) {
+            setErr(e.message);
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    if (info && info.required === false)
+        return null;
+    return (React.createElement("div", { className: "space-y-1" },
+        React.createElement(AccessTokenRow, { title: "\uD83D\uDD11 Token Akses Soal", subtitle: "Dibuat sistem \u2022 berlaku 30 menit \u2022 wajib diisi peserta saat Mulai", active: info && info.active ? info.active : null, busy: busy, onIssue: issue }),
+        err && React.createElement("p", { className: "text-[11px] text-rose-600" }, err)));
+}
+// Store Leader: token semua paket soal yang bisa dipakai outletnya.
+function LeaderTokenPanel({ showToast }) {
+    const [tests, setTests] = useState(null);
+    const [required, setRequired] = useState(true);
+    const [busyId, setBusyId] = useState('');
+    const [err, setErr] = useState('');
+    const [open, setOpen] = useState(true);
+    useEffect(() => {
+        let dead = false;
+        pettyApi('/api/ojt/tests').then(d => { if (!dead) { setTests(d.tests || []); setRequired(d.required !== false); } }).catch(e => { if (!dead) setErr(e.message); });
+        return () => { dead = true; };
+    }, []);
+    useEffect(() => { scheduleLucideIcons(); });
+    const issue = async (t) => {
+        setBusyId(t.id);
+        try {
+            const d = await pettyApi(`/api/ojt/tests/${t.id}/token`, { method: 'POST' });
+            setTests(list => (list || []).map(x => x.id === t.id ? { ...x, token: { token: d.token, expiresAt: d.expiresAt } } : x));
+        }
+        catch (e) {
+            showToast('⚠️ ' + e.message);
+        }
+        finally {
+            setBusyId('');
+        }
+    };
+    if (!required)
+        return null;
+    const list = (tests || []).filter(t => !t.locked);
+    return (React.createElement("div", { className: "bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-2" },
+        React.createElement("button", { onClick: () => setOpen(o => !o), className: "w-full flex items-center justify-between text-left" },
+            React.createElement("span", { className: "text-xs font-bold text-amber-900" }, "\uD83D\uDD11 Token Tes (berlaku 30 menit)"),
+            React.createElement("span", { className: "text-[10px] font-bold text-amber-700" }, open ? 'Tutup' : 'Buka')),
+        open && React.createElement(React.Fragment, null,
+            React.createElement("p", { className: "text-[11px] text-amber-800" }, "Berikan token ke peserta yang sedang hadir. Peserta wajib memasukkannya saat menekan Mulai. Token baru langsung menggantikan yang lama."),
+            err && React.createElement("p", { className: "text-[11px] text-rose-600" }, err),
+            tests === null && !err && React.createElement("p", { className: "text-[11px] text-slate-400" }, "Memuat..."),
+            tests !== null && list.length === 0 && React.createElement("p", { className: "text-[11px] text-slate-500" }, "Belum ada paket soal yang aktif."),
+            list.map(t => React.createElement(AccessTokenRow, { key: t.id, title: t.title, subtitle: t.from_admin ? 'Paket dari admin' : 'Paket outlet ini', active: t.token, busy: busyId === t.id, onIssue: () => issue(t), showToast: showToast })))));
+}
 function PsikotesScoresView({ test, stores, onBack }) {
     const [attempts, setAttempts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -2499,6 +2611,19 @@ function PsikotesScoresView({ test, stores, onBack }) {
     const handleUnblock = async (attemptId) => {
         await __apiFetch(`${WORKER_BASE}/api/psikotes/attempts/${attemptId}/unblock`, { method: 'POST', headers: __authHeaders() });
         load();
+    };
+    // (2026-10) Remedial: buka kesempatan mengerjakan ulang tes yang sudah selesai (hasil lama tetap jadi riwayat).
+    const handleRemedial = async (a) => {
+        if (!window.confirm(`Buka REMEDIAL untuk \"${a.ojt_name}\"?\n\nHasil lama (skor ${a.auto_score ?? '-'}) tetap tersimpan sebagai riwayat. ${a.ojt_name} bisa mengerjakan tes ini sekali lagi dengan nama yang sama.`))
+            return;
+        try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/psikotes/attempts/${a.id}/remedial`, { method: 'POST', headers: __authHeaders() });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) { window.alert(d.error || 'Gagal membuka remedial'); return; }
+        }
+        catch (e) { window.alert(e.message || 'Gagal membuka remedial'); return; }
+        load(true);
+        loadLinks(true);
     };
     const handleDeleteAttempt = async (a) => {
         if (!window.confirm(`Hapus hasil psikotes milik "${a.ojt_name || a.penempatan}"? Data jawaban ikut terhapus dan tidak bisa dikembalikan.`))
@@ -2613,6 +2738,7 @@ function PsikotesScoresView({ test, stores, onBack }) {
             React.createElement("h2", { className: "font-bold text-slate-700 text-base" },
                 "Hasil \u2014 ",
                 test.title)),
+        React.createElement(PsikotesTokenCard, { testId: test.id }),
         React.createElement("div", { className: "space-y-3" },
             React.createElement("div", { className: "flex items-center justify-between" },
                 React.createElement("h3", { className: "font-bold text-slate-700 text-sm" }, "OJT Terdaftar (per Toko)"),
@@ -2674,6 +2800,9 @@ function PsikotesScoresView({ test, stores, onBack }) {
                     React.createElement("div", { className: "flex items-center gap-2" },
                         React.createElement(PsikotesStatusBadge, { status: a.status }),
                         a.status === 'blocked' && (React.createElement("button", { onClick: () => handleUnblock(a.id), className: "text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg" }, "Buka Blokir")),
+                        a.status === 'completed' && Number(a.remedial_open) === 0 && (React.createElement("button", { onClick: () => handleRemedial(a), className: "text-[11px] font-bold bg-amber-100 text-amber-800 px-2.5 py-1.5 rounded-lg" }, "Remedial")),
+                        a.status === 'completed' && Number(a.remedial_open) === 1 && (React.createElement("span", { className: "text-[10px] font-bold bg-amber-50 text-amber-700 px-2 py-1 rounded-md" }, "Remedial dibuka")),
+                        Number(a.remedial_no) > 0 && (React.createElement("span", { className: "text-[10px] font-bold bg-violet-50 text-violet-700 px-2 py-1 rounded-md" }, "Remedial")),
                         (a.status === 'completed' || a.status === 'blocked') && (React.createElement("button", { onClick: () => openAnswerDetail(a.id), className: "text-[11px] font-bold bg-purple-100 text-purple-800 px-2.5 py-1.5 rounded-lg" }, answerDetailId === a.id ? 'Tutup' : 'Kunci Jawaban')),
                         React.createElement("button", { onClick: () => handleDeleteAttempt(a), className: "text-[11px] font-bold bg-rose-50 text-rose-600 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg", title: "Hapus hasil ini" },
                             React.createElement("i", { "data-lucide": "trash-2", className: "w-3 h-3 inline-block" })))),
@@ -14044,6 +14173,7 @@ function LeaderOjtTab({ storeName, showToast, sendToStoreTelegram }) {
             React.createElement("button", { onClick: () => setSub('status'), className: `flex-1 text-xs font-bold py-2 rounded-lg ${sub === 'status' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}` }, "Status OJT"),
             React.createElement("button", { onClick: () => setSub('soal'), className: `flex-1 text-xs font-bold py-2 rounded-lg ${sub === 'soal' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}` }, "Soal OJT"),
             React.createElement("button", { onClick: () => setSub('ultah'), className: `flex-1 text-xs font-bold py-2 rounded-lg ${sub === 'ultah' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}` }, "Ulang Tahun")),
+        sub !== 'ultah' && React.createElement(LeaderTokenPanel, { showToast: showToast }),
         sub === 'status'
             ? React.createElement(LeaderOjtStatusPanel, { storeName: storeName, showToast: showToast, sendToStoreTelegram: sendToStoreTelegram })
             : sub === 'soal' ? React.createElement(LeaderOjtQuestionsPanel, { showToast: showToast })
@@ -14206,7 +14336,12 @@ function ojtTestsOf(p) {
     return [];
 }
 function ojtTestStatusText(t) {
-    if (t.status === 'completed') return (t.score !== null && t.score !== undefined) ? String(t.score) : 'selesai';
+    if (t.status === 'completed') {
+        const sc = (t.score !== null && t.score !== undefined) ? String(t.score) : 'selesai';
+        if (t.remedialOpen) return sc + ' (remedial dibuka)';
+        if (t.remedial) return sc + ` (remedial${t.prevScore !== null && t.prevScore !== undefined ? `, sebelumnya ${t.prevScore}` : ''})`;
+        return sc;
+    }
     if (t.status === 'blocked') return '\uD83D\uDD12 terblokir';
     return '\u270D\uFE0F sedang dikerjakan';
 }
@@ -14286,6 +14421,11 @@ function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram
     };
     const chip = (cls, text) => React.createElement("span", { className: `text-[10px] font-bold px-2 py-1 rounded-md ${cls}` }, text);
     // (2026-10) Store Leader membuka blokir langsung dari kartu Status OJT.
+    const remedial = (t) => {
+        if (!window.confirm(`Buka remedial "${t.title}" untuk ${p.name}?\n\nSkor lama (${t.score ?? '-'}) tetap tersimpan sebagai riwayat. ${p.name} bisa mengerjakan tes ini sekali lagi (link tes yang sama).`))
+            return;
+        run('rem' + t.testId, () => pettyApi(`/api/ojt/people/${p.id}/remedial`, { method: 'POST', body: { attemptId: t.attemptId } }), `✅ Remedial ${t.title} dibuka untuk ${p.name}`);
+    };
     const unblock = () => run('unb', () => pettyApi(`/api/ojt/people/${p.id}/unblock`, { method: 'POST', body: { attemptId: p.attempt.id } }), `✅ Blokir ${p.name} dibuka — peserta bisa lanjut mengerjakan`);
     return (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" },
         onToggleSelect && React.createElement("div", { className: "flex items-center gap-2 px-4 pt-3" },
@@ -14317,6 +14457,8 @@ function OjtPersonCard({ p, storeName, onChanged, showToast, sendToStoreTelegram
             React.createElement("span", { className: "text-[11px] font-bold text-rose-700 flex-1 min-w-0" }, '🔒 Tes diblokir: ' + (p.attempt.blockedReason || 'keluar dari halaman tes')),
             React.createElement("button", { onClick: unblock, disabled: busy === 'unb', className: "text-[11px] font-bold bg-emerald-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg" }, busy === 'unb' ? '...' : 'Buka Blokir')),
         p.attempt && p.attempt.status === 'in_progress' && React.createElement("p", { className: "mx-4 mb-3 text-[11px] font-semibold text-indigo-700 bg-indigo-50 rounded-lg px-3 py-1.5" }, '✍️ Sedang mengerjakan tes' + (p.attempt.title ? ` (${p.attempt.title})` : '')),
+        ojtTestsOf(p).some(t => t.status === 'completed' && !t.remedialOpen && t.attemptId) && React.createElement("div", { className: "mx-4 mb-3 flex flex-wrap gap-1.5" },
+            ojtTestsOf(p).filter(t => t.status === 'completed' && !t.remedialOpen && t.attemptId).map(t => React.createElement("button", { key: t.testId, onClick: () => remedial(t), disabled: busy === 'rem' + t.testId, className: "text-[11px] font-bold bg-amber-100 text-amber-800 disabled:opacity-50 px-2.5 py-1.5 rounded-lg" }, busy === 'rem' + t.testId ? '...' : `Remedial ${t.title || 'tes'}`))),
         open && (React.createElement("div", { className: "border-t border-slate-100 bg-slate-50 p-4 space-y-3" },
             OJT_STAGE_DEFS.map(s => {
                 const f = forms[s.key];

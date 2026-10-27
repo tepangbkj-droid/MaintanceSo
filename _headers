@@ -1,0 +1,22 @@
+# Dibuat dari vercel.json untuk Cloudflare Pages. Satu header per baris, spasi 2 di depan.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https://api.somandiritarobun.my.id; font-src 'self' data:; connect-src 'self' https://api.somandiritarobun.my.id wss://api.somandiritarobun.my.id https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'; upgrade-insecure-requests
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(self), camera=(self), microphone=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  X-Permitted-Cross-Domain-Policies: none
+  Cache-Control: public, max-age=0, must-revalidate
+
+/psikotes.html
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' https://api.somandiritarobun.my.id; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'
+
+/apk/version.json
+  Cache-Control: no-store
+
+/vendor/*
+  Cache-Control: public, max-age=86400

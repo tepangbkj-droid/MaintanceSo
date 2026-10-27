@@ -1,0 +1,2 @@
+# Link pendek psikotes: diteruskan ke Worker API (satu-satunya rewrite Vercel lama)
+/s/:slug  https://api.somandiritarobun.my.id/s/:slug  302

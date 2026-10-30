@@ -116,7 +116,14 @@
     if (!document.getElementById('boot-splash')) return;
     var t = e && e.target;
     if (t && t.tagName === 'LINK' && /tailwind\.css/.test(t.href || '')) { rep('Gagal memuat tailwind.css'); heal('tailwind.css gagal'); }
-    else if (t && t.tagName === 'SCRIPT') { rep('Gagal memuat script: ' + String(t.src || '').split('?')[0].slice(0, 120)); heal('script gagal dimuat'); }
+    else if (t && t.tagName === 'SCRIPT') {
+      var src = String(t.src || '');
+      // Beacon analitik Cloudflare disuntik otomatis & diblokir CSP: BUKAN kerusakan aplikasi, abaikan (jangan hapus cache/reload).
+      if (/cloudflareinsights\.com/i.test(src)) return;
+      rep('Gagal memuat script: ' + src.split('?')[0].slice(0, 120));
+      // Hanya perbaiki cache bila yang gagal adalah file aplikasi sendiri, bukan skrip pihak ketiga.
+      if (src.indexOf(location.origin + '/') === 0) heal('script gagal dimuat');
+    }
     else if (e && e.message && !/^Script error/i.test(e.message)) {
       rep('Error saat memuat: ' + e.message, (e.filename || '') + ':' + (e.lineno || 0));
       if (/(React|ReactDOM|lucide|qrcode) is not defined/i.test(e.message)) heal('library belum termuat');

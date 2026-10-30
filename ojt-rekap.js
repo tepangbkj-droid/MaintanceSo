@@ -287,23 +287,57 @@
     return d.build(opt);
   }
 
+  // ---- Simpan/bagikan file di APK (WebView tidak bisa mengunduh blob:) ----
+  function bytesToBase64(u8) {
+    var s = '', i, step = 0x8000;
+    for (i = 0; i < u8.length; i += step) s += String.fromCharCode.apply(null, u8.subarray(i, i + step));
+    return btoa(s);
+  }
+  function capPlugin(name) {
+    var C = root.Capacitor;
+    if (!C) return null;
+    return (C.Plugins && C.Plugins[name]) || (typeof C.registerPlugin === 'function' ? C.registerPlugin(name) : null);
+  }
+  function isNativeApp() { var C = root.Capacitor; return !!(C && C.isNativePlatform && C.isNativePlatform()); }
+  // Tulis ke cache aplikasi lalu buka lembar Bagikan Android (Simpan ke File / Drive / WhatsApp).
+  // Butuh plugin @capacitor/filesystem + @capacitor/share (ada di APK versi baru). Resolve false bila plugin tidak ada.
+  function saveNative(blob, name) {
+    if (!isNativeApp()) return Promise.resolve(false);
+    var Fs = capPlugin('Filesystem'), Sh = capPlugin('Share');
+    if (!Fs || !Sh) return Promise.resolve(false);
+    return blob.arrayBuffer().then(function (buf) {
+      return Fs.writeFile({ path: name, data: bytesToBase64(new Uint8Array(buf)), directory: 'CACHE', recursive: true });
+    }).then(function (w) {
+      return Sh.share({ title: name, url: w.uri, dialogTitle: 'Simpan / bagikan file' });
+    }).then(function () { return true; }, function (e) {
+      var m = String((e && (e.message || e.errorMessage)) || e || '');
+      if (/cancel|dismiss/i.test(m)) return true;   // pengguna menutup lembar Bagikan
+      return false;                                   // plugin belum ada di APK lama -> pakai cara biasa
+    });
+  }
+  function browserDownload(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name; a.rel = 'noopener'; document.body.appendChild(a); a.click();
+    setTimeout(function () { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (e) { } }, 4000);
+  }
+  // Dipakai juga oleh fitur unduh lain (CSV, dll): window.TbSaveFile(blob, namaFile)
+  function saveFile(blob, name, onFail) {
+    if (!isNativeApp()) { browserDownload(blob, name); return; }
+    saveNative(blob, name).then(function (ok) {
+      if (ok) return;
+      browserDownload(blob, name);
+      if (typeof onFail === 'function') onFail('Perbarui aplikasi (APK) ke versi terbaru agar bisa menyimpan file.');
+    });
+  }
+  root.TbSaveFile = saveFile;
+
   function download(people, options) {
     options = options || {};
     var bytes = build(people, options);
     var name = options.filename || ('Rekap-OJT-' + new Date().toISOString().slice(0, 10) + '.pdf');
     var blob = new Blob([bytes], { type: 'application/pdf' });
-    // APK (Capacitor/WebView) tidak mendukung unduhan blob: pakai lembar Bagikan Android bila ada.
-    try {
-      var native = !!(root.Capacitor && root.Capacitor.isNativePlatform && root.Capacitor.isNativePlatform());
-      if (native && root.navigator && navigator.canShare && typeof File === 'function') {
-        var f = new File([blob], name, { type: 'application/pdf' });
-        if (navigator.canShare({ files: [f] })) { navigator.share({ files: [f], title: name }).catch(function () { }); return blob; }
-      }
-    } catch (e) { /* lanjut ke unduhan biasa */ }
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url; a.download = name; a.rel = 'noopener'; document.body.appendChild(a); a.click();
-    setTimeout(function () { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (e) { } }, 4000);
+    saveFile(blob, name, options.onFail);
     return blob;
   }
 

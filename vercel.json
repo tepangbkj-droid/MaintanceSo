@@ -1,8 +1,9 @@
 {
-  "rewrites": [
+  "redirects": [
     {
       "source": "/s/:slug",
-      "destination": "https://api.somandiritarobun.my.id/s/:slug"
+      "destination": "https://api.somandiritarobun.my.id/s/:slug",
+      "permanent": false
     }
   ],
   "headers": [

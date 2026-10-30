@@ -673,8 +673,11 @@ const uploadMediaToR2 = async (dataUrlOrBlob, folder, ext = 'jpg', opts = {}) =>
         body: blob,
         signal: opts.signal,
     });
-    if (!res.ok)
-        throw new Error('Gagal upload foto ke storage (HTTP ' + res.status + ')');
+    if (!res.ok) {
+        let why = '';
+        try { const ej = await res.json(); why = (ej && ej.error) ? String(ej.error).slice(0, 160) : ''; } catch (e) { }
+        throw new Error(why || ('Gagal upload foto ke storage (HTTP ' + res.status + ')'));
+    }
     const data = await res.json();
     return { key: data.key, url: `${WORKER_BASE}/api/media/file/${data.key}` };
 };
@@ -1433,6 +1436,7 @@ const STORE_MENU_GROUPS = [
     { id: 'operasional', title: 'Operasional Toko', icon: 'store', chip: 'bg-emerald-100 text-emerald-700', items: [
             { tab: 'pengunjung', icon: 'users', label: 'Pengunjung', tour: 'menu-pengunjung' },
             { tab: 'infoRoti', icon: 'croissant', label: 'Informasi Roti', tour: 'menu-infoRoti' },
+            { tab: 'doughReport', icon: 'timer', label: 'Laporan Dough', tour: 'menu-doughReport' },
             { tab: 'pettyCash', icon: 'wallet', label: 'Petty Cash', tour: 'menu-petty' },
             { tab: 'printing', icon: 'printer', label: 'Printing', tour: 'menu-printing' },
         ] },
@@ -1452,6 +1456,7 @@ const STORE_ONBOARDING_STEPS = [
     { icon: 'truck', title: 'Datang Barang', desc: 'Catat barang yang baru datang dari gudang pusat, termasuk barang yang tidak sesuai.', target: '[data-tour="menu-kedatangan"]' },
     { icon: 'users', title: 'Pengunjung', desc: 'Ketuk +1 setiap ada pengunjung masuk. Data per jam dipakai AI untuk menentukan jam ramai dan apa yang perlu disiapkan.', target: '[data-tour="menu-pengunjung"]' },
     { icon: 'croissant', title: 'Informasi Roti', desc: 'Isi jumlah roti matang & roti yang masih proses baking, total dihitung otomatis lalu dikirim ke grup Telegram. Status juga dibagikan ke outlet lain untuk saran kasih/minta roti.', target: '[data-tour="menu-infoRoti"]' },
+    { icon: 'timer', title: 'Laporan Dough', desc: 'Laporkan lama ngembang dough (thawing, proofing, baking, resting) lengkap dengan foto berstempel jam & timer pengingat. Hasilnya jadi PDF dan otomatis dikirim ke Telegram dengan CC Store Leader.', target: '[data-tour="menu-doughReport"]' },
     { icon: 'camera', title: 'Foto Rijek', desc: 'Unggah foto bun rijek, barang rijek, atau waste sebagai bukti dan dikirim ke Telegram.', target: '[data-tour="menu-wasteFoto"]' },
     { icon: 'wallet', title: 'Petty Cash', desc: 'Laporkan pemakaian uang kas kecil lengkap dengan foto struk. Pengajuan masuk ke Store Leader untuk di-ACC, dan statusnya bisa kamu pantau di sini.', target: '[data-tour="menu-petty"]' },
     { icon: 'printer', title: 'Printing', desc: 'Cetak label Premix, kartu Customer Request (dengan QR Saluran WhatsApp), dan Catatan Stok ke printer thermal 58/80mm.', target: '[data-tour="menu-printing"]' },
@@ -11077,6 +11082,7 @@ Daily inventory done✅
             activeTab === 'infoRoti' && (React.createElement(InformasiRotiTab, { storeId: storeId, storeName: storeName, config: config, showToast: showToast, onOpenConfig: () => setShowConfig(true), historyList: historyList })),
             activeTab === 'psikotesOjt' && (React.createElement(StorePsikotesTab, null)),
             activeTab === 'pettyCash' && (React.createElement(StorePettyCashTab, { storeId: storeId, storeName: storeName, showToast: showToast })),
+            activeTab === 'doughReport' && (React.createElement(DoughReportTab, { storeId: storeId, storeName: storeName, config: config, showToast: showToast })),
             activeTab === 'investory' && (React.createElement(StoreInvestoryView, { storeId: storeId })))));
 }
 const TRAFFIC_LOCATION_TYPES = ['Mall', 'Ruko / Jalan Raya', 'Kampus / Sekolah', 'Perkantoran', 'Wisata / Pasar', 'Lainnya'];
@@ -11959,6 +11965,284 @@ const analyzeInfoRoti = ({ matang, baking, now, history, profile }) => {
     result.tips = tips;
     return result;
 };
+// ===== LAPORAN DOUGH (2026-10): lapor lama ngembang dough (thawing, proofing, baking, resting) =====
+// Logika & PDF ada di dough-report.js (window.DoughReport). Foto wajib berstempel tanggal & jam, diunggah ke R2,
+// lalu seluruhnya direkap jadi PDF dan dikirim ke grup Telegram toko (CC username Store Leader dari pengaturan Telegram).
+const stampDoughPhoto = (file, lines) => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+        try {
+            const sc = Math.min(1, 1280 / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * sc)), h = Math.max(1, Math.round(img.height * sc));
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            const ctx = cv.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            const fs = Math.max(13, Math.round(Math.min(w, h) * 0.04)), gap = Math.round(fs * 0.3), pad = Math.round(fs * 0.7);
+            const barH = pad * 2 + lines.length * fs + (lines.length - 1) * gap;
+            const g = ctx.createLinearGradient(0, h - barH - 20, 0, h);
+            g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.78)');
+            ctx.fillStyle = g; ctx.fillRect(0, h - barH - 20, w, barH + 20);
+            ctx.fillStyle = '#FFFFFF'; ctx.font = `bold ${fs}px Arial, sans-serif`; ctx.textBaseline = 'top';
+            ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 3;
+            let y = h - barH + pad - Math.round(pad * 0.3);
+            lines.forEach((ln) => { ctx.fillText(ln, pad, y, w - pad * 2); y += fs + gap; });
+            URL.revokeObjectURL(url);
+            resolve(cv.toDataURL('image/jpeg', 0.82));
+        }
+        catch (err) { URL.revokeObjectURL(url); reject(err); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Gagal membaca foto. Coba ambil ulang.')); };
+    img.src = url;
+});
+const doughDataUrlToU8 = (du) => { const bin = atob(String(du).split(',')[1] || ''); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
+const doughClock = (sec) => { sec = Math.max(0, Math.floor(sec)); const hh = Math.floor(sec / 3600), mm = Math.floor((sec % 3600) / 60), ss = sec % 60; return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`; };
+const DOUGH_STAGES = [
+    { id: 'ed', title: 'Input ED', icon: '🏷️', slots: ['ed'] },
+    { id: 'thaw', title: 'Thawing', icon: '🧊', slots: ['thawStart', 'thawRoom', 'thawEnd', 'thawEndRoom'], timer: { startKey: 'thawStart', endKey: 'thawEnd', std: 'thaw', hint: 'Timer mulai setelah foto dough thawing diambil. Standar 1 - 2 jam. Ambil foto saat suhu dough 20\u00B0C.' } },
+    { id: 'proof', title: 'Proofing', icon: '🌡️', slots: ['proofRoom', 'proofStart', 'proofEnd', 'afterProof'], timer: { startKey: 'proofStart', endKey: 'proofEnd', std: 'proof', hint: 'Timer mulai setelah foto dough masuk proofing. Standar 1,5 - 3,5 jam. Ambil foto penggaris proofing saat dough sudah sesuai.' } },
+    { id: 'bake', title: 'Baking', icon: '🔥', slots: ['bakeTimer', 'bakeTemp'] },
+    { id: 'rest', title: 'Resting', icon: '⏱️', slots: ['restRoom', 'restStart', 'restEnd'], timer: { startKey: 'restStart', endKey: 'restEnd', std: 'rest', hint: 'Timer mulai setelah foto dough baru keluar oven. Standar resting 10 menit, lalu foto termo gun saat roti sudah suhu ruang.' } },
+];
+function DoughReportTab({ storeId, storeName, config, showToast }) {
+    const DR = window.DoughReport;
+    const e = React.createElement;
+    const storeBase = `stores/${storeId}`;
+    const blankForm = () => ({ pelapor: '', kodeEd: '', edFd: '', notes: '', remind: true, photos: {} });
+    const [form, setForm] = useDraftState(storeId, 'dough_report', blankForm, { maxAgeHours: 20 });
+    const [busy, setBusy] = useState('');
+    const [sending, setSending] = useState(false);
+    const [now, setNow] = useState(Date.now());
+    const [view, setView] = useState('form');
+    const [history, setHistory] = useState([]);
+    const [histLoading, setHistLoading] = useState(false);
+    const memImgs = React.useRef({});
+    const fileRef = React.useRef(null);
+    const pendingSlot = React.useRef('');
+    const firedRef = React.useRef(null);
+    useEffect(() => { scheduleLucideIcons(); });
+    useEffect(() => { const iv = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(iv); }, []);
+    if (!DR) {
+        return e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-5 text-xs text-slate-500' }, 'Modul Laporan Dough belum termuat. Muat ulang halaman.');
+    }
+    const photos = (form && form.photos) || {};
+    const ev = DR.evaluate(photos);
+    const slotMap = {};
+    DR.SLOTS.forEach((s) => { slotMap[s.k] = s; });
+    const doneCount = DR.SLOTS.filter((s) => photos[s.k]).length;
+    const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
+    // ---- pengingat timer (berbunyi selama aplikasi terbuka) ----
+    const ring = (title, body) => {
+        try { if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 600]); } catch (err) { }
+        try {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) { const ac = new AC(); const o = ac.createOscillator(); const g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 880; g.gain.value = 0.2; o.start(); setTimeout(() => { try { o.stop(); ac.close(); } catch (x) { } }, 900); }
+        } catch (err) { }
+        try { if (window.Notification && Notification.permission === 'granted') new Notification(title, { body }); } catch (err) { }
+        showToast(`⏰ ${title} - ${body}`);
+    };
+    const checkTimers = () => {
+        const marks = [];
+        DOUGH_STAGES.forEach((st) => {
+            if (!st.timer) return;
+            const a = photos[st.timer.startKey], b = photos[st.timer.endKey];
+            if (!a || b) return;
+            const std = DR.STD[st.timer.std], el = (now - a.ts) / 1000;
+            marks.push({ id: `${st.id}:${a.ts}:min`, hit: el >= std.min * 60, title: `${st.title} ${std.min >= 60 ? (std.min / 60).toString().replace('.', ',') + ' jam' : std.min + ' menit'} tercapai`, body: st.id === 'thaw' ? 'Cek suhu dough, bila sudah 20\u00B0C ambil foto.' : st.id === 'proof' ? 'Cek dough dengan penggaris proofing.' : 'Ambil foto termo gun sekarang.' });
+            if (std.max !== null) marks.push({ id: `${st.id}:${a.ts}:max`, hit: el >= std.max * 60, title: `${st.title} sudah melewati batas ${std.max >= 60 ? (std.max / 60).toString().replace('.', ',') + ' jam' : std.max + ' menit'}!`, body: 'Segera periksa dough dan laporkan.' });
+        });
+        if (firedRef.current === null) { firedRef.current = new Set(marks.filter((m) => m.hit).map((m) => m.id)); return; }
+        marks.forEach((m) => { if (m.hit && !firedRef.current.has(m.id)) { firedRef.current.add(m.id); if (form.remind !== false) ring(m.title, m.body); } });
+    };
+    useEffect(() => { checkTimers(); }, [now]);
+    // ---- ambil foto ----
+    const askPhoto = (slotKey) => {
+        if (busy || sending) return;
+        pendingSlot.current = slotKey;
+        if (fileRef.current) { fileRef.current.value = ''; fileRef.current.click(); }
+    };
+    const onFile = async (evt) => {
+        const file = evt.target.files && evt.target.files[0];
+        const slotKey = pendingSlot.current;
+        if (!file || !slotKey) return;
+        if (file.lastModified > 0 && Date.now() - file.lastModified > 5 * 60 * 1000) {
+            showToast('⚠️ Foto harus diambil langsung dari kamera (bukan dari galeri) agar jamnya valid.');
+            return;
+        }
+        const slot = slotMap[slotKey];
+        setBusy(slotKey);
+        try {
+            const ts = Date.now();
+            const dataUrl = await stampDoughPhoto(file, [`${slot.stage} - ${slot.label}`, `${storeName || ''}${form.kodeEd ? ' | ED ' + form.kodeEd : ''}`, `${DR.fmtDT(ts)} WIB`]);
+            const up = await uploadMediaToR2(dataUrl, `doughReports/stores/${storeId}`, 'jpg');
+            memImgs.current[slotKey] = dataUrl;
+            setForm((prev) => ({ ...prev, photos: { ...(prev.photos || {}), [slotKey]: { ts, key: up.key, url: up.url } } }));
+        }
+        catch (err) {
+            showToast('⚠️ ' + ((err && err.message) || 'Gagal menyimpan foto. Coba lagi.'));
+        }
+        finally { setBusy(''); }
+    };
+    const removePhoto = (slotKey) => {
+        if (!window.confirm('Hapus foto ini dan ambil ulang?')) return;
+        delete memImgs.current[slotKey];
+        setForm((prev) => { const p = { ...(prev.photos || {}) }; delete p[slotKey]; return { ...prev, photos: p }; });
+    };
+    // ---- bytes foto untuk PDF ----
+    const getBytes = async (slotKey, p) => {
+        if (memImgs.current[slotKey]) return doughDataUrlToU8(memImgs.current[slotKey]);
+        if (!p || !p.url) return null;
+        try { const r = await fetch(p.url, { mode: 'cors' }); if (!r.ok) return null; return new Uint8Array(await r.arrayBuffer()); }
+        catch (err) { return null; }
+    };
+    const collectImages = async (ph) => {
+        const images = {};
+        await Promise.all(DR.SLOTS.map(async (s) => { const b = ph[s.k] ? await getBytes(s.k, ph[s.k]) : null; if (b) images[s.k] = b; }));
+        return images;
+    };
+    const safeName = (s) => String(s || 'toko').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30) || 'toko';
+    // ---- kirim laporan ----
+    const handleSend = async () => {
+        if (sending || busy) return;
+        const info = !String(form.pelapor || '').trim() ? 'Nama pelapor' : !String(form.kodeEd || '').trim() ? 'Kode ED' : !String(form.edFd || '').trim() ? 'ED FD' : '';
+        if (info) { showToast(`⚠️ Isi ${info} dulu.`); return; }
+        const missing = DR.SLOTS.filter((s) => !photos[s.k]);
+        if (missing.length) { showToast(`⚠️ Masih ${missing.length} foto belum diambil. Berikutnya: ${missing[0].label}`); return; }
+        if (photos.thawEnd.ts <= photos.thawStart.ts || photos.proofEnd.ts <= photos.proofStart.ts || photos.restEnd.ts <= photos.restStart.ts) {
+            showToast('⚠️ Urutan waktu foto tidak wajar (foto akhir harus setelah foto awal). Ambil ulang foto yang salah.');
+            return;
+        }
+        setSending(true);
+        try {
+            const nowMs = Date.now();
+            const rep = { storeName: storeName || storeId, pelapor: String(form.pelapor).trim(), kodeEd: String(form.kodeEd).trim(), edFd: String(form.edFd).trim(), notes: String(form.notes || '').trim(), createdAt: nowMs, photos };
+            const images = await collectImages(photos);
+            const pdf = DR.buildPdf(rep, images);
+            const caption = DR.buildCaption(rep, ev, parseCcUsernames(config && config.telegramCc), nowMs);
+            const fd = new FormData();
+            fd.append('caption', caption);
+            fd.append('document', new Blob([pdf], { type: 'application/pdf' }), `Laporan-Dough-${safeName(rep.storeName)}-${todayWIB(nowMs)}.pdf`);
+            const ctl = new AbortController();
+            const timer = setTimeout(() => ctl.abort(), 120000);
+            let res;
+            try { res = await tgRelayFetch('sendDocument', fd, { signal: ctl.signal }); }
+            finally { clearTimeout(timer); }
+            const d = await res.json().catch(() => ({}));
+            if (!d.ok) throw new Error(d.description || d.error || 'Telegram menolak file laporan.');
+            const sum = (k) => ({ sec: ev[k].sec === null ? null : ev[k].sec, status: ev[k].status });
+            try { await restSet(db.ref(`${storeBase}/doughReports/${nowMs}`), { id: String(nowMs), createdAt: nowMs, storeName: rep.storeName, pelapor: rep.pelapor, kodeEd: rep.kodeEd, edFd: rep.edFd, notes: rep.notes, photos, result: { thaw: sum('thaw'), proof: sum('proof'), rest: sum('rest'), bad: ev.bad }, sentToTelegram: true }); }
+            catch (err) { console.error('Riwayat Laporan Dough gagal disimpan:', err); }
+            memImgs.current = {};
+            firedRef.current = null;
+            setForm(blankForm());
+            showToast(ev.allOk ? '✅ Laporan Dough terkirim ke Telegram.' : '✅ Laporan Dough (ada tahap tidak sesuai standar) terkirim ke Telegram.');
+            loadHistory();
+        }
+        catch (err) {
+            showToast('⚠️ ' + ((err && err.name === 'AbortError') ? 'Waktu habis saat mengirim. Periksa sinyal lalu coba lagi.' : ((err && err.message) || 'Gagal mengirim laporan.')));
+        }
+        finally { setSending(false); }
+    };
+    const loadHistory = async () => {
+        setHistLoading(true);
+        try {
+            const snap = await restOnce(db.ref(`${storeBase}/doughReports`).limitToLast(20));
+            const v = snap.val() || {};
+            setHistory(Object.keys(v).map((k) => ({ ...v[k], id: v[k].id || k })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+        }
+        catch (err) { showToast('⚠️ Gagal memuat riwayat laporan dough.'); }
+        finally { setHistLoading(false); }
+    };
+    useEffect(() => { if (view === 'history') loadHistory(); }, [view]);
+    const downloadHistory = async (r) => {
+        if (busy) return;
+        setBusy('dl' + r.id);
+        try {
+            const images = await collectImages(r.photos || {});
+            const pdf = DR.buildPdf({ storeName: r.storeName, pelapor: r.pelapor, kodeEd: r.kodeEd, edFd: r.edFd, notes: r.notes, createdAt: r.createdAt, photos: r.photos || {} }, images);
+            const blob = new Blob([pdf], { type: 'application/pdf' });
+            const name = `Laporan-Dough-${safeName(r.storeName)}-${todayWIB(r.createdAt || Date.now())}.pdf`;
+            if (window.TbSaveFile) window.TbSaveFile(blob, name, (m) => showToast('⚠️ ' + m));
+            else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+        }
+        catch (err) { showToast('⚠️ Gagal membuat PDF.'); }
+        finally { setBusy(''); }
+    };
+    const resetAll = () => {
+        if (!window.confirm('Mulai laporan baru? Semua isian & foto yang belum dikirim akan dihapus dari layar ini.')) return;
+        memImgs.current = {}; firedRef.current = null; setForm(blankForm());
+    };
+    const chip = (st) => st === 'ok' ? 'bg-emerald-100 text-emerald-700' : (st === 'short' || st === 'long') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500';
+    // ---- tampilan ----
+    const timerBox = (st) => {
+        const t = st.timer, std = DR.STD[t.std], a = photos[t.startKey], b = photos[t.endKey];
+        if (!a) return e('p', { className: 'text-[11px] text-slate-500 mb-2' }, t.hint);
+        if (b) { const r = ev[t.std]; return e('div', { className: 'flex items-center justify-between rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 mb-2' }, e('div', null, e('p', { className: 'text-[10px] text-slate-500' }, `Durasi ${st.title} (standar ${std.label})`), e('p', { className: 'text-sm font-bold text-slate-800' }, DR.fmtDur(r.sec))), e('span', { className: `text-[10px] font-bold px-2 py-1 rounded-full ${chip(r.status)}` }, r.status === 'ok' ? 'SESUAI' : `${DR.statusWord(r.status)} - ${r.gap}`)); }
+        const el = (now - a.ts) / 1000, mins = el / 60;
+        const state = mins < std.min ? { c: 'bg-amber-50 border-amber-200 text-amber-800', t: `Belum ${std.min >= 60 ? (std.min / 60).toString().replace('.', ',') + ' jam' : std.min + ' menit'} - tunggu dulu` } : (std.max !== null && mins > std.max) ? { c: 'bg-red-100 border-slate-200 text-red-700', t: 'Melewati batas standar!' } : { c: 'bg-emerald-50 border-emerald-200 text-emerald-700', t: std.max === null ? 'Sudah cukup - ambil foto termo gun' : 'Dalam rentang standar - cek & ambil foto' };
+        const pct = Math.min(100, Math.round(el / ((std.max || std.min * 1.5) * 60) * 100));
+        return e('div', { className: `rounded-xl border px-3 py-2 mb-2 ${state.c}` },
+            e('div', { className: 'flex items-center justify-between' }, e('p', { className: 'text-2xl font-extrabold' }, doughClock(el)), e('p', { className: 'text-[11px] font-bold text-right' }, state.t)),
+            e('div', { className: 'h-1.5 rounded-full bg-white/70 mt-2 overflow-hidden' }, e('div', { className: 'h-1.5', style: { width: pct + '%', backgroundColor: 'currentColor' } })),
+            e('p', { className: 'text-[10px] mt-1 opacity-80' }, `Mulai ${DR.fmtHM(a.ts)} WIB - standar ${std.label}`));
+    };
+    const slotRow = (k) => {
+        const s = slotMap[k], p = photos[k], thumb = memImgs.current[k] || (p && p.url);
+        return e('div', { key: k, className: 'flex items-center gap-3 py-2 border-t border-slate-100' },
+            thumb ? e('img', { src: thumb, alt: s.label, className: 'w-14 h-14 rounded-lg object-cover border border-slate-200 flex-shrink-0' }) : e('div', { className: 'w-14 h-14 rounded-lg bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-lg flex-shrink-0' }, busy === k ? '⏳' : '📷'),
+            e('div', { className: 'flex-1 min-w-0' }, e('p', { className: 'text-xs font-semibold text-slate-800' }, s.label), e('p', { className: 'text-[10px] text-slate-500' }, p ? `${DR.fmtDT(p.ts)} WIB` : 'Belum diambil')),
+            e('div', { className: 'flex flex-col gap-1' },
+                e('button', { onClick: () => askPhoto(k), disabled: !!busy || sending, className: `text-[11px] font-bold px-3 py-1.5 rounded-lg ${p ? 'bg-slate-100 text-slate-700' : 'bg-purple-600 text-white'} disabled:opacity-50` }, busy === k ? 'Menyimpan...' : (p ? 'Ulang' : 'Ambil foto')),
+                p ? e('button', { onClick: () => removePhoto(k), disabled: !!busy || sending, className: 'text-[10px] text-red-700 font-semibold' }, 'Hapus') : null));
+    };
+    const stageCard = (st) => e('div', { key: st.id, className: 'bg-white rounded-2xl border border-slate-200 p-4' },
+        e('h3', { className: 'font-bold text-slate-800 text-sm mb-2' }, `${st.icon} ${st.title}`),
+        st.timer ? timerBox(st) : null,
+        st.slots.map(slotRow));
+    const resultCard = e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4' },
+        e('h3', { className: 'font-bold text-slate-800 text-sm mb-2' }, '📊 Hasil sementara'),
+        ['thaw', 'proof', 'rest'].map((k) => e('div', { key: k, className: 'flex items-center justify-between py-1.5 border-t border-slate-100' },
+            e('div', null, e('p', { className: 'text-xs font-semibold text-slate-800' }, ev[k].name), e('p', { className: 'text-[10px] text-slate-500' }, `Standar ${ev[k].std.label}`)),
+            e('div', { className: 'text-right' }, e('p', { className: 'text-xs font-bold text-slate-800' }, DR.fmtDur(ev[k].sec)), e('span', { className: `text-[10px] font-bold px-2 py-0.5 rounded-full ${chip(ev[k].status)}` }, ev[k].status === 'na' ? 'belum lengkap' : (ev[k].status === 'ok' ? 'SESUAI' : `${DR.statusWord(ev[k].status)} ${ev[k].gap.replace(/^(kurang|lebih) /, '')}`))))),
+        e('p', { className: 'text-[11px] text-slate-500 mt-2' }, `Total thawing sampai resting: ${DR.fmtDur(ev.total.sec)}`));
+    const formView = e('div', { className: 'space-y-4' },
+        e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-3' },
+            e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Store'), e('div', { className: 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700' }, storeName || storeId)),
+            e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Nama pelapor'), e('input', { value: form.pelapor || '', onChange: (x) => setField('pelapor', x.target.value.slice(0, 60)), placeholder: 'Nama lengkap', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' })),
+            e('div', { className: 'grid grid-cols-2 gap-3' },
+                e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Kode ED'), e('input', { value: form.kodeEd || '', onChange: (x) => setField('kodeEd', x.target.value.slice(0, 40)), placeholder: 'Kode ED', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' })),
+                e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'ED FD'), e('input', { value: form.edFd || '', onChange: (x) => setField('edFd', x.target.value.slice(0, 40)), placeholder: 'ED FD', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' }))),
+            e('label', { className: 'flex items-center gap-2 text-xs text-slate-600' }, e('input', { type: 'checkbox', checked: form.remind !== false, onChange: (x) => setField('remind', x.target.checked) }), 'Bunyikan pengingat timer (aplikasi harus tetap terbuka)'),
+            (window.Notification && Notification.permission === 'default') ? e('button', { onClick: () => { try { Notification.requestPermission(); } catch (err) { } }, className: 'text-[11px] font-bold text-purple-700' }, '🔔 Izinkan notifikasi pengingat') : null),
+        DOUGH_STAGES.map(stageCard),
+        resultCard,
+        e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4' },
+            e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Catatan (opsional)'),
+            e('textarea', { value: form.notes || '', onChange: (x) => setField('notes', x.target.value.slice(0, 300)), rows: 3, placeholder: 'Mis. penyebab proofing kurang lama', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' })),
+        e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-3' },
+            e('p', { className: 'text-xs text-slate-600' }, `Foto terisi ${doneCount} dari ${DR.SLOTS.length}. Setelah dikirim, laporan PDF otomatis masuk ke grup Telegram toko${parseCcUsernames(config && config.telegramCc).length ? ' dengan CC ' + parseCcUsernames(config && config.telegramCc).map((u) => '@' + u).join(' ') : ' (CC Store Leader belum diatur di pengaturan Telegram toko)'}.`),
+            e('button', { onClick: handleSend, disabled: sending || !!busy, className: 'w-full py-3 rounded-xl bg-purple-600 text-white font-bold text-sm disabled:opacity-50' }, sending ? 'Membuat PDF & mengirim...' : '📤 Kirim Laporan ke Telegram'),
+            e('button', { onClick: resetAll, disabled: sending, className: 'w-full py-2 rounded-xl bg-slate-100 text-slate-600 font-semibold text-xs' }, 'Mulai laporan baru / kosongkan')));
+    const historyView = e('div', { className: 'space-y-3' },
+        histLoading ? e('p', { className: 'text-xs text-slate-500 text-center py-6' }, 'Memuat riwayat...') : null,
+        (!histLoading && !history.length) ? e('p', { className: 'text-xs text-slate-500 text-center py-6' }, 'Belum ada laporan dough yang terkirim.') : null,
+        history.map((r) => e('div', { key: r.id, className: 'bg-white rounded-2xl border border-slate-200 p-4' },
+            e('div', { className: 'flex items-start justify-between gap-2' }, e('div', null, e('p', { className: 'text-sm font-bold text-slate-800' }, `ED ${r.kodeEd || '-'} - ${r.edFd || '-'}`), e('p', { className: 'text-[11px] text-slate-500' }, `${DR.fmtDT(r.createdAt)} WIB - ${r.pelapor || '-'}`)),
+                e('span', { className: `text-[10px] font-bold px-2 py-1 rounded-full ${r.result && r.result.bad ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}` }, r.result && r.result.bad ? `${r.result.bad} tahap tidak sesuai` : 'Sesuai standar')),
+            r.result ? e('p', { className: 'text-[11px] text-slate-600 mt-2' }, `Thawing ${DR.fmtDur(r.result.thaw && r.result.thaw.sec)} | Proofing ${DR.fmtDur(r.result.proof && r.result.proof.sec)} | Resting ${DR.fmtDur(r.result.rest && r.result.rest.sec)}`) : null,
+            e('button', { onClick: () => downloadHistory(r), disabled: !!busy, className: 'mt-3 w-full py-2 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs disabled:opacity-50' }, busy === 'dl' + r.id ? 'Membuat PDF...' : '⬇️ Unduh PDF'))));
+    return e('div', { className: 'space-y-4' },
+        e('input', { ref: fileRef, type: 'file', accept: 'image/*', capture: 'environment', onChange: onFile, className: 'hidden' }),
+        e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4' },
+            e('h2', { className: 'font-bold text-slate-800 text-base' }, '🥖 Laporan Dough'),
+            e('p', { className: 'text-xs text-slate-500 mt-1' }, 'Laporkan lama ngembang dough yang tidak sesuai standar. Setiap foto otomatis berstempel tanggal & jam.'),
+            e('div', { className: 'flex gap-2 mt-3' },
+                e('button', { onClick: () => setView('form'), className: `flex-1 py-2 rounded-xl text-xs font-bold ${view === 'form' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600'}` }, 'Buat Laporan'),
+                e('button', { onClick: () => setView('history'), className: `flex-1 py-2 rounded-xl text-xs font-bold ${view === 'history' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600'}` }, 'Riwayat'))),
+        view === 'form' ? formView : historyView);
+}
+
 function InformasiRotiTab({ storeId, storeName, config, showToast, onOpenConfig, historyList }) {
     const [matang, setMatang] = useDraftState(storeId, 'roti_matang', '', { maxAgeHours: 6 });
     const [baking, setBaking] = useDraftState(storeId, 'roti_baking', '', { maxAgeHours: 6 });
@@ -12868,9 +13152,12 @@ function LeaderPettyCashTab({ storeId, storeName, showToast, onPendingChange }) 
         rows.push(['', '', '', 'Pengeluaran', ledger.totals.out]);
         rows.push(['', '', '', 'Saldo Akhir', ledger.totals.closing]);
         const csv = '\uFEFF' + rows.map((r) => r.map(esc).join(',')).join('\r\n');
+        const csvName = `petty-cash-${storeName || storeId}-${month}.csv`.replace(/\s+/g, '_');
+        const csvBlob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        if (window.TbSaveFile) { window.TbSaveFile(csvBlob, csvName); return; }
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-        a.download = `petty-cash-${storeName || storeId}-${month}.csv`.replace(/\s+/g, '_');
+        a.href = URL.createObjectURL(csvBlob);
+        a.download = csvName;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -13436,7 +13723,7 @@ const ojtDownloadRekap = (list, label, showToast) => {
     }
     try {
         const safe = String(label || 'OJT').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'OJT';
-        window.OjtRekapPdf.download(list, { storeLabel: label, filename: `Rekap-OJT-${safe}-${new Date().toISOString().slice(0, 10)}.pdf` });
+        window.OjtRekapPdf.download(list, { storeLabel: label, filename: `Rekap-OJT-${safe}-${new Date().toISOString().slice(0, 10)}.pdf`, onFail: showToast ? (m) => showToast('\u26A0\uFE0F ' + m) : undefined });
         if (showToast) showToast(`\u2705 Rekap PDF ${list.length} peserta dibuat`);
     }
     catch (e) {

@@ -170,13 +170,62 @@ function __diagPush(entry) {
     }
     catch (e) { }
 }
+let __consec401 = 0, __sessionInvalidFired = false;
+// Layar penuh saat IP diblokir: tampilkan IP supaya pengguna asli bisa mengirimnya ke admin (sebelumnya hanya "gagal terhubung").
+const __showIpBlocked = (ip, msg) => {
+    try {
+        if (document.getElementById('tb-ip-blocked'))
+            return;
+        const box = document.createElement('div');
+        box.id = 'tb-ip-blocked';
+        box.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.96);color:#fff;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif';
+        const card = document.createElement('div');
+        card.style.cssText = 'max-width:380px;width:100%;background:#fff;color:#0f172a;border-radius:20px;padding:24px;text-align:center';
+        const h = document.createElement('div');
+        h.textContent = '🚫 Akses diblokir';
+        h.style.cssText = 'font-size:20px;font-weight:800;margin-bottom:8px';
+        const p = document.createElement('div');
+        p.textContent = 'Jaringan ini diblokir otomatis karena aktivitas mencurigakan. Jika Anda pengguna asli, kirim IP di bawah ini ke admin agar blokir dibuka.';
+        p.style.cssText = 'font-size:13px;color:#475569;margin-bottom:14px';
+        const ipEl = document.createElement('div');
+        ipEl.textContent = ip || '-';
+        ipEl.style.cssText = 'font-family:ui-monospace,monospace;font-size:18px;font-weight:700;background:#f1f5f9;border-radius:12px;padding:12px;margin-bottom:14px;word-break:break-all;user-select:all';
+        const b1 = document.createElement('button');
+        b1.textContent = 'Salin IP';
+        b1.style.cssText = 'width:100%;background:#6d28d9;color:#fff;font-weight:700;border:0;border-radius:12px;padding:12px;margin-bottom:8px;font-size:14px';
+        b1.onclick = () => { try { navigator.clipboard.writeText(String(ip || '')); b1.textContent = 'Tersalin ✓'; } catch (e) { } };
+        const b2 = document.createElement('button');
+        b2.textContent = 'Coba lagi';
+        b2.style.cssText = 'width:100%;background:#e2e8f0;color:#0f172a;font-weight:700;border:0;border-radius:12px;padding:12px;font-size:14px';
+        b2.onclick = () => location.reload();
+        card.append(h, p, ipEl, b1, b2);
+        box.appendChild(card);
+        document.body.appendChild(box);
+    }
+    catch (e) { }
+};
 const __apiFetchBase = (url, opts = {}) => {
     const startedAt = Date.now();
     const mergedHeaders = { ...(opts.headers || {}), ...__authHeaders() };
     return fetch(url, { ...opts, headers: mergedHeaders, credentials: 'include' }).then(res => {
         if (res.status === 403) {
-            res.clone().json().then(d => { if (d && d.code === 'ACCESS_KEY_REQUIRED')
-                window.dispatchEvent(new Event('tb-access-required')); }).catch(() => { });
+            res.clone().json().then(d => {
+                if (d && d.code === 'ACCESS_KEY_REQUIRED')
+                    window.dispatchEvent(new Event('tb-access-required'));
+                else if (d && d.code === 'IP_BLOCKED')
+                    __showIpBlocked(d.ip, d.error);
+            }).catch(() => { });
+        }
+        // Sesi habis/dicabut: bila 3x berturut-turut 401 (bukan dari halaman login), hentikan polling & minta login ulang.
+        if (res.status === 401 && !/\/api\/(login|logout|bootstrap-admin|admin-exists|access|admin\/mfa|psikotes\/public|turnstile)/.test(String(url))) {
+            __consec401 += 1;
+            if (__consec401 >= 3 && !__sessionInvalidFired) {
+                __sessionInvalidFired = true;
+                setTimeout(() => window.dispatchEvent(new Event('tb-session-invalid')), 0);
+            }
+        }
+        else if (res.ok) {
+            __consec401 = 0;
         }
         __diagPush({
             url: String(url).replace(WORKER_BASE, ''),
@@ -405,6 +454,8 @@ function createChatLongPoll({ storeId, onChange }) {
             timeoutId = setTimeout(() => controller.abort(), 40000);
             const res = await __apiFetch(`${WORKER_BASE}/api/chat/wait?${qs}`, { headers: __authHeaders(), signal: controller.signal });
             clearTimeout(timeoutId);
+            if (!res.ok)
+                throw new Error('HTTP ' + res.status); // 401/403/429: jangan dianggap sukses (sebelumnya memicu loop tanpa jeda ratusan request/menit)
             const data = await res.json();
             consecutiveErrors = 0;
             if (data && typeof data.version === 'number')
@@ -5404,6 +5455,21 @@ function AppRoot() {
         window.addEventListener('tb-access-required', onBlocked);
         return () => window.removeEventListener('tb-access-required', onBlocked);
     }, []);
+    // Sesi sudah tidak sah di server (kedaluwarsa / perangkat dikeluarkan): keluar sekali saja, jangan polling terus.
+    useEffect(() => {
+        const onInvalid = async () => {
+            try {
+                await auth.signOut();
+            }
+            catch (e) { }
+            clearSession();
+            setSession(null);
+            __consec401 = 0;
+            __sessionInvalidFired = false;
+        };
+        window.addEventListener('tb-session-invalid', onInvalid);
+        return () => window.removeEventListener('tb-session-invalid', onInvalid);
+    }, []);
     useEffect(() => {
         const unsub = auth.onAuthStateChanged(async (user) => {
             const s = loadSession();
@@ -7347,7 +7413,9 @@ function StoreApp({ storeId, storeName, onLogout }) {
         };
     }, []);
     const forceKickedLogout = (reason) => {
-        const msg = reason === 'inactive-timeout'
+        const msg = reason === 'session-expired'
+            ? '🔒 Sesi login sudah berakhir. Silakan login kembali.'
+            : reason === 'inactive-timeout'
             ? '⏱️ Sesi Anda otomatis berakhir karena web ini tidak dibuka/aktif selama lebih dari 5 jam. Silakan login kembali.'
             : '⚠️ Sesi di perangkat ini telah dikeluarkan (logout paksa) oleh Admin. Silakan login kembali.';
         alert(msg);
@@ -7355,12 +7423,14 @@ function StoreApp({ storeId, storeName, onLogout }) {
     };
     useEffect(() => {
         let stoppedByServer = false;
+        let hb401 = 0;
+        let interval = null;
         const sendHeartbeat = () => {
             __apiFetch(`${WORKER_BASE}/api/presence/ping`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...__authHeaders() },
                 body: JSON.stringify({ storeId, storeName, deviceId: getDeviceId() }),
-            }).then(res => res.json()).then(data => {
+            }).then(res => { if (res.status === 401 && !stoppedByServer) { hb401 += 1; if (hb401 >= 3) { stoppedByServer = true; clearInterval(interval); forceKickedLogout('session-expired'); } } else if (res.ok) { hb401 = 0; } return res.json(); }).then(data => {
                 if (data && data.deviceValid === false && !stoppedByServer) {
                     stoppedByServer = true;
                     forceKickedLogout(data.reason);
@@ -7368,8 +7438,8 @@ function StoreApp({ storeId, storeName, onLogout }) {
             }).catch((err) => console.error('Gagal update status online toko:', err));
         };
         sendHeartbeat();
-        const interval = setInterval(sendHeartbeat, PRESENCE_HEARTBEAT_MS);
-        const onVisible = () => { if (document.visibilityState === 'visible')
+        interval = setInterval(sendHeartbeat, PRESENCE_HEARTBEAT_MS);
+        const onVisible = () => { if (document.visibilityState === 'visible' && !stoppedByServer)
             sendHeartbeat(); };
         document.addEventListener('visibilitychange', onVisible);
         window.addEventListener('focus', onVisible);
@@ -13953,6 +14023,9 @@ function AdminSecurityCard({ showAdminToast }) {
     };
     const save = () => act('save', () => pettyApi('/api/security/config', { method: 'POST', body: { mode, alertChatId: alertChat, allowIps: allow } }), '✅ Pengaturan keamanan tersimpan.');
     const block = (ip, minutes) => act('b' + ip, () => pettyApi('/api/security/block', { method: 'POST', body: { ip, minutes, reason: 'diblokir admin' } }), `✅ ${ip} diblokir ${minutes >= 60 ? minutes / 60 + ' jam' : minutes + ' menit'}.`);
+    const [manualIp, setManualIp] = useState('');
+    const allowIp = (ip, days) => act('a' + ip, () => pettyApi('/api/security/allow', { method: 'POST', body: { ip, days } }), `✅ ${ip} dinyatakan aman ${days} hari.`);
+    const unblockManual = () => { const ip = manualIp.trim(); if (!/^[0-9a-fA-F:.]{3,45}$/.test(ip)) { showAdminToast('⚠️ Format IP salah.'); return; } act('um', () => pettyApi('/api/security/unblock', { method: 'POST', body: { ip } }), `✅ Blokir ${ip} dibuka.`).then(() => setManualIp('')); };
     const unblock = (ip) => act('u' + ip, () => pettyApi('/api/security/unblock', { method: 'POST', body: { ip } }), `✅ Blokir ${ip} dibuka.`);
     const analyze = async () => {
         setBusy('ai');
@@ -13968,7 +14041,7 @@ function AdminSecurityCard({ showAdminToast }) {
         return React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 p-5 text-xs text-slate-400" }, "Memuat Agen Keamanan...");
     const chip = (on) => `flex-1 px-2 py-2 rounded-xl text-[11px] font-bold border ${on ? 'bg-purple-700 text-white border-purple-700' : 'bg-white text-slate-600 border-slate-200'}`;
     const lvl = { aman: 'bg-emerald-100 text-emerald-800', waspada: 'bg-amber-100 text-amber-800', bahaya: 'bg-rose-100 text-rose-800' };
-    const typeLabel = { scanner_probe: 'Pemindaian jalur (wp-login, .env, dll)', injection_probe: 'Upaya injeksi (SQL/XSS/traversal)', scanner_ua: 'Alat peretas (sqlmap, nikto)', rate_limited: 'Kebanjiran request', bad_origin: 'Asal request tidak sah', unauthorized: 'Akses tanpa login', no_user_agent: 'Tanpa identitas browser', blocked_request: 'Request dari IP terblokir', flood_dropped: 'Kejadian diringkas (serangan besar)' };
+    const typeLabel = { scanner_probe: 'Pemindaian jalur (wp-login, .env, dll)', injection_probe: 'Upaya injeksi (SQL/XSS/traversal)', scanner_ua: 'Alat peretas (sqlmap, nikto)', rate_limited: 'Kebanjiran request', bad_origin: 'Asal request tidak sah', unauthorized: 'Sesi tidak sah (data lama)', unauth_nocred: 'Akses tanpa login', forged_session: 'Cookie/sesi palsu', no_access_key: 'Tanpa link akses', anon_flood: 'Banjir request tanpa login', flood: 'Banjir request (>300/menit)', no_user_agent: 'Tanpa identitas browser', blocked_request: 'Request dari IP terblokir', flood_dropped: 'Kejadian diringkas (serangan besar)' };
     const mins = (u) => Math.max(1, Math.round((u - Date.now()) / 60000));
     const modeHelp = { off: 'Agen mati sepenuhnya.', monitor: 'Hanya mencatat & memperingatkan. Tidak ada yang diblokir. Mulai dari sini beberapa hari.', enforce: 'Mencatat, memperingatkan, DAN memblokir IP penyerang sementara.' };
     return (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3" },
@@ -13985,8 +14058,12 @@ function AdminSecurityCard({ showAdminToast }) {
             React.createElement("div", { className: "flex gap-1.5" }, [['off', 'Nonaktif'], ['monitor', 'Pantau'], ['enforce', 'Aktif']].map(([k, l]) => React.createElement("button", { key: k, onClick: () => setMode(k), className: chip(mode === k) }, l))),
             React.createElement("p", { className: "text-[10px] text-slate-500" }, modeHelp[mode])),
         React.createElement("input", { type: "text", inputMode: "numeric", value: alertChat, onChange: e => setAlertChat(e.target.value.replace(/[^\d-]/g, '')), placeholder: "ID Telegram penerima peringatan (kosong = pakai ID chat admin)", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs" }),
-        React.createElement("input", { type: "text", value: allow, onChange: e => setAllow(e.target.value.replace(/[^0-9a-fA-F:.,\s]/g, '')), placeholder: "IP aman (tidak pernah diblokir), pisahkan dengan koma", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs" }),
+        React.createElement("input", { type: "text", value: allow, onChange: e => setAllow(e.target.value.replace(/[^0-9a-fA-F:.,\s\/]/g, '')), placeholder: "IP aman / rentang (mis. 202.159.42.0/24), pisahkan dengan koma", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs" }),
         ov.yourIp && !allow.includes(ov.yourIp) && React.createElement("button", { onClick: () => setAllow(a => (a ? a + ',' : '') + ov.yourIp), className: "text-[11px] font-semibold text-indigo-700" }, `+ Tambahkan IP saya (${ov.yourIp}) ke daftar aman`),
+        React.createElement("p", { className: "text-[10px] text-slate-500 bg-slate-50 rounded-lg p-2" }, `IP HP/WiFi memang sering berganti (data seluler memakai IP bersama yang dirotasi operator). Karena itu, yang sudah login dengan sesi sah TIDAK PERNAH ikut terblokir dan IP yang baru dipakai login otomatis dipercaya 12 jam. Aturan harian: lebih dari ${ov.dailyLimit || 10} request anomali per 24 jam dari satu IP → diblokir otomatis, lalu bisa Anda buka di bawah atau lewat tombol di Telegram.`),
+        React.createElement("div", { className: "flex gap-1.5" },
+            React.createElement("input", { type: "text", value: manualIp, onChange: e => setManualIp(e.target.value.replace(/[^0-9a-fA-F:.]/g, '')), placeholder: "Buka blokir IP (dari pengguna yang lapor)", className: "flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-xl text-xs" }),
+            React.createElement("button", { onClick: unblockManual, disabled: busy === 'um' || !manualIp, className: "px-3 bg-emerald-600 disabled:opacity-40 text-white text-xs font-bold rounded-xl" }, "Buka")),
         React.createElement("button", { onClick: save, disabled: busy === 'save', className: "w-full bg-purple-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm" }, busy === 'save' ? 'Menyimpan...' : 'Simpan Pengaturan Keamanan'),
         ov.byType.length > 0 && React.createElement("div", { className: "space-y-1" },
             React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "Jenis kejadian (24 jam)"),
@@ -13997,13 +14074,15 @@ function AdminSecurityCard({ showAdminToast }) {
                 React.createElement("div", { className: "min-w-0 flex-1" },
                     React.createElement("p", { className: "text-xs font-semibold text-slate-800 break-all" }, x.ip),
                     React.createElement("p", { className: "text-[10px] text-slate-500 truncate" }, `${x.n}x • ${(x.types || '').split(',').map(t => typeLabel[t] || t).join(', ')}`)),
-                (/^[0-9a-fA-F:.]{3,45}$/.test(x.ip) && x.ip !== ov.yourIp) ? React.createElement("button", { onClick: () => block(x.ip, 60), disabled: busy === 'b' + x.ip, className: "text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-1 rounded-md" }, "Blokir 1 jam") : null))),
+                (/^[0-9a-fA-F:.]{3,45}$/.test(x.ip) && x.ip !== ov.yourIp) ? React.createElement("div", { className: "flex flex-col gap-1 shrink-0" },
+                    ov.blocks.some(b => b.ip === x.ip) ? null : React.createElement("button", { onClick: () => block(x.ip, 1440), disabled: busy === 'b' + x.ip, className: "text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-1 rounded-md" }, "Blokir 24 jam"),
+                    React.createElement("button", { onClick: () => allowIp(x.ip, 7), disabled: busy === 'a' + x.ip, className: "text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md" }, "Aman 7 hari")) : null))),
         ov.blocks.length > 0 && React.createElement("div", { className: "space-y-1.5" },
             React.createElement("p", { className: "text-xs font-bold text-slate-700" }, "Sedang diblokir"),
             ov.blocks.map(b => React.createElement("div", { key: b.ip, className: "flex items-center gap-2 bg-rose-50 rounded-lg px-2.5 py-2" },
                 React.createElement("div", { className: "min-w-0 flex-1" },
                     React.createElement("p", { className: "text-xs font-semibold text-slate-800 break-all" }, b.ip),
-                    React.createElement("p", { className: "text-[10px] text-slate-500 truncate" }, `${b.manual ? 'manual' : 'otomatis'} • ${b.reason} • sisa ${mins(b.until)} mnt`)),
+                    React.createElement("p", { className: "text-[10px] text-slate-500 truncate" }, `${b.manual ? 'manual' : 'otomatis'} • ${b.reason} • ${b.until > 4000000000000 ? 'sampai dibuka admin' : 'sisa ' + (mins(b.until) >= 120 ? Math.round(mins(b.until) / 60) + ' jam' : mins(b.until) + ' mnt')}`)),
                 React.createElement("button", { onClick: () => unblock(b.ip), disabled: busy === 'u' + b.ip, className: "text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md" }, "Buka")))),
         React.createElement("button", { onClick: analyze, disabled: busy === 'ai', className: "w-full bg-slate-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm" }, busy === 'ai' ? 'Menganalisis...' : '🤖 Analisis AI 24 jam terakhir'),
         ai && React.createElement("div", { className: "space-y-2 border border-slate-200 rounded-xl p-3" },

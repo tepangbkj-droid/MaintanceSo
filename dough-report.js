@@ -30,6 +30,12 @@
     { k: 'restEnd', stage: 'Resting', label: 'Foto termo gun: roti sudah suhu ruang' }
   ];
 
+  // (2026-10) Kode Produk menggantikan Kode ED: jenis dough yang dilaporkan.
+  var PRODUCTS = ['Dough - S1', 'Dough - S2', 'Dough - S3'];
+  // Nopol mobil pengiriman: huruf besar, hanya A-Z/0-9/spasi. Format Indonesia: 1-2 huruf, 1-4 angka, 0-3 huruf (mis. B 1234 ABC).
+  function normalizeNopol(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9 ]/g, '').replace(/\s+/g, ' ').replace(/^\s+/, '').slice(0, 12); }
+  function validNopol(v) { return /^[A-Z]{1,2} ?[0-9]{1,4} ?[A-Z]{0,3}$/.test(String(v || '').trim()); }
+
   var TZ = 'Asia/Jakarta';
   function fmtDT(ms) {
     if (!ms) return '-';
@@ -110,6 +116,17 @@
     return badStages(ev).map(function (k) { return ADVICE[k][ev[k].status] || ''; }).filter(Boolean);
   }
 
+  // Draf keterangan berbasis aturan (dipakai bila AI tidak tersedia / offline). Hanya memakai data yang ada.
+  function suggestNote(rep, ev) {
+    var bad = badStages(ev), t;
+    if (ev.done < 3) t = 'Data pemantauan belum lengkap.';
+    else if (!bad.length) t = 'Seluruh tahap thawing, proofing, dan resting sesuai standar.';
+    else t = 'Tahap tidak sesuai standar: ' + bad.map(function (k) { return ev[k].name + ' ' + fmtDur(ev[k].sec) + ' (' + ev[k].gap + ')'; }).join('; ') + '.';
+    if (rep && rep.kodeProduk) t = rep.kodeProduk + ': ' + t;
+    if (rep && rep.nopol) t += ' Pengiriman: ' + rep.nopol + '.';
+    return t.slice(0, 300);
+  }
+
   // Teks yang dikirim ke Telegram sebagai keterangan PDF (maks 1024 karakter).
   function buildCaption(rep, ev, ccList, nowMs) {
     var L = [];
@@ -120,15 +137,17 @@
     L.push('', 'INFORMASI LAPORAN');
     L.push('Store : ' + (rep.storeName || '-'));
     L.push('Nama pelapor : ' + (rep.pelapor || '-'));
-    L.push('Kode ED : ' + (rep.kodeEd || '-'));
+    L.push('Kode Produk : ' + (rep.kodeProduk || rep.kodeEd || '-'));
     L.push('ED FD : ' + (rep.edFd || '-'));
+    L.push('Nopol mobil pengiriman : ' + (rep.nopol || '-'));
+    L.push('Verifikasi waktu server : ' + (rep.verified ? 'TERVERIFIKASI (segel ' + rep.seal + ')' : 'TIDAK TERVERIFIKASI' + (rep.seal ? ' (segel ' + rep.seal + ')' : '')));
     L.push('', 'HASIL PEMANTAUAN');
     ['thaw', 'proof', 'rest'].forEach(function (k, i) {
       var r = ev[k];
       L.push((r.status === 'ok' ? '\u2705 ' : r.status === 'na' ? '\u2753 ' : '\u274C ') + r.name + ': ' + fmtDur(r.sec) + ' (standar ' + r.std.label + ') - ' + resultWord(r));
     });
     L.push('Total thawing hingga resting: ' + fmtDur(ev.total.sec));
-    if (rep.notes) L.push('', 'Catatan: ' + String(rep.notes).slice(0, 160));
+    if (rep.notes) L.push('', 'Keterangan: ' + String(rep.notes).slice(0, 160));
     L.push('', 'Dokumen lengkap beserta foto bukti berstempel tanggal dan waktu terlampir (PDF). Mohon arahan dan tindak lanjutnya. Terima kasih.');
     if (ccList && ccList.length) L.push('', 'CC: ' + ccList.map(function (u) { return '@' + u; }).join(' '));
     var s = L.join('\n');
@@ -281,13 +300,13 @@
     y -= 6;
     // ---- Info
     d.text(MX, y, 'I. INFORMASI LAPORAN', 10, true, C.brandDark); y -= 10;
-    var info = [['Store', rep.storeName], ['Nama pelapor', rep.pelapor], ['Kode ED', rep.kodeEd], ['ED FD', rep.edFd]];
+    var info = [['Store', rep.storeName], ['Nama pelapor', rep.pelapor], ['Kode Produk', rep.kodeProduk || rep.kodeEd], ['ED FD', rep.edFd], ['Nopol mobil pengiriman', rep.nopol]];
     var ih = 14 + info.length * 17;
     d.rect(MX, y - ih, CW, ih, C.soft, C.line, 0.6);
     var iy = y - 18;
     info.forEach(function (r) {
       d.text(MX + 12, iy, r[0], 9.5, true, C.mute);
-      d.text(MX + 110, iy, ':  ' + (r[1] || '-'), 10, true, C.ink, 'left', CW - 130);
+      d.text(MX + 140, iy, ':  ' + (r[1] || '-'), 10, true, C.ink, 'left', CW - 160);
       iy -= 17;
     });
     y -= ih + 14;
@@ -297,7 +316,10 @@
     var vc = ev.done < 3 ? statusColors('na') : (ev.allOk ? statusColors('ok') : statusColors('short'));
     d.rect(MX, y - 30, CW, 30, vc.bg, vc.fg, 0.8);
     d.text(PW / 2, y - 20, vtxt, 12.5, true, vc.fg, 'center');
-    y -= 30 + 16;
+    y -= 30 + 12;
+    var vv = rep.verified ? C.ok : C.bad;
+    d.text(MX, y, rep.verified ? 'Waktu foto terverifikasi server  |  Kode segel: ' + (rep.seal || '-') + '  (cocokkan dengan pesan VERIFIKASI SERVER di grup)' : 'PERHATIAN: waktu foto TIDAK terverifikasi server' + (rep.seal ? '  |  Kode segel: ' + rep.seal : ''), 8.5, true, vv);
+    y -= 16;
     // ---- Tabel durasi
     d.text(MX, y, 'II. HASIL PEMANTAUAN DURASI', 10, true, C.brandDark); y -= 12;
     var cols = [{ t: 'Tahap', w: 74 }, { t: 'Mulai', w: 104 }, { t: 'Selesai', w: 104 }, { t: 'Durasi aktual', w: 86 }, { t: 'Standar', w: 78 }, { t: 'Hasil', w: CW - 446 }];
@@ -333,7 +355,7 @@
       y -= 2;
     });
     if (rep.notes) {
-      y -= 4; d.text(MX, y, 'Catatan pelapor :', 9, true, C.mute); y -= 12;
+      y -= 4; d.text(MX, y, 'Keterangan :', 9, true, C.mute); y -= 12;
       wrap(rep.notes, 9.5, false, CW).slice(0, 6).forEach(function (l) { d.text(MX, y, l, 9.5, false, C.ink); y -= 12; });
     }
     y -= 10;
@@ -375,5 +397,5 @@
     return d.build({ title: 'Laporan Lama Proses Ngembang Dough - ' + (rep.storeName || '') });
   }
 
-  root.DoughReport = { conclusion: conclusion, recommendations: recommendations, STD: STD, SLOTS: SLOTS, evaluate: evaluate, fmtDur: fmtDur, fmtDT: fmtDT, fmtHM: fmtHM, greeting: greeting, buildCaption: buildCaption, buildPdf: buildPdf, statusWord: statusWord };
+  root.DoughReport = { PRODUCTS: PRODUCTS, normalizeNopol: normalizeNopol, validNopol: validNopol, suggestNote: suggestNote, conclusion: conclusion, recommendations: recommendations, STD: STD, SLOTS: SLOTS, evaluate: evaluate, fmtDur: fmtDur, fmtDT: fmtDT, fmtHM: fmtHM, greeting: greeting, buildCaption: buildCaption, buildPdf: buildPdf, statusWord: statusWord };
 })(typeof window !== 'undefined' ? window : this);

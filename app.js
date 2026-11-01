@@ -5305,6 +5305,7 @@ function AdminPanel({ onLogout }) {
                             React.createElement("input", { id: "telegramForm_ccUsername", type: "text", value: telegramForm.ccUsername, onChange: (e) => setTelegramForm({ ...telegramForm, ccUsername: e.target.value }), placeholder: "@username_sl, @username_lain", className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono" }),
                             React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Opsional. Boleh lebih dari satu, pisahkan dengan koma. Akan di-tag di bagian \"CC\" laporan Informasi Roti. Kosongkan kalau tidak perlu.")),
                         React.createElement("button", { onClick: handleSaveTelegramConfig, disabled: savingTelegram, className: "w-full bg-sky-700 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg" }, savingTelegram ? 'Menyimpan...' : (telegramSaved ? '✓ Tersimpan' : 'Simpan Integrasi Telegram'))),
+                    React.createElement(SheetsConfigPanel, { storeId: detailStore.id, showToast: showAdminToast }),
                     React.createElement(StoreTrafficPanel, { storeId: detailStore.id, storeName: detailStore.name, role: "admin", showToast: showAdminToast }),
                     React.createElement("div", { className: "grid grid-cols-2 gap-3" },
                         React.createElement("div", { className: "bg-purple-50 rounded-xl p-4" },
@@ -7562,6 +7563,17 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const [salesData, setSalesData] = useDraftState(storeId, 'sales', () => getEmptySalesState(), { dateField: 'tanggal' });
     const [inventoryData, setInventoryData] = useDraftState(storeId, 'inventory', () => getEmptyInventoryState(), { dateField: 'tanggal' });
     const [historyList, setHistoryList] = useState([]);
+    const [sheetsStatus, setSheetsStatus] = useState({ configured: false, mode: 'manual' });
+    const [sendingSheets, setSendingSheets] = useState(false);
+    useEffect(() => {
+        if (!storeId)
+            return;
+        let off = false;
+        __apiFetch(`${WORKER_BASE}/api/sheets/status`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: '{}' })
+            .then((r) => r.json()).then((d) => { if (!off && d && d.ok)
+            setSheetsStatus({ configured: !!d.configured, mode: d.mode === 'auto' ? 'auto' : 'manual' }); }).catch(() => { });
+        return () => { off = true; };
+    }, [storeId]);
     const [customSalesFields, setCustomSalesFields] = useState([]);
     const salesPlacementOf = (f) => (f.category && (f.placement === 'food' || f.placement === 'beverage')) ? f.placement : 'bottom';
     const renderSalesFieldGroups = (placement) => {
@@ -8153,10 +8165,41 @@ function StoreApp({ storeId, storeName, onLogout }) {
             if (config.googleAppScriptUrl) {
                 syncToGoogleSheets(payload);
             }
+            syncToSheetsServer(idEntry, true);
         }
         catch (error) {
             console.error(error);
             showToast('Gagal menyimpan ke Firebase. Cek koneksi Internet / Aturan Rules.');
+        }
+    };
+    // Sinkron via Worker (server membaca ulang laporan dari database lalu menulis ke Spreadsheet toko ini).
+    const syncToSheetsServer = async (date, auto) => {
+        try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/sheets/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: JSON.stringify({ date, auto: !!auto }) });
+            const d = await res.json().catch(() => ({}));
+            if (d.ok && d.written)
+                showToast(`Spreadsheet terupdate (${d.written} sel) 🟢`);
+            else if (d.ok && d.skipped) {
+                if (!auto)
+                    showToast(d.reason || 'Tidak ada yang dikirim.');
+            }
+            else if (d.ok === false)
+                showToast('⚠️ Spreadsheet belum terupdate: ' + String(d.error || d.reason || 'gagal').slice(0, 140));
+        }
+        catch (err) {
+            console.error(err);
+        }
+    };
+    const handleSendToSheets = async () => {
+        if (sendingSheets)
+            return;
+        setSendingSheets(true);
+        try {
+            await handleSaveToDevice();
+            await syncToSheetsServer(salesData.tanggal, false);
+        }
+        finally {
+            setSendingSheets(false);
         }
     };
     const syncToGoogleSheets = async (dataPayload) => {
@@ -8334,13 +8377,13 @@ Filling Matcha : ${inv.fillingMatcha || 0} pcs (${(numVal(inv.fillingMatcha) * 0
 *Ingredients & Powder* :
 UHT : ${inv.uht || 0} pcs
 Taro Powder : ${inv.taroPowder || 0} kg
-Coklat Powder : ${inv.coklatPowder || 0} pack
-Whipping Cream : ${inv.whippingCream || 0} pack
-NDC Powder : ${inv.ndcPowder || 0} pack
-Cheese Powder : ${inv.cheesePowder || 0} pack
+Coklat Powder : ${inv.coklatPowder || 0} kg
+Whipping Cream : ${inv.whippingCream || 0} kg
+NDC Powder : ${inv.ndcPowder || 0} kg
+Cheese Powder : ${inv.cheesePowder || 0} pcs
 Strawberry Konsentrat : ${inv.strawberryKonsentrat || 0} pcs
 Strawberry Flavoured Syrup : ${inv.strawberrySyrup || 0} botol
-Blueberry Konsentrat : ${inv.blueberryKonsentrat || 0} pack${customIngredientsLines ? '\n' + customIngredientsLines : ''}
+Blueberry Konsentrat : ${inv.blueberryKonsentrat || 0} pcs${customIngredientsLines ? '\n' + customIngredientsLines : ''}
 
 *Packaging & Operations* :
 Paper Pouch : ${inv.paperPouch || 0} pcs
@@ -8350,15 +8393,15 @@ Plastik UK 25 : ${inv.plastik25 || 0} pack
 Plastik UK 35 : ${inv.plastik35 || 0} pack
 Cupbler 22 Oz : ${inv.cupbler22 || 0} pcs
 Cuplid 22 Oz : ${inv.cuplid22 || 0} pcs
-Cup tray S : ${inv.cupTrayS || 0}
-Cup tray M : ${inv.cupTrayM || 0}
+Cup tray S : ${inv.cupTrayS || 0} pack
+Cup tray M : ${inv.cupTrayM || 0} pack
 Gloves M : ${inv.glovesM || 0} pack
 Gloves L : ${inv.glovesL || 0} pack
 Gloves XL : ${inv.glovesXL || 0} pack
-Trash Bag : ${inv.trashBag || 0} pack
+Trash Bag : ${inv.trashBag || 0} pcs
 Thermal Paper : ${inv.thermalPaper || 0} pcs
-Kuraflex hijau : ${inv.kuraflexHijau || 0} pack
-Kuraflex pink : ${inv.kuraflexPink || 0} pack
+Kuraflex Biru : ${inv.kuraflexHijau || 0} pack
+Kuraflex Merah : ${inv.kuraflexPink || 0} pack
 Kitchen Mask : ${inv.kitchenMask || 0} pack
 Tisu Kecil : ${inv.tisuKecil || 0} pack
 Tisu Besar : ${inv.tisuBesar || 0} pack${customPackagingLines ? '\n' + customPackagingLines : ''}
@@ -9952,6 +9995,7 @@ Daily inventory done✅
                                 emptyReportFieldsPreview.length,
                                 " field belum diisi."),
                             " Boleh disimpan dulu; wajib diisi (atau otomatis jadi 0) saat mau Kirim Telegram/WA."))),
+                    sheetsStatus.configured && sheetsStatus.mode === 'manual' && (React.createElement("button", { onClick: handleSendToSheets, disabled: sendingSheets, className: "w-full bg-emerald-500 disabled:opacity-60 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm hover:bg-emerald-400 transition-colors" }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet')),
                     React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2" },
                         React.createElement("button", { onClick: handleSaveToDevice, className: "bg-white text-indigo-950 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center space-x-2 shadow-sm hover:bg-slate-100 transition-colors" },
                             React.createElement("i", { "data-lucide": "cloud", className: "w-4 h-4 text-indigo-800" }),
@@ -10165,16 +10209,16 @@ Daily inventory done✅
                             React.createElement("label", { htmlFor: "inventoryData_taroPowder", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Taro Powder (kg)"),
                             React.createElement("input", { id: "inventoryData_taroPowder", type: "number", step: "0.1", value: inventoryData.taroPowder, onChange: (e) => setInventoryData({ ...inventoryData, taroPowder: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_coklatPowder", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Coklat Powder (pack)"),
+                            React.createElement("label", { htmlFor: "inventoryData_coklatPowder", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Coklat Powder (kg)"),
                             React.createElement("input", { id: "inventoryData_coklatPowder", type: "number", value: inventoryData.coklatPowder, onChange: (e) => setInventoryData({ ...inventoryData, coklatPowder: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_whippingCream", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Whipping Cream (pk)"),
+                            React.createElement("label", { htmlFor: "inventoryData_whippingCream", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Whipping Cream (kg)"),
                             React.createElement("input", { id: "inventoryData_whippingCream", type: "number", value: inventoryData.whippingCream, onChange: (e) => setInventoryData({ ...inventoryData, whippingCream: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_ndcPowder", className: "block text-xs font-semibold text-slate-600 mb-1" }, "NDC Powder (pack)"),
+                            React.createElement("label", { htmlFor: "inventoryData_ndcPowder", className: "block text-xs font-semibold text-slate-600 mb-1" }, "NDC Powder (kg)"),
                             React.createElement("input", { id: "inventoryData_ndcPowder", type: "number", value: inventoryData.ndcPowder, onChange: (e) => setInventoryData({ ...inventoryData, ndcPowder: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_cheesePowder", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Cheese Powder (pk)"),
+                            React.createElement("label", { htmlFor: "inventoryData_cheesePowder", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Cheese Powder (pcs)"),
                             React.createElement("input", { id: "inventoryData_cheesePowder", type: "number", value: inventoryData.cheesePowder, onChange: (e) => setInventoryData({ ...inventoryData, cheesePowder: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm", placeholder: "0" })),
                         React.createElement("div", null,
                             React.createElement("label", { htmlFor: "inventoryData_strawberryKonsentrat", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Strawberry Kons (pcs)"),
@@ -10183,7 +10227,7 @@ Daily inventory done✅
                             React.createElement("label", { htmlFor: "inventoryData_strawberrySyrup", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Strawberry Syrup (btl)"),
                             React.createElement("input", { id: "inventoryData_strawberrySyrup", type: "number", value: inventoryData.strawberrySyrup, onChange: (e) => setInventoryData({ ...inventoryData, strawberrySyrup: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_blueberryKonsentrat", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Blueberry Kons (pk)"),
+                            React.createElement("label", { htmlFor: "inventoryData_blueberryKonsentrat", className: "block text-xs font-semibold text-slate-600 mb-1" }, "Blueberry Kons (pcs)"),
                             React.createElement("input", { id: "inventoryData_blueberryKonsentrat", type: "number", value: inventoryData.blueberryKonsentrat, onChange: (e) => setInventoryData({ ...inventoryData, blueberryKonsentrat: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm", placeholder: "0" })),
                         customInventoryFields.filter(f => f.section === 'ingredients').map(f => (React.createElement("div", { key: f.id },
                             React.createElement("label", { htmlFor: `custom-field-${f.id}`, className: "block text-xs font-semibold text-slate-600 mb-1" },
@@ -10215,10 +10259,10 @@ Daily inventory done✅
                             React.createElement("label", { htmlFor: "inventoryData_cuplid22", className: "block text-slate-600 mb-1" }, "Cuplid 22 Oz (pcs)"),
                             React.createElement("input", { id: "inventoryData_cuplid22", type: "number", value: inventoryData.cuplid22, onChange: (e) => setInventoryData({ ...inventoryData, cuplid22: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_cupTrayS", className: "block text-slate-600 mb-1" }, "Cup Tray S (pcs)"),
+                            React.createElement("label", { htmlFor: "inventoryData_cupTrayS", className: "block text-slate-600 mb-1" }, "Cup Tray S (pack)"),
                             React.createElement("input", { id: "inventoryData_cupTrayS", type: "number", value: inventoryData.cupTrayS, onChange: (e) => setInventoryData({ ...inventoryData, cupTrayS: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_cupTrayM", className: "block text-slate-600 mb-1" }, "Cup Tray M (pcs)"),
+                            React.createElement("label", { htmlFor: "inventoryData_cupTrayM", className: "block text-slate-600 mb-1" }, "Cup Tray M (pack)"),
                             React.createElement("input", { id: "inventoryData_cupTrayM", type: "number", value: inventoryData.cupTrayM, onChange: (e) => setInventoryData({ ...inventoryData, cupTrayM: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })),
                         React.createElement("div", null,
                             React.createElement("label", { htmlFor: "inventoryData_glovesM", className: "block text-slate-600 mb-1" }, "Gloves M (pack)"),
@@ -10230,16 +10274,16 @@ Daily inventory done✅
                             React.createElement("label", { htmlFor: "inventoryData_glovesXL", className: "block text-slate-600 mb-1" }, "Gloves XL (pack)"),
                             React.createElement("input", { id: "inventoryData_glovesXL", type: "number", value: inventoryData.glovesXL, onChange: (e) => setInventoryData({ ...inventoryData, glovesXL: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_trashBag", className: "block text-slate-600 mb-1" }, "Trash Bag (pack)"),
+                            React.createElement("label", { htmlFor: "inventoryData_trashBag", className: "block text-slate-600 mb-1" }, "Trash Bag (pcs)"),
                             React.createElement("input", { id: "inventoryData_trashBag", type: "number", value: inventoryData.trashBag, onChange: (e) => setInventoryData({ ...inventoryData, trashBag: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })),
                         React.createElement("div", null,
                             React.createElement("label", { htmlFor: "inventoryData_thermalPaper", className: "block text-slate-600 mb-1" }, "Thermal Paper (pcs)"),
                             React.createElement("input", { id: "inventoryData_thermalPaper", type: "number", value: inventoryData.thermalPaper, onChange: (e) => setInventoryData({ ...inventoryData, thermalPaper: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_kuraflexHijau", className: "block text-slate-600 mb-1" }, "Kuraflex Hijau (pack)"),
+                            React.createElement("label", { htmlFor: "inventoryData_kuraflexHijau", className: "block text-slate-600 mb-1" }, "Kuraflex Biru (pack)"),
                             React.createElement("input", { id: "inventoryData_kuraflexHijau", type: "number", value: inventoryData.kuraflexHijau, onChange: (e) => setInventoryData({ ...inventoryData, kuraflexHijau: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })),
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "inventoryData_kuraflexPink", className: "block text-slate-600 mb-1" }, "Kuraflex Pink (pack)"),
+                            React.createElement("label", { htmlFor: "inventoryData_kuraflexPink", className: "block text-slate-600 mb-1" }, "Kuraflex Merah (pack)"),
                             React.createElement("input", { id: "inventoryData_kuraflexPink", type: "number", value: inventoryData.kuraflexPink, onChange: (e) => setInventoryData({ ...inventoryData, kuraflexPink: e.target.value }), className: "w-full px-3 py-1.5 border border-slate-300 rounded-lg", placeholder: "0" })),
                         React.createElement("div", null,
                             React.createElement("label", { htmlFor: "inventoryData_kitchenMask", className: "block text-slate-600 mb-1" }, "Kitchen Mask (pack)"),
@@ -11503,6 +11547,202 @@ function MiniTrafficCounter({ storeId, storeName }) {
         msg && React.createElement("p", { className: "text-[10px] text-rose-600 px-1 leading-tight" }, msg),
         React.createElement("a", { href: fullAppHref, className: "text-center text-[10px] text-slate-500 underline" }, "Buka aplikasi lengkap")));
 }
+// Barang stok yang ikut ke Spreadsheet: [key, nama di web, satuan input di web, faktor bawaan]. Faktor bawaan sama dengan laporan Telegram.
+const SHEETS_ITEMS = [
+    ['frozenDough', 'Frozen Dough', 'pcs', 1], ['toppingTaro', 'Topping Taro', 'pcs → kg', 0.5], ['fillingCoklat', 'Filling Coklat', 'pcs → kg', 0.5],
+    ['fillingVanilla', 'Filling Vanilla', 'pcs → kg', 0.5], ['fillingRaspberry', 'Filling Raspberry', 'pcs → kg', 0.5], ['fillingPeach', 'Filling Peach', 'pcs → kg', 0.5],
+    ['fillingNanas', 'Filling Nanas', 'pcs → kg', 0.5], ['fillingMatcha', 'Filling Matcha', 'pcs → kg', 0.5], ['uht', 'UHT', 'pcs', 1], ['taroPowder', 'Taro Powder', 'kg', 1],
+    ['coklatPowder', 'Coklat Powder', 'kg', 1], ['whippingCream', 'Whipping Cream', 'kg', 1], ['ndcPowder', 'NDC Powder', 'kg', 1], ['cheesePowder', 'Cheese Powder', 'pcs', 1],
+    ['strawberryKonsentrat', 'Strawberry Konsentrat', 'pcs', 1], ['strawberrySyrup', 'Strawberry Syrup', 'botol', 1], ['blueberryKonsentrat', 'Blueberry Konsentrat', 'pcs', 1],
+    ['paperPouch', 'Paper Pouch', 'pcs', 1], ['familyPack', 'Family Pack', 'pcs', 1], ['plastik20', 'Plastik UK 20', 'pack', 1], ['plastik25', 'Plastik UK 25', 'pack', 1],
+    ['plastik35', 'Plastik UK 35', 'pack', 1], ['cupbler22', 'Cupbler 22 oz', 'pcs', 1], ['cuplid22', 'Cup Lid 22 oz', 'pcs', 1], ['cupTrayS', 'Cup Tray S', 'pack', 1],
+    ['cupTrayM', 'Cup Tray M', 'pack', 1], ['glovesM', 'Gloves M', 'pack', 1], ['glovesL', 'Gloves L', 'pack', 1], ['glovesXL', 'Gloves XL', 'pack', 1], ['trashBag', 'Trash Bag', 'pcs', 1],
+    ['thermalPaper', 'Thermal Paper', 'pcs', 1], ['kuraflexHijau', 'Kuraflex Biru', 'pack', 1], ['kuraflexPink', 'Kuraflex Merah', 'pack', 1], ['kitchenMask', 'Kitchen Mask (Mouth Shield)', 'pack', 1],
+    ['tisuKecil', 'Tisu Kecil', 'pack', 1], ['tisuBesar', 'Tisu Besar', 'pack', 1],
+];
+function SheetsConfigPanel({ storeId, showToast }) {
+    const [tab, setTab] = useState('');
+    const [storeItems, setStoreItems] = useState({});
+    const [customFields, setCustomFields] = useState([]);
+    const [gs, setGs] = useState({ mode: 'manual', defaultSpreadsheetId: '', monthsText: '', items: {} });
+    const [busy, setBusy] = useState('');
+    const [result, setResult] = useState(null);
+    const toast = (m) => { if (showToast)
+        showToast(m); };
+    const extractId = (v) => { const m = String(v || '').match(/\/d\/([A-Za-z0-9_-]{20,80})/); return m ? m[1] : String(v || '').trim(); };
+    const idOk = (v) => /^[A-Za-z0-9_-]{20,80}$/.test(v);
+    useEffect(() => {
+        let off = false;
+        setTab('');
+        setStoreItems({});
+        setResult(null);
+        restOnce(db.ref(`stores/${storeId}/sheetsConfig`)).then((snap) => { const c = snap.val() || {}; if (!off) {
+            setTab(c.tab || '');
+            setStoreItems(c.items || {});
+        } }).catch(() => { });
+        return () => { off = true; };
+    }, [storeId]);
+    useEffect(() => {
+        let off = false;
+        restOnce(db.ref('sheetsSettings')).then((snap) => {
+            const g = snap.val() || {};
+            if (off)
+                return;
+            setGs({ mode: g.mode === 'auto' ? 'auto' : 'manual', defaultSpreadsheetId: g.defaultSpreadsheetId || '',
+                monthsText: Object.keys(g.months || {}).sort().map((k) => `${k} = ${g.months[k]}`).join('\n'), items: g.items || {} });
+        }).catch(() => { });
+        restOnce(db.ref('formSchemas/inventory')).then((snap) => {
+            const d = snap.val() || {};
+            if (!off)
+                setCustomFields(Object.keys(d).map((id) => ({ id, ...d[id] })).filter((f) => f && f.label && f.type !== 'text'));
+        }).catch(() => { });
+        return () => { off = true; };
+    }, []);
+    // Baris tabel: barang bawaan + field kustom (kustom: untuk toko ini hanya yang berlaku di toko ini).
+    const rowsFor = (scopeStore) => [...SHEETS_ITEMS, ...customFields
+            .filter((f) => !scopeStore || !Array.isArray(f.storeIds) || f.storeIds.length === 0 || f.storeIds.includes(storeId))
+            .map((f) => ['inv_' + f.id, `${f.label} (kustom)`, f.unit || 'pcs', 1])];
+    const cleanItems = (itemsObj, rows) => {
+        const out = {};
+        for (const [key] of rows) {
+            const c = (itemsObj || {})[key] || {};
+            const o = {};
+            if (c.enabled === false)
+                o.enabled = false;
+            const f = Number(String(c.factor === undefined ? '' : c.factor).replace(',', '.'));
+            if (c.factor !== undefined && c.factor !== '' && Number.isFinite(f) && f > 0 && f <= 100000)
+                o.factor = f;
+            if (String(c.label || '').trim())
+                o.label = String(c.label).trim().slice(0, 60);
+            if (Object.keys(o).length)
+                out[key] = o;
+        }
+        return out;
+    };
+    const saveTab = async () => {
+        const t = String(tab || '').trim().slice(0, 100);
+        if (!t) {
+            toast('Isi Nama Tab toko ini (persis seperti di Spreadsheet).');
+            return;
+        }
+        setBusy('tab');
+        try {
+            await restSet(db.ref(`stores/${storeId}/sheetsConfig`), { tab: t, items: cleanItems(storeItems, rowsFor(true)) });
+            setTab(t);
+            toast('Pengaturan Spreadsheet toko ini tersimpan.');
+        }
+        catch (err) {
+            console.error(err);
+            toast('Gagal menyimpan pengaturan toko ini.');
+        }
+        finally {
+            setBusy('');
+        }
+    };
+    const saveGlobal = async () => {
+        const def = extractId(gs.defaultSpreadsheetId);
+        if (def && !idOk(def)) {
+            toast('Link/ID Spreadsheet utama tidak valid.');
+            return;
+        }
+        const months = {};
+        for (const line of String(gs.monthsText || '').split('\n')) {
+            const t = line.trim();
+            if (!t)
+                continue;
+            const m = t.match(/^(\d{4}-\d{2})\s*[=:]\s*(.+)$/);
+            const id = m ? extractId(m[2]) : '';
+            if (!m || !idOk(id)) {
+                toast(`Baris bulan tidak valid: "${t.slice(0, 40)}". Contoh: 2026-11 = https://docs.google.com/spreadsheets/d/...`);
+                return;
+            }
+            months[m[1]] = id;
+        }
+        setBusy('global');
+        try {
+            await restSet(db.ref('sheetsSettings'), { mode: gs.mode === 'auto' ? 'auto' : 'manual', defaultSpreadsheetId: def, months, items: cleanItems(gs.items, rowsFor(false)) });
+            toast('Pengaturan umum Spreadsheet tersimpan.');
+        }
+        catch (err) {
+            console.error(err);
+            toast('Gagal menyimpan pengaturan umum.');
+        }
+        finally {
+            setBusy('');
+        }
+    };
+    const patchItem = (setter) => (key, patch) => setter((prev) => ({ ...(prev || {}), [key]: { ...((prev || {})[key] || {}), ...patch } }));
+    const test = async () => {
+        setBusy('test');
+        setResult(null);
+        try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/sheets/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: JSON.stringify({ storeId, date: todayWIB(), dryRun: true }) });
+            setResult(await res.json().catch(() => ({ ok: false, error: 'Respon tidak terbaca.' })));
+        }
+        catch (err) {
+            setResult({ ok: false, error: 'Tidak bisa terhubung ke server.' });
+        }
+        finally {
+            setBusy('');
+        }
+    };
+    const inp = 'w-full px-3 py-2 border border-slate-300 rounded-lg text-xs';
+    const lbl = 'block text-[10px] font-semibold text-slate-600 mb-1';
+    // Tabel barang. scopeStore=true: kosong = ikut pengaturan umum (angka abu-abu menunjukkan nilai umum yang berlaku).
+    const itemRows = (scopeStore) => rowsFor(scopeStore).map(([key, label, unit, def]) => {
+        const src = scopeStore ? storeItems : gs.items;
+        const setter = scopeStore ? setStoreItems : (fn) => setGs((p) => ({ ...p, items: fn(p.items) }));
+        const c = (src || {})[key] || {};
+        const g = (gs.items || {})[key] || {};
+        const effDef = g.factor !== undefined && g.factor !== '' ? g.factor : def;
+        return (React.createElement("div", { key: (scopeStore ? 's-' : 'g-') + key, className: "flex items-center gap-1.5 text-[11px] px-1 py-1 border-b border-slate-100" },
+            React.createElement("input", { type: "checkbox", checked: c.enabled !== false && !(scopeStore && g.enabled === false), disabled: scopeStore && g.enabled === false, onChange: (e) => patchItem(setter)(key, { enabled: e.target.checked }), "aria-label": `Kirim ${label}` }),
+            React.createElement("span", { className: "flex-1 min-w-0 leading-tight" }, `${label} `, React.createElement("span", { className: "text-slate-400" }, `(${unit})`)),
+            React.createElement("input", { type: "number", step: "any", min: "0", value: c.factor === undefined ? '' : c.factor, placeholder: String(scopeStore ? effDef : def), onChange: (e) => patchItem(setter)(key, { factor: e.target.value }), "aria-label": `Faktor ${label}`, className: "w-14 px-1 py-1 border border-slate-300 rounded text-right" }),
+            React.createElement("input", { value: c.label || '', placeholder: scopeStore && g.label ? g.label : "nama di sheet", onChange: (e) => patchItem(setter)(key, { label: e.target.value }), "aria-label": `Nama di Spreadsheet untuk ${label}`, className: "w-24 px-1 py-1 border border-slate-300 rounded" })));
+    });
+    return (React.createElement("div", { className: "bg-green-50 border border-green-200 rounded-xl p-4 space-y-3" },
+        React.createElement("h4", { className: "font-bold text-green-900 text-sm" }, "Sinkron Google Spreadsheet"),
+        React.createElement("p", { className: "text-[10px] text-slate-500" }, "Actual SOH, waste, dan penjualan dikirim ke tab toko ini. Spreadsheet harus bisa diedit oleh service account (dibagikan sebagai Editor, atau link dibuka untuk Editor)."),
+        React.createElement("div", null,
+            React.createElement("label", { htmlFor: "sheetsCfg_tab", className: lbl }, "Nama Tab toko ini (persis seperti di Spreadsheet)"),
+            React.createElement("input", { id: "sheetsCfg_tab", value: tab, onChange: (e) => setTab(e.target.value), placeholder: "Tarobun GPS", className: inp })),
+        React.createElement("details", { className: "bg-white border border-green-200 rounded-lg p-3" },
+            React.createElement("summary", { className: "text-xs font-bold text-green-900 cursor-pointer" }, "Faktor & nama barang khusus toko ini (opsional)"),
+            React.createElement("p", { className: "text-[10px] text-slate-500 my-2" }, "Kosongkan untuk mengikuti Pengaturan umum (angka abu-abu = nilai yang berlaku). Isi bila outlet ini berbeda, misalnya isi per pack lain atau nama baris di tab-nya berbeda. Nilai ke Spreadsheet = isian di web × faktor."),
+            React.createElement("div", { className: "max-h-72 overflow-y-auto border border-slate-100 rounded" }, itemRows(true))),
+        React.createElement("div", { className: "grid grid-cols-2 gap-2" },
+            React.createElement("button", { onClick: saveTab, disabled: !!busy, className: "bg-green-700 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg" }, busy === 'tab' ? 'Menyimpan...' : 'Simpan Toko Ini'),
+            React.createElement("button", { onClick: test, disabled: !!busy, className: "bg-white border border-green-700 text-green-800 disabled:opacity-50 text-xs font-bold py-2 rounded-lg" }, busy === 'test' ? 'Mengecek...' : 'Tes (tanpa menulis)')),
+        result && (React.createElement("div", { className: `text-[11px] rounded-lg p-2 space-y-1 ${result.ok && !result.skipped ? 'bg-white text-slate-700' : 'bg-red-50 text-red-700'}` },
+            result.ok && !result.skipped
+                ? React.createElement(React.Fragment, null,
+                    React.createElement("p", { className: "font-bold" }, `Siap menulis ${result.written} sel ke tab "${result.tab}" (blok ${result.columns.blok}, Actual SOH ${result.columns.actualSOH}, Waste ${result.columns.waste}). Mode: ${result.mode === 'auto' ? 'otomatis' : 'manual'}.`),
+                    React.createElement("div", { className: "max-h-40 overflow-y-auto border border-slate-100 rounded p-1" }, (result.plan || []).filter((x) => x.raw !== undefined).map((x) => React.createElement("p", { key: x.cell }, `${x.cell} ${x.sheetName || x.label}: ${x.raw} × ${x.factor} = ${x.value} ${x.sheetUnit || ''}`))),
+                    result.skippedFormula && result.skippedFormula.length > 0 && React.createElement("p", null, `Dilewati karena rumus: ${result.skippedFormula.join(', ')}`),
+                    result.unmatched && result.unmatched.length > 0 && React.createElement("p", { className: "text-amber-700" }, `Tidak ada barisnya di Spreadsheet: ${result.unmatched.join(', ')}`))
+                : (result.skipped ? result.reason : (result.error || 'Gagal.')))),
+        React.createElement("details", { className: "bg-white border border-green-200 rounded-lg p-3" },
+            React.createElement("summary", { className: "text-xs font-bold text-green-900 cursor-pointer" }, "Pengaturan umum (berlaku untuk semua toko)"),
+            React.createElement("div", { className: "space-y-3 mt-3" },
+                React.createElement("div", null,
+                    React.createElement("label", { htmlFor: "sheetsGs_mode", className: lbl }, "Cara pengiriman"),
+                    React.createElement("select", { id: "sheetsGs_mode", value: gs.mode, onChange: (e) => setGs({ ...gs, mode: e.target.value }), className: inp },
+                        React.createElement("option", { value: "manual" }, "Manual: toko menekan tombol \"Kirim ke Spreadsheet\""),
+                        React.createElement("option", { value: "auto" }, "Otomatis: langsung terkirim saat toko menyimpan laporan"))),
+                React.createElement("div", null,
+                    React.createElement("label", { htmlFor: "sheetsGs_def", className: lbl }, "Spreadsheet utama (link atau ID)"),
+                    React.createElement("input", { id: "sheetsGs_def", value: gs.defaultSpreadsheetId, onChange: (e) => setGs({ ...gs, defaultSpreadsheetId: e.target.value }), placeholder: "https://docs.google.com/spreadsheets/d/...", className: inp + ' font-mono' })),
+                React.createElement("div", null,
+                    React.createElement("label", { htmlFor: "sheetsGs_months", className: lbl }, "Spreadsheet per bulan (opsional, satu baris per bulan)"),
+                    React.createElement("textarea", { id: "sheetsGs_months", rows: 3, value: gs.monthsText, onChange: (e) => setGs({ ...gs, monthsText: e.target.value }), placeholder: "2026-11 = https://docs.google.com/spreadsheets/d/...\n2026-12 = ...", className: inp + ' font-mono' }),
+                    React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Bila bulan laporan ada di daftar ini, Spreadsheet bulan itu yang dipakai; selain itu memakai Spreadsheet utama.")),
+                React.createElement("div", null,
+                    React.createElement("p", { className: lbl }, "Barang stok (semua toko): kirim?, faktor konversi, nama di Spreadsheet"),
+                    React.createElement("p", { className: "text-[10px] text-slate-500 mb-1" }, "Nilai ke Spreadsheet = isian di web × faktor. Contoh: Filling diisi 42 pcs, faktor 0.5, menjadi 21 (Kg). Kosongkan faktor untuk nilai bawaan (angka abu-abu). \"Nama di Spreadsheet\" hanya diisi bila beda dari nama bawaan. Field inventori kustom ikut dikirim bila namanya sama dengan baris di Spreadsheet."),
+                    React.createElement("div", { className: "max-h-72 overflow-y-auto border border-slate-100 rounded" }, itemRows(false))),
+                React.createElement("button", { onClick: saveGlobal, disabled: !!busy, className: "w-full bg-green-700 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg" }, busy === 'global' ? 'Menyimpan...' : 'Simpan Pengaturan Umum')))));
+}
 function StoreTrafficPanel({ storeId, storeName, role, showToast }) {
     const isAdmin = role === 'admin';
     const emptyLoc = { name: '', address: '', type: '', lat: '', lng: '', openHour: '10', closeHour: '22', notes: '' };
@@ -12116,11 +12356,12 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
         return e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-5 text-xs text-slate-500' }, 'Modul Laporan Dough belum termuat. Muat ulang halaman.');
     }
     const storeBase = `stores/${storeId}`;
-    const blankForm = () => ({ pelapor: '', kodeEd: '', edFd: '', notes: '', remind: true, photos: {} });
+    const blankForm = () => ({ pelapor: '', kodeProduk: '', edFd: '', nopol: '', notes: '', remind: true, photos: {} });
     const [form, setForm] = useDraftState(storeId, 'dough_report', blankForm, { maxAgeHours: 20 });
     const [imgs, setImgs] = useState({});
     const [busy, setBusy] = useState('');
     const [sending, setSending] = useState(false);
+    const [aiBusy, setAiBusy] = useState(false);
     const [now, setNow] = useState(Date.now());
     const [view, setView] = useState('form');
     const [history, setHistory] = useState([]);
@@ -12185,6 +12426,7 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
     // ---- ambil foto ----
     const askPhoto = (slotKey) => {
         if (busy || sending) return;
+        if (!form.kodeProduk) { showToast('⚠️ Pilih Kode Produk (Dough - S1/S2/S3) dulu sebelum mengambil foto.'); return; }
         pendingSlot.current = slotKey;
         if (fileRef.current) { fileRef.current.value = ''; fileRef.current.click(); }
     };
@@ -12199,14 +12441,21 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
         const slot = slotMap[slotKey];
         setBusy(slotKey);
         try {
-            const ts = Date.now();
-            const dataUrl = await stampDoughPhoto(file, [`${slot.stage} - ${slot.label}`, `${storeName || ''}${form.kodeEd ? ' | ED ' + form.kodeEd : ''}`, `${DR.fmtDT(ts)} WIB`]);
+            let ts = Date.now(), sig = '';
+            try {
+                const sr = await __apiFetch(`${WORKER_BASE}/api/dough/stamp`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: JSON.stringify({ slot: slotKey }) });
+                const sd = await sr.json().catch(() => ({}));
+                if (sr.ok && sd.ok && sd.ts && sd.sig) { ts = sd.ts; sig = sd.sig; }
+                else showToast('⚠️ Jam server tidak didapat. Foto ini ditandai TIDAK terverifikasi; ulangi saat sinyal bagus.');
+            }
+            catch (err) { showToast('⚠️ Jam server tidak didapat. Foto ini ditandai TIDAK terverifikasi; ulangi saat sinyal bagus.'); }
+            const dataUrl = await stampDoughPhoto(file, [`${slot.stage} - ${slot.label}`, `${storeName || ''}${form.kodeProduk ? ' | ' + form.kodeProduk : ''}${form.nopol ? ' | ' + form.nopol : ''}`, `${DR.fmtDT(ts)} WIB`]);
             try { await DoughLocal.put(storeId, slotKey, dataUrl); }
             catch (err) {
                 if (!warnedRef.current) { warnedRef.current = true; showToast('⚠️ Penyimpanan perangkat tidak tersedia. Jangan tutup aplikasi sebelum laporan terkirim.'); }
             }
             setImgs((prev) => ({ ...prev, [slotKey]: dataUrl }));
-            setForm((prev) => ({ ...prev, photos: { ...(prev.photos || {}), [slotKey]: { ts } } }));
+            setForm((prev) => ({ ...prev, photos: { ...(prev.photos || {}), [slotKey]: sig ? { ts, sig } : { ts } } }));
         }
         catch (err) {
             showToast('⚠️ ' + ((err && err.message) || 'Gagal memproses foto. Coba lagi.'));
@@ -12233,7 +12482,7 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
     // ---- kirim laporan ----
     const handleSend = async () => {
         if (sending || busy) return;
-        const info = !String(form.pelapor || '').trim() ? 'Nama pelapor' : !String(form.kodeEd || '').trim() ? 'Kode ED' : !String(form.edFd || '').trim() ? 'ED FD' : '';
+        const info = !String(form.pelapor || '').trim() ? 'Nama pelapor' : !DR.PRODUCTS.includes(form.kodeProduk) ? 'Kode Produk' : !String(form.edFd || '').trim() ? 'ED FD' : !DR.validNopol(DR.normalizeNopol(form.nopol)) ? 'Nopol mobil pengiriman (contoh: B 1234 ABC)' : '';
         if (info) { showToast(`⚠️ Isi ${info} dulu.`); return; }
         const missing = DR.SLOTS.filter((s) => !photos[s.k]);
         if (missing.length) { showToast(`⚠️ Masih ${missing.length} foto belum diambil. Berikutnya: ${missing[0].label}`); return; }
@@ -12241,10 +12490,24 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
             showToast('⚠️ Urutan waktu foto tidak wajar (foto akhir harus setelah foto awal). Ambil ulang foto yang salah.');
             return;
         }
+        const nowChk = Date.now();
+        if (DR.SLOTS.some((s) => !Number.isFinite(photos[s.k].ts) || (!photos[s.k].sig && photos[s.k].ts > nowChk + 120000) || nowChk - photos[s.k].ts > 24 * 3600 * 1000)) {
+            showToast('⚠️ Jam foto tidak wajar (di masa depan atau lebih dari 24 jam). Periksa jam HP lalu ambil ulang foto yang salah.');
+            return;
+        }
         setSending(true);
         try {
             const nowMs = Date.now();
-            const rep = { storeName: storeName || storeId, pelapor: String(form.pelapor).trim(), kodeEd: String(form.kodeEd).trim(), edFd: String(form.edFd).trim(), notes: String(form.notes || '').trim(), createdAt: nowMs, photos };
+            const rep = { storeName: storeName || storeId, pelapor: String(form.pelapor).trim(), kodeProduk: String(form.kodeProduk).trim(), edFd: String(form.edFd).trim(), nopol: DR.normalizeNopol(form.nopol).trim(), notes: String(form.notes || '').trim(), createdAt: nowMs, photos };
+            // Verifikasi jam foto ke server (server juga mengirim pesan VERIFIKASI + kode segel ke Telegram toko).
+            try {
+                const ph = {}; DR.SLOTS.forEach((s) => { ph[s.k] = { ts: photos[s.k].ts, sig: photos[s.k].sig || '' }; });
+                const ar = await __apiFetch(`${WORKER_BASE}/api/dough/attest`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: JSON.stringify({ kodeProduk: rep.kodeProduk, nopol: rep.nopol, photos: ph }) });
+                const ad = await ar.json().catch(() => ({}));
+                if (ar.ok && ad.ok) { rep.seal = ad.seal; rep.verified = !!ad.allVerified; }
+            }
+            catch (err) { console.error('Verifikasi waktu server gagal:', err); }
+            if (!rep.verified) showToast('⚠️ Waktu foto tidak seluruhnya terverifikasi server. Laporan tetap dikirim dengan penanda TIDAK TERVERIFIKASI.');
             const images = await collectImages();
             const pdf = DR.buildPdf(rep, images);
             const caption = DR.buildCaption(rep, ev, parseCcUsernames(config && config.telegramCc), nowMs);
@@ -12261,7 +12524,7 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
             const sum = (k) => ({ sec: ev[k].sec === null ? null : ev[k].sec, status: ev[k].status });
             const times = {}; DR.SLOTS.forEach((s) => { times[s.k] = photos[s.k].ts; });
             // Server hanya menerima RINGKASAN (tanpa foto) untuk riwayat.
-            try { await restSet(db.ref(`${storeBase}/doughReports/${nowMs}`), { id: String(nowMs), createdAt: nowMs, storeName: rep.storeName, pelapor: rep.pelapor, kodeEd: rep.kodeEd, edFd: rep.edFd, notes: rep.notes, times, result: { thaw: sum('thaw'), proof: sum('proof'), rest: sum('rest'), bad: ev.bad }, sentToTelegram: true }); }
+            try { await restSet(db.ref(`${storeBase}/doughReports/${nowMs}`), { id: String(nowMs), createdAt: nowMs, storeName: rep.storeName, pelapor: rep.pelapor, kodeProduk: rep.kodeProduk, edFd: rep.edFd, nopol: rep.nopol, notes: rep.notes, seal: rep.seal || '', verified: !!rep.verified, times, result: { thaw: sum('thaw'), proof: sum('proof'), rest: sum('rest'), bad: ev.bad }, sentToTelegram: true }); }
             catch (err) { console.error('Riwayat Laporan Dough gagal disimpan:', err); }
             DoughLocal.clearSlots(storeId, DR.SLOTS.map((s) => s.k)).catch(() => { });
             setImgs({});
@@ -12274,6 +12537,30 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
             showToast('⚠️ ' + ((err && err.name === 'AbortError') ? 'Waktu habis saat mengirim. Periksa sinyal lalu coba lagi.' : ((err && err.message) || 'Gagal mengirim laporan.')));
         }
         finally { setSending(false); }
+    };
+    // ---- keterangan dibantu AI (opsional; pelapor tetap bisa mengetik sendiri) ----
+    const handleAiNote = async () => {
+        if (aiBusy || sending) return;
+        const nopol = DR.normalizeNopol(form.nopol).trim();
+        const brief = (k) => ({ sec: ev[k].sec, status: ev[k].status });
+        setAiBusy(true);
+        try {
+            const res = await __apiFetch(`${WORKER_BASE}/api/ai/dough-note`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() },
+                body: JSON.stringify({ kodeProduk: form.kodeProduk || '', nopol, thaw: brief('thaw'), proof: brief('proof'), rest: brief('rest'), draft: String(form.notes || '').slice(0, 200) }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (res.status === 429) { showToast('⏳ ' + (d.error || 'Tunggu beberapa detik lalu coba lagi.')); return; }
+            if (res.ok && d.ok && d.text) {
+                setField('notes', String(d.text).slice(0, 300));
+                showToast(d.source === 'ai' ? '✨ Keterangan dibuat AI. Periksa dan ubah bila perlu.' : 'Keterangan disusun dari data laporan. Periksa dan ubah bila perlu.');
+            } else throw new Error('ai');
+        }
+        catch (err) {
+            setField('notes', DR.suggestNote({ kodeProduk: form.kodeProduk, nopol }, ev));
+            showToast('AI tidak tersedia, keterangan disusun dari data laporan. Periksa dan ubah bila perlu.');
+        }
+        finally { setAiBusy(false); }
     };
     const loadHistory = async () => {
         setHistLoading(true);
@@ -12328,16 +12615,22 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
         e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-3' },
             e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Store'), e('div', { className: 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700' }, storeName || storeId)),
             e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Nama pelapor'), e('input', { value: form.pelapor || '', onChange: (x) => setField('pelapor', x.target.value.slice(0, 60)), placeholder: 'Nama lengkap', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' })),
+            e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Kode Produk (jenis dough)'),
+                e('div', { className: 'grid grid-cols-3 gap-2' }, DR.PRODUCTS.map((pr) => e('button', { key: pr, type: 'button', onClick: () => setField('kodeProduk', pr), 'aria-pressed': form.kodeProduk === pr, className: `py-2 rounded-xl text-xs font-bold border ${form.kodeProduk === pr ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-slate-700 border-slate-300'}` }, pr)))),
             e('div', { className: 'grid grid-cols-2 gap-3' },
-                e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Kode ED'), e('input', { value: form.kodeEd || '', onChange: (x) => setField('kodeEd', x.target.value.slice(0, 40)), placeholder: 'Kode ED', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' })),
-                e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'ED FD'), e('input', { value: form.edFd || '', onChange: (x) => setField('edFd', x.target.value.slice(0, 40)), placeholder: 'ED FD', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' }))),
+                e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'ED FD'), e('input', { value: form.edFd || '', onChange: (x) => setField('edFd', x.target.value.slice(0, 40)), placeholder: 'ED FD', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' })),
+                e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Nopol mobil pengiriman'), e('input', { value: form.nopol || '', onChange: (x) => setField('nopol', DR.normalizeNopol(x.target.value)), placeholder: 'B 1234 ABC', autoCapitalize: 'characters', autoComplete: 'off', maxLength: 12, className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm uppercase' }))),
             e('label', { className: 'flex items-center gap-2 text-xs text-slate-600' }, e('input', { type: 'checkbox', checked: form.remind !== false, onChange: (x) => setField('remind', x.target.checked) }), 'Bunyikan pengingat timer (aplikasi harus tetap terbuka)'),
             (window.Notification && Notification.permission === 'default') ? e('button', { onClick: () => { try { Notification.requestPermission(); } catch (err) { } }, className: 'text-[11px] font-bold text-purple-700' }, '🔔 Izinkan notifikasi pengingat') : null),
         DOUGH_STAGES.map(stageCard),
         resultCard,
         e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4' },
-            e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Catatan (opsional)'),
-            e('textarea', { value: form.notes || '', onChange: (x) => setField('notes', x.target.value.slice(0, 300)), rows: 3, placeholder: 'Mis. penyebab proofing kurang lama', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' })),
+            e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Keterangan (opsional)'),
+            e('textarea', { value: form.notes || '', onChange: (x) => setField('notes', x.target.value.slice(0, 300)), rows: 3, placeholder: 'Isi sendiri, mis. penyebab proofing kurang lama, atau tekan tombol bantuan AI', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' }),
+            e('div', { className: 'flex items-center justify-between mt-2 gap-2' },
+                e('button', { type: 'button', onClick: handleAiNote, disabled: aiBusy || sending, className: 'text-[11px] font-bold px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 disabled:opacity-50' }, aiBusy ? 'Menyusun...' : '✨ Bantu tulis dengan AI'),
+                e('span', { className: 'text-[10px] text-slate-400' }, `${(form.notes || '').length}/300`)),
+            e('p', { className: 'text-[10px] text-slate-400 mt-1' }, 'AI hanya memakai data durasi, kode produk & nopol (tanpa foto). Selalu periksa hasilnya sebelum dikirim.')),
         e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-3' },
             e('p', { className: 'text-xs text-slate-600' }, `Foto terisi ${doneCount} dari ${DR.SLOTS.length}. Setelah dikirim, laporan PDF otomatis masuk ke grup Telegram toko${parseCcUsernames(config && config.telegramCc).length ? ' dengan CC ' + parseCcUsernames(config && config.telegramCc).map((u) => '@' + u).join(' ') : ' (CC Store Leader belum diatur di pengaturan Telegram toko)'}.`),
             e('button', { onClick: handleSend, disabled: sending || !!busy, className: 'w-full py-3 rounded-xl bg-purple-600 text-white font-bold text-sm disabled:opacity-50' }, sending ? 'Membuat PDF & mengirim...' : '📤 Kirim Laporan ke Telegram'),
@@ -12346,7 +12639,7 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
         histLoading ? e('p', { className: 'text-xs text-slate-500 text-center py-6' }, 'Memuat riwayat...') : null,
         (!histLoading && !history.length) ? e('p', { className: 'text-xs text-slate-500 text-center py-6' }, 'Belum ada laporan dough yang terkirim.') : null,
         history.map((r) => e('div', { key: r.id, className: 'bg-white rounded-2xl border border-slate-200 p-4' },
-            e('div', { className: 'flex items-start justify-between gap-2' }, e('div', null, e('p', { className: 'text-sm font-bold text-slate-800' }, `ED ${r.kodeEd || '-'} - ${r.edFd || '-'}`), e('p', { className: 'text-[11px] text-slate-500' }, `${DR.fmtDT(r.createdAt)} WIB - ${r.pelapor || '-'}`)),
+            e('div', { className: 'flex items-start justify-between gap-2' }, e('div', null, e('p', { className: 'text-sm font-bold text-slate-800' }, `${r.kodeProduk || (r.kodeEd ? 'ED ' + r.kodeEd : '-')} - ED FD ${r.edFd || '-'}`), e('p', { className: 'text-[11px] text-slate-500' }, `${DR.fmtDT(r.createdAt)} WIB - ${r.pelapor || '-'}${r.nopol ? ' - ' + r.nopol : ''}`)),
                 e('span', { className: `text-[10px] font-bold px-2 py-1 rounded-full ${r.result && r.result.bad ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}` }, r.result && r.result.bad ? `${r.result.bad} tahap tidak sesuai` : 'Sesuai standar')),
             r.result ? e('p', { className: 'text-[11px] text-slate-600 mt-2' }, `Thawing ${DR.fmtDur(r.result.thaw && r.result.thaw.sec)} | Proofing ${DR.fmtDur(r.result.proof && r.result.proof.sec)} | Resting ${DR.fmtDur(r.result.rest && r.result.rest.sec)}`) : null,
             e('p', { className: 'text-[10px] text-slate-400 mt-2' }, 'Dokumen PDF lengkap beserta foto ada di grup Telegram toko.'))));

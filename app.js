@@ -7721,33 +7721,33 @@ function StoreApp({ storeId, storeName, onLogout }) {
         { key: 'fillingMatcha', label: 'Filling Matcha', unit: 'kg' },
     ];
     const KEDATANGAN_BARANG_UMUM_ITEMS = [
-        { key: 'whippingCream', label: 'Whipping Cream', unit: 'pcs' },
-        { key: 'ndcPowder', label: 'NDC Powder', unit: 'pack' },
+        { key: 'whippingCream', label: 'Whipping Cream', unit: 'kg' },
+        { key: 'ndcPowder', label: 'NDC Powder', unit: 'kg' },
         { key: 'PaperPouch', label: 'Paper Pouch', unit: 'pcs' },
-        { key: 'familyPack', label: 'Family Pack', unit: 'pack' },
-        { key: 'cupLid22', label: 'Cup Lid 22 oz', unit: 'pack' },
-        { key: 'cupbler22', label: 'Cupbler 22 oz', unit: 'pack' },
-        { key: 'thermalPaper', label: 'Thermal Paper', unit: 'pack' },
+        { key: 'familyPack', label: 'Family Pack', unit: 'pcs' },
+        { key: 'cupLid22', label: 'Cup Lid 22 oz', unit: 'pcs' },
+        { key: 'cupbler22', label: 'Cupbler 22 oz', unit: 'pcs' },
+        { key: 'thermalPaper', label: 'Thermal Paper', unit: 'pcs' },
         { key: 'plastikUK20', label: 'Plastik UK 20', unit: 'pack' },
         { key: 'plastikUK25', label: 'Plastik UK 25', unit: 'pack' },
         { key: 'plastikUK35', label: 'Plastik UK 35', unit: 'pack' },
-        { key: 'TrashBag', label: 'Trash Bag', unit: 'pack' },
-        { key: 'strawberrySyrup', label: 'Strawberry Syrup', unit: 'kg' },
+        { key: 'TrashBag', label: 'Trash Bag', unit: 'pcs' },
+        { key: 'strawberrySyrup', label: 'Strawberry Syrup', unit: 'pcs' },
         { key: 'konsentratStrawberry', label: 'Konsentrat Strawberry', unit: 'pcs' },
-        { key: 'konsentratBlueberry', label: 'Konsentrat Blueberry', unit: 'kg' },
-        { key: 'cheeseFoamPowder', label: 'Cheese Foam Powder', unit: 'pack' },
+        { key: 'konsentratBlueberry', label: 'Konsentrat Blueberry', unit: 'pcs' },
+        { key: 'cheeseFoamPowder', label: 'Cheese Foam Powder', unit: 'pcs' },
         { key: 'kuraflexMerah', label: 'Kuraflex Merah', unit: 'pack' },
-        { key: 'kuraflexHijau', label: 'Kuraflex Hijau', unit: 'pack' },
+        { key: 'kuraflexHijau', label: 'Kuraflex Biru', unit: 'pack' },
         { key: 'tissueSmall', label: 'Tissue Small', unit: 'pack' },
         { key: 'tissueLarge', label: 'Tissue Large', unit: 'pack' },
         { key: 'uht', label: 'UHT', unit: 'pcs' },
-        { key: 'coklatPowder', label: 'Coklat Powder', unit: 'pack' },
-        { key: 'cupTrayS', label: 'Cup Tray S', unit: 'pcs' },
-        { key: 'cupTrayM', label: 'Cup Tray M', unit: 'pcs' },
+        { key: 'coklatPowder', label: 'Coklat Powder', unit: 'kg' },
+        { key: 'cupTrayS', label: 'Cup Tray S', unit: 'pack' },
+        { key: 'cupTrayM', label: 'Cup Tray M', unit: 'pack' },
         { key: 'glovesM', label: 'Gloves M', unit: 'pack' },
         { key: 'glovesL', label: 'Gloves L', unit: 'pack' },
         { key: 'glovesXL', label: 'Gloves XL', unit: 'pack' },
-        { key: 'kuraflexPink', label: 'Kuraflex Pink', unit: 'pack' },
+        { key: 'kuraflexPink', label: 'Kuraflex Merah (Pink)', unit: 'pack' },
         { key: 'kitchenMask', label: 'Kitchen Mask', unit: 'pack' },
     ];
     const kedatanganExtraItems = (customInventoryFields || [])
@@ -8182,9 +8182,9 @@ function StoreApp({ storeId, storeName, onLogout }) {
         }
     };
     // Sinkron via Worker (server membaca ulang laporan dari database lalu menulis ke Spreadsheet toko ini).
-    const syncToSheetsServer = async (date, auto) => {
+    const syncToSheetsServer = async (date, auto, parts) => {
         try {
-            const res = await __apiFetch(`${WORKER_BASE}/api/sheets/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: JSON.stringify({ date, auto: !!auto }) });
+            const res = await __apiFetch(`${WORKER_BASE}/api/sheets/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: JSON.stringify({ date, auto: !!auto, ...(parts ? { parts } : {}) }) });
             const d = await res.json().catch(() => ({}));
             if (d.ok && d.written)
                 showToast(`Spreadsheet terupdate (${d.written} sel) 🟢`);
@@ -8201,17 +8201,20 @@ function StoreApp({ storeId, storeName, onLogout }) {
     };
     // Tombol "Simpan & Kirim ke Spreadsheet": SELALU tampil. "Simpan di Cloud" tetap hanya menyimpan ke Cloud (mode manual).
     // Bila admin belum mengatur Spreadsheet toko ini, menekan tombol hanya menampilkan pesan penjelasan.
-    const handleSendToSheets = async () => {
-        if (sendingSheets)
-            return;
+    const ensureSheetsReady = async () => {
         let st = sheetsStatus;
         if (!st.configured) {
             st = (await loadSheetsStatus()) || st;
             if (!st.configured) {
                 showToast('⚠️ Spreadsheet toko ini belum diatur admin (Nama Tab + Spreadsheet utama), atau server belum diperbarui.');
-                return;
+                return false;
             }
         }
+        return true;
+    };
+    const handleSendToSheets = async () => {
+        if (sendingSheets || !(await ensureSheetsReady()))
+            return;
         setSendingSheets(true);
         try {
             await handleSaveToDevice({ skipSheets: true });
@@ -8221,7 +8224,19 @@ function StoreApp({ storeId, storeName, onLogout }) {
             setSendingSheets(false);
         }
     };
-    const renderSheetsButton = (className) => React.createElement("button", { onClick: handleSendToSheets, disabled: sendingSheets, className, style: { opacity: sendingSheets ? 0.6 : (sheetsStatus.configured ? 1 : 0.75) } }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet');
+    // Datang Barang: simpan ke Riwayat, lalu isi kolom "Tr In (Supplier)" pada tanggal kedatangan.
+    const handleSendKedatanganToSheets = async () => {
+        if (sendingSheets || isSavingKedatangan || !(await ensureSheetsReady()))
+            return;
+        setSendingSheets(true);
+        try {
+            await handleSaveKedatangan({ sheets: true });
+        }
+        finally {
+            setSendingSheets(false);
+        }
+    };
+    const renderSheetsButton = (className, kind) => React.createElement("button", { onClick: kind === 'kedatangan' ? handleSendKedatanganToSheets : handleSendToSheets, disabled: sendingSheets, className, style: { opacity: sendingSheets ? 0.6 : (sheetsStatus.configured ? 1 : 0.75) } }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet');
     const syncToGoogleSheets = async (dataPayload) => {
         try {
             await fetch(config.googleAppScriptUrl, {
@@ -8596,7 +8611,8 @@ Daily inventory done✅
         Terima kasih 🙏🏻`;
         return text;
     };
-    const handleSaveKedatangan = async () => {
+    const handleSaveKedatangan = async (opts) => {
+        const sheetsDate = kedatanganForm.tanggal;
         const hasKhusus = KEDATANGAN_KOP_KHUSUS_ITEMS.some(item => numVal(getKhususItemValue(kedatanganForm.items, item.key).jumlah) > 0);
         const hasUmum = kedatanganUmumItems.some(item => numVal(kedatanganForm.items[item.key]) > 0);
         const hasTidakSesuai = kedatanganForm.tidakSesuai && kedatanganForm.tidakSesuai.length > 0;
@@ -8653,6 +8669,10 @@ Daily inventory done✅
                 return [...withoutDup, { ...payload, firebaseKey: now.toString() }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             });
             handleResetKedatanganForm();
+            if (opts && opts.sheets === true)
+                await syncToSheetsServer(sheetsDate, false, ['kedatangan']);
+            else
+                syncToSheetsServer(sheetsDate, true, ['kedatangan']);
         }
         catch (error) {
             console.error('Gagal menyimpan data kedatangan barang. Detail:', error);
@@ -10595,6 +10615,7 @@ Daily inventory done✅
                         React.createElement("button", { onClick: handleSaveKedatangan, disabled: isSavingKedatangan, className: "flex-1 bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2" },
                             React.createElement("i", { "data-lucide": isSavingKedatangan ? 'loader' : 'save', className: `w-4 h-4 ${isSavingKedatangan ? 'animate-spin' : ''}` }),
                             React.createElement("span", null, isSavingKedatangan ? 'Menyimpan...' : 'Simpan ke Riwayat')),
+                        renderSheetsButton("flex-1 bg-emerald-500 text-white font-bold py-3 rounded-xl hover:bg-emerald-600 transition-colors", 'kedatangan'),
                         React.createElement("button", { onClick: () => handleSendKedatanganToTelegram(kedatanganForm), className: "bg-sky-500 hover:bg-sky-400 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-xs sm:text-sm" },
                             React.createElement("i", { "data-lucide": "send", className: "w-4 h-4" }),
                             React.createElement("span", null, "Kirim Telegram")))),
@@ -11634,6 +11655,9 @@ function SheetsConfigPanel({ storeId, showToast }) {
             const f = Number(String(c.factor === undefined ? '' : c.factor).replace(',', '.'));
             if (c.factor !== undefined && c.factor !== '' && Number.isFinite(f) && f > 0 && f <= 100000)
                 o.factor = f;
+            const kf = Number(String(c.kdtFactor === undefined ? '' : c.kdtFactor).replace(',', '.'));
+            if (c.kdtFactor !== undefined && c.kdtFactor !== '' && Number.isFinite(kf) && kf > 0 && kf <= 100000)
+                o.kdtFactor = kf;
             if (String(c.label || '').trim())
                 o.label = String(c.label).trim().slice(0, 60);
             if (Object.keys(o).length)
@@ -11720,7 +11744,8 @@ function SheetsConfigPanel({ storeId, showToast }) {
         return (React.createElement("div", { key: (scopeStore ? 's-' : 'g-') + key, className: "flex items-center gap-1.5 text-[11px] px-1 py-1 border-b border-slate-100" },
             React.createElement("input", { type: "checkbox", checked: c.enabled !== false && !(scopeStore && g.enabled === false), disabled: scopeStore && g.enabled === false, onChange: (e) => patchItem(setter)(key, { enabled: e.target.checked }), "aria-label": `Kirim ${label}` }),
             React.createElement("span", { className: "flex-1 min-w-0 leading-tight" }, `${label} `, React.createElement("span", { className: "text-slate-400" }, `(${unit})`)),
-            React.createElement("input", { type: "number", step: "any", min: "0", value: c.factor === undefined ? '' : c.factor, placeholder: String(scopeStore ? effDef : def), onChange: (e) => patchItem(setter)(key, { factor: e.target.value }), "aria-label": `Faktor ${label}`, className: "w-14 px-1 py-1 border border-slate-300 rounded text-right" }),
+            React.createElement("input", { type: "number", step: "any", min: "0", value: c.factor === undefined ? '' : c.factor, placeholder: String(scopeStore ? effDef : def), onChange: (e) => patchItem(setter)(key, { factor: e.target.value }), "aria-label": `Faktor stok ${label}`, className: "w-12 px-1 py-1 border border-slate-300 rounded text-right" }),
+            React.createElement("input", { type: "number", step: "any", min: "0", value: c.kdtFactor === undefined ? '' : c.kdtFactor, placeholder: String(scopeStore && g.kdtFactor ? g.kdtFactor : 1), onChange: (e) => patchItem(setter)(key, { kdtFactor: e.target.value }), "aria-label": `Faktor datang ${label}`, className: "w-12 px-1 py-1 border border-slate-300 rounded text-right" }),
             React.createElement("input", { value: c.label || '', placeholder: scopeStore && g.label ? g.label : "nama di sheet", onChange: (e) => patchItem(setter)(key, { label: e.target.value }), "aria-label": `Nama di Spreadsheet untuk ${label}`, className: "w-24 px-1 py-1 border border-slate-300 rounded" })));
     });
     return (React.createElement("div", { className: "bg-green-50 border border-emerald-200 rounded-xl p-4 space-y-3" },
@@ -11732,7 +11757,7 @@ function SheetsConfigPanel({ storeId, showToast }) {
         React.createElement("details", { className: "bg-white border border-emerald-200 rounded-lg p-3" },
             React.createElement("summary", { className: "text-xs font-bold text-green-900 cursor-pointer" }, "Faktor & nama barang khusus toko ini (opsional)"),
             React.createElement("p", { className: "text-[10px] text-slate-500 mb-2" }, "Kosongkan untuk mengikuti Pengaturan umum (angka abu-abu = nilai yang berlaku). Isi bila outlet ini berbeda, misalnya isi per pack lain atau nama baris di tab-nya berbeda. Nilai ke Spreadsheet = isian di web × faktor."),
-            React.createElement("div", { className: "max-h-72 overflow-y-auto border border-slate-100 rounded" }, itemRows(true))),
+            React.createElement("div", { className: "max-h-72 overflow-y-auto border border-slate-100 rounded" }, React.createElement("p", { className: "text-[9px] text-slate-400 px-1 py-1" }, "Kolom: kirim? · barang · faktor STOK · faktor DATANG · nama di sheet"), itemRows(true))),
         React.createElement("div", { className: "grid grid-cols-2 gap-2" },
             React.createElement("button", { onClick: saveTab, disabled: !!busy, className: "text-white text-xs font-bold py-2 rounded-lg", style: { background: '#15803d', opacity: busy ? 0.5 : 1 } }, busy === 'tab' ? 'Menyimpan...' : 'Simpan Toko Ini'),
             React.createElement("button", { onClick: test, disabled: !!busy, className: "bg-white border text-xs font-bold py-2 rounded-lg", style: { borderColor: '#15803d', color: '#166534', opacity: busy ? 0.5 : 1 } }, busy === 'test' ? 'Mengecek...' : 'Tes (tanpa menulis)')),
@@ -11761,8 +11786,8 @@ function SheetsConfigPanel({ storeId, showToast }) {
                     React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Bila bulan laporan ada di daftar ini, Spreadsheet bulan itu yang dipakai; selain itu memakai Spreadsheet utama.")),
                 React.createElement("div", null,
                     React.createElement("p", { className: lbl }, "Barang stok (semua toko): kirim?, faktor konversi, nama di Spreadsheet"),
-                    React.createElement("p", { className: "text-[10px] text-slate-500 mb-1" }, "Nilai ke Spreadsheet = isian di web × faktor. Contoh: Filling diisi 42 pcs, faktor 0.5, menjadi 21 (Kg). Kosongkan faktor untuk nilai bawaan (angka abu-abu). \"Nama di Spreadsheet\" hanya diisi bila beda dari nama bawaan. Field inventori kustom ikut dikirim bila namanya sama dengan baris di Spreadsheet."),
-                    React.createElement("div", { className: "max-h-72 overflow-y-auto border border-slate-100 rounded" }, itemRows(false))),
+                    React.createElement("p", { className: "text-[10px] text-slate-500 mb-1" }, "Nilai ke Spreadsheet = isian di web × faktor. Contoh: Filling diisi 42 pcs, faktor 0.5, menjadi 21 (Kg). Faktor STOK dipakai untuk Actual SOH; faktor DATANG untuk kolom Tr In (Supplier) dari menu Datang Barang (bawaan 1, karena satuannya sudah sama dengan Spreadsheet). Kosongkan untuk nilai bawaan (angka abu-abu). \"Nama di Spreadsheet\" hanya diisi bila beda dari nama bawaan. Field inventori kustom ikut dikirim bila namanya sama dengan baris di Spreadsheet."),
+                    React.createElement("div", { className: "max-h-72 overflow-y-auto border border-slate-100 rounded" }, React.createElement("p", { className: "text-[9px] text-slate-400 px-1 py-1" }, "Kolom: kirim? · barang · faktor STOK · faktor DATANG · nama di sheet"), itemRows(false))),
                 React.createElement("button", { onClick: saveGlobal, disabled: !!busy, className: "w-full text-white text-xs font-bold py-2 rounded-lg", style: { background: '#15803d', opacity: busy ? 0.5 : 1 } }, busy === 'global' ? 'Menyimpan...' : 'Simpan Pengaturan Umum')))));
 }
 function StoreTrafficPanel({ storeId, storeName, role, showToast }) {

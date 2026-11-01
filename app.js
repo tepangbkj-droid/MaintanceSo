@@ -9995,7 +9995,7 @@ Daily inventory done✅
                                 emptyReportFieldsPreview.length,
                                 " field belum diisi."),
                             " Boleh disimpan dulu; wajib diisi (atau otomatis jadi 0) saat mau Kirim Telegram/WA."))),
-                    sheetsStatus.configured && sheetsStatus.mode === 'manual' && (React.createElement("button", { onClick: handleSendToSheets, disabled: sendingSheets, className: "w-full bg-emerald-500 disabled:opacity-60 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm hover:bg-emerald-400 transition-colors" }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet')),
+                    sheetsStatus.configured && sheetsStatus.mode === 'manual' && (React.createElement("button", { onClick: handleSendToSheets, disabled: sendingSheets, className: "w-full bg-emerald-500 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm hover:bg-emerald-400 transition-colors", style: { opacity: sendingSheets ? 0.6 : 1 } }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet')),
                     React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2" },
                         React.createElement("button", { onClick: handleSaveToDevice, className: "bg-white text-indigo-950 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center space-x-2 shadow-sm hover:bg-slate-100 transition-colors" },
                             React.createElement("i", { "data-lucide": "cloud", className: "w-4 h-4 text-indigo-800" }),
@@ -11701,19 +11701,19 @@ function SheetsConfigPanel({ storeId, showToast }) {
             React.createElement("input", { type: "number", step: "any", min: "0", value: c.factor === undefined ? '' : c.factor, placeholder: String(scopeStore ? effDef : def), onChange: (e) => patchItem(setter)(key, { factor: e.target.value }), "aria-label": `Faktor ${label}`, className: "w-14 px-1 py-1 border border-slate-300 rounded text-right" }),
             React.createElement("input", { value: c.label || '', placeholder: scopeStore && g.label ? g.label : "nama di sheet", onChange: (e) => patchItem(setter)(key, { label: e.target.value }), "aria-label": `Nama di Spreadsheet untuk ${label}`, className: "w-24 px-1 py-1 border border-slate-300 rounded" })));
     });
-    return (React.createElement("div", { className: "bg-green-50 border border-green-200 rounded-xl p-4 space-y-3" },
+    return (React.createElement("div", { className: "bg-green-50 border border-emerald-200 rounded-xl p-4 space-y-3" },
         React.createElement("h4", { className: "font-bold text-green-900 text-sm" }, "Sinkron Google Spreadsheet"),
         React.createElement("p", { className: "text-[10px] text-slate-500" }, "Actual SOH, waste, dan penjualan dikirim ke tab toko ini. Spreadsheet harus bisa diedit oleh service account (dibagikan sebagai Editor, atau link dibuka untuk Editor)."),
         React.createElement("div", null,
             React.createElement("label", { htmlFor: "sheetsCfg_tab", className: lbl }, "Nama Tab toko ini (persis seperti di Spreadsheet)"),
             React.createElement("input", { id: "sheetsCfg_tab", value: tab, onChange: (e) => setTab(e.target.value), placeholder: "Tarobun GPS", className: inp })),
-        React.createElement("details", { className: "bg-white border border-green-200 rounded-lg p-3" },
+        React.createElement("details", { className: "bg-white border border-emerald-200 rounded-lg p-3" },
             React.createElement("summary", { className: "text-xs font-bold text-green-900 cursor-pointer" }, "Faktor & nama barang khusus toko ini (opsional)"),
-            React.createElement("p", { className: "text-[10px] text-slate-500 my-2" }, "Kosongkan untuk mengikuti Pengaturan umum (angka abu-abu = nilai yang berlaku). Isi bila outlet ini berbeda, misalnya isi per pack lain atau nama baris di tab-nya berbeda. Nilai ke Spreadsheet = isian di web × faktor."),
+            React.createElement("p", { className: "text-[10px] text-slate-500 mb-2" }, "Kosongkan untuk mengikuti Pengaturan umum (angka abu-abu = nilai yang berlaku). Isi bila outlet ini berbeda, misalnya isi per pack lain atau nama baris di tab-nya berbeda. Nilai ke Spreadsheet = isian di web × faktor."),
             React.createElement("div", { className: "max-h-72 overflow-y-auto border border-slate-100 rounded" }, itemRows(true))),
         React.createElement("div", { className: "grid grid-cols-2 gap-2" },
-            React.createElement("button", { onClick: saveTab, disabled: !!busy, className: "bg-green-700 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg" }, busy === 'tab' ? 'Menyimpan...' : 'Simpan Toko Ini'),
-            React.createElement("button", { onClick: test, disabled: !!busy, className: "bg-white border border-green-700 text-green-800 disabled:opacity-50 text-xs font-bold py-2 rounded-lg" }, busy === 'test' ? 'Mengecek...' : 'Tes (tanpa menulis)')),
+            React.createElement("button", { onClick: saveTab, disabled: !!busy, className: "text-white text-xs font-bold py-2 rounded-lg", style: { background: '#15803d', opacity: busy ? 0.5 : 1 } }, busy === 'tab' ? 'Menyimpan...' : 'Simpan Toko Ini'),
+            React.createElement("button", { onClick: test, disabled: !!busy, className: "bg-white border text-xs font-bold py-2 rounded-lg", style: { borderColor: '#15803d', color: '#166534', opacity: busy ? 0.5 : 1 } }, busy === 'test' ? 'Mengecek...' : 'Tes (tanpa menulis)')),
         result && (React.createElement("div", { className: `text-[11px] rounded-lg p-2 space-y-1 ${result.ok && !result.skipped ? 'bg-white text-slate-700' : 'bg-red-50 text-red-700'}` },
             result.ok && !result.skipped
                 ? React.createElement(React.Fragment, null,
@@ -11722,7 +11722,7 @@ function SheetsConfigPanel({ storeId, showToast }) {
                     result.skippedFormula && result.skippedFormula.length > 0 && React.createElement("p", null, `Dilewati karena rumus: ${result.skippedFormula.join(', ')}`),
                     result.unmatched && result.unmatched.length > 0 && React.createElement("p", { className: "text-amber-700" }, `Tidak ada barisnya di Spreadsheet: ${result.unmatched.join(', ')}`))
                 : (result.skipped ? result.reason : (result.error || 'Gagal.')))),
-        React.createElement("details", { className: "bg-white border border-green-200 rounded-lg p-3" },
+        React.createElement("details", { className: "bg-white border border-emerald-200 rounded-lg p-3" },
             React.createElement("summary", { className: "text-xs font-bold text-green-900 cursor-pointer" }, "Pengaturan umum (berlaku untuk semua toko)"),
             React.createElement("div", { className: "space-y-3 mt-3" },
                 React.createElement("div", null,
@@ -11741,7 +11741,7 @@ function SheetsConfigPanel({ storeId, showToast }) {
                     React.createElement("p", { className: lbl }, "Barang stok (semua toko): kirim?, faktor konversi, nama di Spreadsheet"),
                     React.createElement("p", { className: "text-[10px] text-slate-500 mb-1" }, "Nilai ke Spreadsheet = isian di web × faktor. Contoh: Filling diisi 42 pcs, faktor 0.5, menjadi 21 (Kg). Kosongkan faktor untuk nilai bawaan (angka abu-abu). \"Nama di Spreadsheet\" hanya diisi bila beda dari nama bawaan. Field inventori kustom ikut dikirim bila namanya sama dengan baris di Spreadsheet."),
                     React.createElement("div", { className: "max-h-72 overflow-y-auto border border-slate-100 rounded" }, itemRows(false))),
-                React.createElement("button", { onClick: saveGlobal, disabled: !!busy, className: "w-full bg-green-700 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg" }, busy === 'global' ? 'Menyimpan...' : 'Simpan Pengaturan Umum')))));
+                React.createElement("button", { onClick: saveGlobal, disabled: !!busy, className: "w-full text-white text-xs font-bold py-2 rounded-lg", style: { background: '#15803d', opacity: busy ? 0.5 : 1 } }, busy === 'global' ? 'Menyimpan...' : 'Simpan Pengaturan Umum')))));
 }
 function StoreTrafficPanel({ storeId, storeName, role, showToast }) {
     const isAdmin = role === 'admin';
@@ -12628,7 +12628,7 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
             e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Keterangan (opsional)'),
             e('textarea', { value: form.notes || '', onChange: (x) => setField('notes', x.target.value.slice(0, 300)), rows: 3, placeholder: 'Isi sendiri, mis. penyebab proofing kurang lama, atau tekan tombol bantuan AI', className: 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm' }),
             e('div', { className: 'flex items-center justify-between mt-2 gap-2' },
-                e('button', { type: 'button', onClick: handleAiNote, disabled: aiBusy || sending, className: 'text-[11px] font-bold px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 disabled:opacity-50' }, aiBusy ? 'Menyusun...' : '✨ Bantu tulis dengan AI'),
+                e('button', { type: 'button', onClick: handleAiNote, disabled: aiBusy || sending, className: 'text-[11px] font-bold px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700', style: { opacity: (aiBusy || sending) ? 0.5 : 1 } }, aiBusy ? 'Menyusun...' : '✨ Bantu tulis dengan AI'),
                 e('span', { className: 'text-[10px] text-slate-400' }, `${(form.notes || '').length}/300`)),
             e('p', { className: 'text-[10px] text-slate-400 mt-1' }, 'AI hanya memakai data durasi, kode produk & nopol (tanpa foto). Selalu periksa hasilnya sebelum dikirim.')),
         e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-3' },

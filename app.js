@@ -7842,9 +7842,37 @@ function StoreApp({ storeId, storeName, onLogout }) {
         indigo: { activeBtn: 'bg-indigo-600 text-white border-indigo-600 shadow-sm', cardBorder: 'border-indigo-100', cardBg: 'bg-indigo-50/40', icon: 'text-indigo-600', badge: 'bg-indigo-100 text-indigo-800' },
         slate: { activeBtn: 'bg-slate-600 text-white border-slate-600 shadow-sm', cardBorder: 'border-slate-200', cardBg: 'bg-slate-50/40', icon: 'text-slate-600', badge: 'bg-slate-100 text-slate-800' },
     };
+    // (2026-11) Rijek Barang: pilihan barang = daftar stok yang sama dengan Spreadsheet, KECUALI Frozen Dough (sudah ikut Bun Rijek/Bun Waste)
+    // dan Topping Taro (otomatis dihitung dari total bun rijek + waste x 25 gram). Jumlah diisi dalam satuan input barang itu (mis. Filling = pcs).
+    const rijekInputUnit = (u) => String(u || 'pcs').split('\u2192')[0].trim() || 'pcs';
+    const RIJEK_BARANG_OPTIONS = SHEETS_ITEMS.filter((it) => it[0] !== 'frozenDough' && it[0] !== 'toppingTaro');
+    const rijekInfo = (it) => {
+        if (!it)
+            return null;
+        const f = RIJEK_BARANG_OPTIONS.find((o) => o[0] === it.itemKey);
+        if (it.itemLabel)
+            return { key: it.itemKey || '', label: it.itemLabel, unit: it.satuan || (f ? rijekInputUnit(f[2]) : 'pcs') };
+        return f ? { key: f[0], label: f[1], unit: rijekInputUnit(f[2]) } : null;
+    };
+    const rijekExtra = (f) => { const i = rijekInfo({ itemKey: f && f.itemKey }); return i ? { itemLabel: i.label, satuan: i.unit } : null; };
+    const wasteItemInfo = (it) => (it && it.kategori === 'rijekBarang' ? rijekInfo(it.itemLabel ? it : { itemKey: it.itemKey }) : null);
+    const wasteItemQty = (it) => { const ri = wasteItemInfo(it); return `${it.jumlah} ${ri ? ri.unit : 'pcs'}`; };
+    const rijekTotals = (items) => {
+        const m = {};
+        items.forEach((it) => {
+            const ri = wasteItemInfo(it) || { label: 'Barang lain', unit: 'pcs' };
+            const k = ri.label + '|' + ri.unit;
+            if (!m[k])
+                m[k] = { label: ri.label, unit: ri.unit, total: 0 };
+            m[k].total += numVal(it.jumlah);
+        });
+        return Object.values(m).map((x) => ({ ...x, total: Math.round(x.total * 1000) / 1000 }));
+    };
+    const rijekTotalsText = (items) => rijekTotals(items).map((x) => `${x.label} ${x.total} ${x.unit}`).join(', ');
     const getEmptyWasteFotoForm = () => ({
         tipe: 'bunRijek',
         kategori: 'fdNempel',
+        itemKey: '',
         jumlah: '',
         keterangan: '',
         fotoPreview: null,
@@ -8182,7 +8210,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
         }
     };
     // Sinkron via Worker (server membaca ulang laporan dari database lalu menulis ke Spreadsheet toko ini).
-    const syncToSheetsServer = async (date, auto, parts) => {
+    const syncToSheetsServer = async (date, auto, parts, quiet) => {
         try {
             const res = await __apiFetch(`${WORKER_BASE}/api/sheets/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: JSON.stringify({ date, auto: !!auto, ...(parts ? { parts } : {}) }) });
             const d = await res.json().catch(() => ({}));
@@ -8192,7 +8220,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
                 if (!auto)
                     showToast(d.reason || 'Tidak ada yang dikirim.');
             }
-            else if (d.ok === false)
+            else if (d.ok === false && !quiet)
                 showToast('⚠️ Spreadsheet belum terupdate: ' + String(d.error || d.reason || 'gagal').slice(0, 140));
         }
         catch (err) {
@@ -9052,11 +9080,13 @@ Daily inventory done✅
             reject(e);
         }
     });
-    const buildWasteFotoStampLines = (kategoriKey, jumlah, keterangan) => {
+    const buildWasteFotoStampLines = (kategoriKey, jumlah, keterangan, extra) => {
         const catInfo = WASTE_CATEGORIES[kategoriKey] || WASTE_CATEGORIES.bunRijek;
         const now = new Date();
         const tanggalJam = now.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' WIB';
-        const lines = [`${catInfo.label} • ${numVal(jumlah)} pcs`];
+        const lines = [`${catInfo.label} • ${numVal(jumlah)} ${extra && extra.satuan ? extra.satuan : 'pcs'}`];
+        if (extra && extra.itemLabel)
+            lines.unshift(String(extra.itemLabel));
         if (keterangan && keterangan.trim())
             lines.push(keterangan.trim().slice(0, 80));
         lines.push(tanggalJam);
@@ -9155,6 +9185,7 @@ Daily inventory done✅
         setWasteFotoForm(prev => ({
             tipe: keepCategory ? prev.tipe : 'bunRijek',
             kategori: keepCategory ? prev.kategori : 'fdNempel',
+            itemKey: keepCategory ? (prev.itemKey || '') : '',
             jumlah: '',
             keterangan: '',
             fotoPreview: null
@@ -9169,6 +9200,10 @@ Daily inventory done✅
             showToast('⚠️ Isi jumlah terlebih dahulu.');
             return;
         }
+        if (wasteFotoForm.tipe === 'rijekBarang' && !rijekInfo({ itemKey: wasteFotoForm.itemKey })) {
+            showToast('⚠️ Pilih barang yang rijek terlebih dahulu.');
+            return;
+        }
         setIsSavingFoto(true);
         try {
             const now = Date.now();
@@ -9177,11 +9212,12 @@ Daily inventory done✅
                 : wasteFotoForm.tipe === 'rijekBarang'
                     ? 'rijekBarang'
                     : wasteFotoForm.kategori;
-            const stampedFoto = await stampWasteFotoImage(wasteFotoForm.fotoPreview, buildWasteFotoStampLines(finalKategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan));
+            const stampedFoto = await stampWasteFotoImage(wasteFotoForm.fotoPreview, buildWasteFotoStampLines(finalKategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan, wasteFotoForm.tipe === 'rijekBarang' ? rijekExtra(wasteFotoForm) : null));
             const payload = {
                 id: now.toString(),
                 kategori: finalKategori,
                 tipe: wasteFotoForm.tipe,
+                ...(wasteFotoForm.tipe === 'rijekBarang' ? (() => { const i = rijekInfo({ itemKey: wasteFotoForm.itemKey }); return i ? { itemKey: i.key, itemLabel: i.label, satuan: i.unit } : {}; })() : {}),
                 jumlah: numVal(wasteFotoForm.jumlah),
                 keterangan: wasteFotoForm.keterangan || '',
                 foto: '',
@@ -9212,7 +9248,8 @@ Daily inventory done✅
                 showToast(`✅ Foto tersimpan! +${addedQty} pcs otomatis masuk ke Laporan (tgl ${payload.tanggal}) → ${label} 📊`);
             }
             else if (wasteFotoForm.tipe === 'rijekBarang') {
-                showToast('📦 Foto Rijek Barang tersimpan! 📷✨');
+                const ri = rijekInfo({ itemKey: wasteFotoForm.itemKey });
+                showToast(`📦 Rijek ${ri ? ri.label : 'barang'} ${addedQty} ${ri ? ri.unit : ''} tersimpan! Masuk kolom Waste saat dikirim ke Spreadsheet 📷✨`);
             }
             else {
                 showToast('Foto tersimpan ke Riwayat! 📷✨');
@@ -9220,11 +9257,16 @@ Daily inventory done✅
             setWasteFotoList(prev => [...prev.filter(x => x.firebaseKey !== payload.id), { ...payload, foto: payload.foto || stampedFoto, firebaseKey: payload.id, pending: queued }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
             setWasteFotoViewDate(payload.tanggal);
             handleResetWasteFotoForm(true);
+            let uploadedOk = !queued;
             if (queued) {
                 const left = await syncPendingWaste();
+                uploadedOk = left === 0;
                 if (left > 0)
                     showToast('📥 Tersimpan di perangkat. Akan dikirim otomatis saat koneksi kembali.');
             }
+            // Mode Spreadsheet "Otomatis": kolom Waste langsung diperbarui (diam-diam bila laporan hari itu belum disimpan).
+            if (uploadedOk && payload.tipe === 'rijekBarang')
+                syncToSheetsServer(payload.tanggal, true, ['waste'], true);
         }
         catch (error) {
             console.error(error);
@@ -9542,7 +9584,7 @@ Daily inventory done✅
         try {
             const finalKategori = wasteFotoForm.tipe === 'bunWaste' ? 'bunWaste'
                 : wasteFotoForm.tipe === 'rijekBarang' ? 'rijekBarang' : wasteFotoForm.kategori;
-            const stampedFoto = await stampWasteFotoImage(wasteFotoForm.fotoPreview, buildWasteFotoStampLines(finalKategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan));
+            const stampedFoto = await stampWasteFotoImage(wasteFotoForm.fotoPreview, buildWasteFotoStampLines(finalKategori, wasteFotoForm.jumlah, wasteFotoForm.keterangan, wasteFotoForm.tipe === 'rijekBarang' ? rijekExtra(wasteFotoForm) : null));
             await handleSendSingleWasteFotoToTelegram({ ...wasteFotoForm, kategori: finalKategori, foto: stampedFoto, tanggal: todayWIB() });
         }
         catch (error) {
@@ -9557,7 +9599,8 @@ Daily inventory done✅
             return;
         }
         const catInfo = WASTE_CATEGORIES[item.kategori] || WASTE_CATEGORIES.bunRijek;
-        const caption = `*${catInfo.label.toUpperCase()}*\nTanggal: ${formatIndonesianDate(item.tanggal)}\nJumlah: ${item.jumlah} pcs\nKeterangan: ${item.keterangan || '-'}`;
+        const riItem = wasteItemInfo(item) || (item.kategori === 'rijekBarang' ? rijekInfo({ itemKey: item.itemKey }) : null);
+        const caption = `*${catInfo.label.toUpperCase()}*\nTanggal: ${formatIndonesianDate(item.tanggal)}\n${riItem ? `Barang: ${riItem.label}\n` : ''}Jumlah: ${item.jumlah} ${riItem ? riItem.unit : 'pcs'}\nKeterangan: ${item.keterangan || '-'}`;
         try {
             showToast('Mengirim foto ke Telegram... ✈️');
             await sendPhotoToTelegram(item.foto, caption);
@@ -9588,12 +9631,13 @@ Daily inventory done✅
             const collageDataUrl = await buildPhotoCollage(orderedItems.map(it => it.foto));
             let caption = `*REKAP ${catInfo.label.toUpperCase()}*\n${tanggalLabel}\n\n`;
             orderedItems.forEach((it, idx) => {
-                caption += `${idx + 1}. ${it.jumlah} pcs - ${it.keterangan || '-'}\n`;
+                caption += `${idx + 1}. ${categoryKey === 'rijekBarang' ? `${(wasteItemInfo(it) || { label: 'Barang' }).label}: ` : ''}${wasteItemQty(it)} - ${it.keterangan || '-'}\n`;
             });
-            caption += `\n*TOTAL ${catInfo.short.toUpperCase()} : ${group.total} pcs*`;
+            const totalText = categoryKey === 'rijekBarang' ? rijekTotalsText(group.items) : `${group.total} pcs`;
+            caption += `\n*TOTAL ${catInfo.short.toUpperCase()} : ${totalText}*`;
             if (caption.length > 1000) {
                 await tgRelayFetch('sendMessage', { text: caption, parse_mode: 'Markdown' });
-                const shortCaption = `*${catInfo.label.toUpperCase()}*\n${tanggalLabel}\n*TOTAL : ${group.total} pcs* (${orderedItems.length} foto)`;
+                const shortCaption = `*${catInfo.label.toUpperCase()}*\n${tanggalLabel}\n*TOTAL : ${totalText}* (${orderedItems.length} foto)`;
                 await sendPhotoToTelegram(collageDataUrl, shortCaption);
             }
             else {
@@ -9645,7 +9689,12 @@ Daily inventory done✅
             const RECAP_GROUP_LABELS = { bunRijek: 'Bun Rijek', bunWaste: 'Bun Waste', rijekBarang: 'Rijek Barang' };
             Object.keys(RECAP_GROUP_LABELS).forEach(groupKey => {
                 const group = wasteFotoGroups[groupKey] || { items: [], total: 0 };
-                text += `${RECAP_GROUP_LABELS[groupKey]} : *${group.total} pcs* (${group.items.length} foto)\n`;
+                if (groupKey === 'rijekBarang') {
+                    text += `${RECAP_GROUP_LABELS[groupKey]} : *${group.items.length} foto*\n`;
+                    rijekTotals(group.items).forEach((x) => { text += `  \u2022 ${x.label} : ${x.total} ${x.unit}\n`; });
+                }
+                else
+                    text += `${RECAP_GROUP_LABELS[groupKey]} : *${group.total} pcs* (${group.items.length} foto)\n`;
                 if (groupKey === 'bunRijek' && group.items.length > 0) {
                     text += buildRijekSubcategoryBreakdownText(group.items) + '\n';
                 }
@@ -10679,21 +10728,29 @@ Daily inventory done✅
                                 React.createElement("i", { "data-lucide": cat.icon, className: "w-4 h-4" }),
                                 React.createElement("span", { className: "text-center leading-tight" }, cat.short)));
                         })))),
-                    wasteFotoForm.tipe === 'rijekBarang' && (React.createElement("div", { className: "flex items-start gap-2.5 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3" },
-                        React.createElement("i", { "data-lucide": "info", className: "w-4 h-4 text-indigo-500 mt-0.5 shrink-0" }),
-                        React.createElement("p", { className: "text-xs text-indigo-700 leading-relaxed" },
-                            "Foto Rijek Barang disimpan sebagai ",
-                            React.createElement("strong", null, "dokumentasi"),
-                            " dan dikirim ke Telegram. Tidak otomatis masuk ke Laporan Penjualan."))),
+                    wasteFotoForm.tipe === 'rijekBarang' && (React.createElement("div", { className: "space-y-3" },
+                        React.createElement("div", null,
+                            React.createElement("label", { htmlFor: "rijek-barang-item", className: "block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5" }, "Barang yang Rijek"),
+                            React.createElement("select", { id: "rijek-barang-item", value: wasteFotoForm.itemKey || '', onChange: (e) => setWasteFotoForm({ ...wasteFotoForm, itemKey: e.target.value }), className: "w-full px-3 py-2.5 border-2 border-indigo-200 rounded-xl text-sm bg-white font-semibold text-slate-700" },
+                                React.createElement("option", { value: "" }, "\u2014 Pilih barang (gulir) \u2014"),
+                                RIJEK_BARANG_OPTIONS.map(([key, label, unit]) => React.createElement("option", { key: key, value: key }, `${label} (${rijekInputUnit(unit)})`)))),
+                        React.createElement("div", { className: "flex items-start gap-2.5 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3" },
+                            React.createElement("i", { "data-lucide": "info", className: "w-4 h-4 text-indigo-500 mt-0.5 shrink-0" }),
+                            React.createElement("p", { className: "text-xs text-indigo-700 leading-relaxed" },
+                                "Foto + jumlah Rijek Barang tersimpan di database. Jumlah diisi sesuai ",
+                                React.createElement("strong", null, "satuan barang"),
+                                " di daftar, lalu otomatis mengisi kolom ",
+                                React.createElement("strong", null, "Waste"),
+                                " di Spreadsheet. Frozen Dough & Topping Taro dihitung otomatis dari Bun Rijek + Bun Waste.")))),
                     React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" },
                         React.createElement("div", null,
-                            React.createElement("label", { htmlFor: "jumlah--pcs", className: "block text-xs font-semibold text-slate-600 mb-1.5" }, "Jumlah (pcs)"),
-                            React.createElement("input", { id: "jumlah--pcs", type: "number", value: wasteFotoForm.jumlah, onChange: (e) => setWasteFotoForm({ ...wasteFotoForm, jumlah: e.target.value }), className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-sm", placeholder: "0" }),
+                            React.createElement("label", { htmlFor: "jumlah--pcs", className: "block text-xs font-semibold text-slate-600 mb-1.5" }, `Jumlah (${wasteFotoForm.tipe === 'rijekBarang' ? ((rijekInfo({ itemKey: wasteFotoForm.itemKey }) || {}).unit || 'satuan barang') : 'pcs'})`),
+                            React.createElement("input", { id: "jumlah--pcs", type: "number", step: "any", inputMode: "decimal", value: wasteFotoForm.jumlah, onChange: (e) => setWasteFotoForm({ ...wasteFotoForm, jumlah: e.target.value }), className: "w-full px-3 py-2 border border-slate-300 rounded-lg text-sm", placeholder: "0" }),
                             (() => {
                                 if (wasteFotoForm.tipe === 'rijekBarang')
                                     return (React.createElement("p", { className: "text-[10px] text-indigo-500 mt-1 flex items-center gap-1" },
                                         React.createElement("i", { "data-lucide": "package-x", className: "w-3 h-3" }),
-                                        "Dokumentasi saja, tidak masuk Laporan"));
+                                        "Masuk kolom Waste di Spreadsheet (satuan mengikuti barang)"));
                                 const finalKey = wasteFotoForm.tipe === 'bunWaste' ? 'bunWaste' : wasteFotoForm.kategori;
                                 const cat = WASTE_CATEGORIES[finalKey];
                                 const label = wasteFotoForm.tipe === 'bunWaste' ? 'Waste Bun' : (cat ? cat.short : '-');
@@ -10760,10 +10817,7 @@ Daily inventory done✅
                                 React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
                                     React.createElement("i", { "data-lucide": grp.icon, className: `w-4 h-4 ${styles.icon}` }),
                                     React.createElement("span", { className: "font-bold text-sm text-slate-800" }, grp.label),
-                                    React.createElement("span", { className: `text-xs font-black px-2 py-0.5 rounded-md ${styles.badge}` },
-                                        "Total: ",
-                                        group.total,
-                                        " pcs"),
+                                    React.createElement("span", { className: `text-xs font-black px-2 py-0.5 rounded-md ${styles.badge}` }, grpKey === 'rijekBarang' ? `${group.items.length} foto` : `Total: ${group.total} pcs`),
                                     isBunRijek && group.items.length > 0 && (React.createElement("span", { className: "text-[10px] text-slate-500" },
                                         group.items.length,
                                         " foto"))),
@@ -10783,6 +10837,7 @@ Daily inventory done✅
                                     qty,
                                     " pcs")))));
                             })(),
+                            grpKey === 'rijekBarang' && group.items.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-3" }, rijekTotals(group.items).map((x) => (React.createElement("span", { key: x.label + x.unit, className: "text-[10px] bg-white border border-indigo-200 text-indigo-700 font-semibold px-2 py-0.5 rounded-full" }, `${x.label}: ${x.total} ${x.unit}`))))),
                             group.items.length === 0 ? (React.createElement("p", { className: "text-xs text-slate-500 text-center py-5" },
                                 "Belum ada foto ",
                                 grp.label,
@@ -10797,9 +10852,8 @@ Daily inventory done✅
                                         React.createElement("img", { src: item.foto, alt: grp.label, className: "w-full h-28 object-cover" }),
                                         isBunRijek && subLabel && (React.createElement("span", { className: `absolute top-1.5 left-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow ${subColor ? subColor.badge : 'bg-slate-100 text-slate-700'}` }, subLabel))),
                                     React.createElement("div", { className: "p-2 space-y-0.5" },
-                                        React.createElement("p", { className: "text-xs font-bold text-slate-700" },
-                                            item.jumlah,
-                                            " pcs"),
+                                        wasteItemInfo(item) ? React.createElement("p", { className: "text-[11px] font-bold text-indigo-700 leading-tight" }, wasteItemInfo(item).label) : null,
+                                        React.createElement("p", { className: "text-xs font-bold text-slate-700" }, wasteItemQty(item)),
                                         item.keterangan ? React.createElement("p", { className: "text-[10px] text-slate-500 line-clamp-2" }, item.keterangan) : null,
                                         React.createElement("p", { className: "text-[9px] text-slate-400" }, formatIndonesianDate(item.tanggal)),
                                         React.createElement("div", { className: "flex items-center justify-between pt-1" },
@@ -11605,6 +11659,8 @@ const SHEETS_ITEMS = [
 ];
 function SheetsConfigPanel({ storeId, showToast }) {
     const [tab, setTab] = useState('');
+    const [ssLink, setSsLink] = useState(''); // link Spreadsheet khusus toko ini; dari server hanya berupa mask "\u2022\u2022\u2022\u2022abcd"
+
     const [storeItems, setStoreItems] = useState({});
     const [customFields, setCustomFields] = useState([]);
     const [gs, setGs] = useState({ mode: 'manual', defaultSpreadsheetId: '', monthsText: '', items: {} });
@@ -11613,14 +11669,16 @@ function SheetsConfigPanel({ storeId, showToast }) {
     const toast = (m) => { if (showToast)
         showToast(m); };
     const extractId = (v) => { const m = String(v || '').match(/\/d\/([A-Za-z0-9_-]{20,80})/); return m ? m[1] : String(v || '').trim(); };
-    const idOk = (v) => /^[A-Za-z0-9_-]{20,80}$/.test(v);
+    const idOk = (v) => /^[A-Za-z0-9_-]{20,80}$/.test(v) || /^\u2022{4}/.test(v); // mask "\u2022\u2022\u2022\u2022abcd" = tidak diubah (server memakai data lama)
     useEffect(() => {
         let off = false;
         setTab('');
+        setSsLink('');
         setStoreItems({});
         setResult(null);
         restOnce(db.ref(`stores/${storeId}/sheetsConfig`)).then((snap) => { const c = snap.val() || {}; if (!off) {
             setTab(c.tab || '');
+            setSsLink(c.spreadsheetId || '');
             setStoreItems(c.items || {});
         } }).catch(() => { });
         return () => { off = true; };
@@ -11671,10 +11729,20 @@ function SheetsConfigPanel({ storeId, showToast }) {
             toast('Isi Nama Tab toko ini (persis seperti di Spreadsheet).');
             return;
         }
+        const link = extractId(ssLink);
+        if (link && !idOk(link)) {
+            toast('Link/ID Spreadsheet toko ini tidak valid.');
+            return;
+        }
         setBusy('tab');
         try {
-            await restSet(db.ref(`stores/${storeId}/sheetsConfig`), { tab: t, items: cleanItems(storeItems, rowsFor(true)) });
+            await restSet(db.ref(`stores/${storeId}/sheetsConfig`), { tab: t, spreadsheetId: link, items: cleanItems(storeItems, rowsFor(true)) });
             setTab(t);
+            try {
+                const snap = await restOnce(db.ref(`stores/${storeId}/sheetsConfig`));
+                setSsLink((snap.val() || {}).spreadsheetId || '');
+            }
+            catch (e) { }
             toast('Pengaturan Spreadsheet toko ini tersimpan.');
         }
         catch (err) {
@@ -11750,10 +11818,15 @@ function SheetsConfigPanel({ storeId, showToast }) {
     });
     return (React.createElement("div", { className: "bg-green-50 border border-emerald-200 rounded-xl p-4 space-y-3" },
         React.createElement("h4", { className: "font-bold text-green-900 text-sm" }, "Sinkron Google Spreadsheet"),
-        React.createElement("p", { className: "text-[10px] text-slate-500" }, "Actual SOH, waste, dan penjualan dikirim ke tab toko ini. Spreadsheet harus bisa diedit oleh service account (dibagikan sebagai Editor, atau link dibuka untuk Editor)."),
+        React.createElement("p", { className: "text-[10px] text-slate-500" }, "Actual SOH, waste, Theo Cons, dan penjualan dikirim ke tab toko ini. KEAMANAN: bagikan Spreadsheet HANYA ke email service account sebagai Editor, dan biarkan akses umum \"Dibatasi\" (jangan \"Siapa saja yang memiliki link\"). Link disimpan terenkripsi di server dan tidak pernah tampil utuh. Sel berisi rumus tidak pernah ditimpa."),
         React.createElement("div", null,
             React.createElement("label", { htmlFor: "sheetsCfg_tab", className: lbl }, "Nama Tab toko ini (persis seperti di Spreadsheet)"),
             React.createElement("input", { id: "sheetsCfg_tab", value: tab, onChange: (e) => setTab(e.target.value), placeholder: "Tarobun GPS", className: inp })),
+        React.createElement("div", null,
+            React.createElement("label", { htmlFor: "sheetsCfg_link", className: lbl }, "Link Spreadsheet toko ini (isi bila outlet ini punya Spreadsheet sendiri)"),
+            React.createElement("input", { id: "sheetsCfg_link", type: "text", autoComplete: "off", spellCheck: false, value: ssLink, onFocus: (e) => { if (/^\u2022{4}/.test(ssLink))
+                    e.target.select(); }, onChange: (e) => setSsLink(e.target.value), placeholder: "Kosong = pakai Spreadsheet bulan / utama (Pengaturan umum)", className: inp + ' font-mono' }),
+            React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, /^\u2022{4}/.test(ssLink) ? "Tersimpan terenkripsi (hanya 4 karakter terakhir yang tampil). Tempel link baru untuk mengganti; kosongkan lalu Simpan untuk menghapus." : "Setelah disimpan, link tersimpan terenkripsi dan tidak akan tampil utuh lagi.")),
         React.createElement("details", { className: "bg-white border border-emerald-200 rounded-lg p-3" },
             React.createElement("summary", { className: "text-xs font-bold text-green-900 cursor-pointer" }, "Faktor & nama barang khusus toko ini (opsional)"),
             React.createElement("p", { className: "text-[10px] text-slate-500 mb-2" }, "Kosongkan untuk mengikuti Pengaturan umum (angka abu-abu = nilai yang berlaku). Isi bila outlet ini berbeda, misalnya isi per pack lain atau nama baris di tab-nya berbeda. Nilai ke Spreadsheet = isian di web × faktor."),
@@ -11764,7 +11837,7 @@ function SheetsConfigPanel({ storeId, showToast }) {
         result && (React.createElement("div", { className: `text-[11px] rounded-lg p-2 space-y-1 ${result.ok && !result.skipped ? 'bg-white text-slate-700' : 'bg-red-50 text-red-700'}` },
             result.ok && !result.skipped
                 ? React.createElement(React.Fragment, null,
-                    React.createElement("p", { className: "font-bold" }, `Siap menulis ${result.written} sel ke tab "${result.tab}" (blok ${result.columns.blok}, Actual SOH ${result.columns.actualSOH}, Waste ${result.columns.waste}). Mode: ${result.mode === 'auto' ? 'otomatis' : 'manual'}.`),
+                    React.createElement("p", { className: "font-bold" }, `Siap menulis ${result.written} sel ke tab "${result.tab}" (blok ${result.columns.blok}, Actual SOH ${result.columns.actualSOH}, Waste ${result.columns.waste}, Theo Cons ${result.columns.theoCons || '-'}). Mode: ${result.mode === 'auto' ? 'otomatis' : 'manual'}.`),
                     React.createElement("div", { className: "max-h-40 overflow-y-auto border border-slate-100 rounded p-1" }, (result.plan || []).filter((x) => x.raw !== undefined).map((x) => React.createElement("p", { key: x.cell }, `${x.cell} ${x.sheetName || x.label}: ${x.raw} × ${x.factor} = ${x.value} ${x.sheetUnit || ''}`))),
                     result.skippedFormula && result.skippedFormula.length > 0 && React.createElement("p", null, `Dilewati karena rumus: ${result.skippedFormula.join(', ')}`),
                     result.unmatched && result.unmatched.length > 0 && React.createElement("p", { className: "text-amber-700" }, `Tidak ada barisnya di Spreadsheet: ${result.unmatched.join(', ')}`))
@@ -11779,7 +11852,8 @@ function SheetsConfigPanel({ storeId, showToast }) {
                         React.createElement("option", { value: "auto" }, "Otomatis: langsung terkirim saat toko menyimpan laporan"))),
                 React.createElement("div", null,
                     React.createElement("label", { htmlFor: "sheetsGs_def", className: lbl }, "Spreadsheet utama (link atau ID)"),
-                    React.createElement("input", { id: "sheetsGs_def", value: gs.defaultSpreadsheetId, onChange: (e) => setGs({ ...gs, defaultSpreadsheetId: e.target.value }), placeholder: "https://docs.google.com/spreadsheets/d/...", className: inp + ' font-mono' })),
+                    React.createElement("input", { id: "sheetsGs_def", value: gs.defaultSpreadsheetId, onChange: (e) => setGs({ ...gs, defaultSpreadsheetId: e.target.value }), placeholder: "https://docs.google.com/spreadsheets/d/...", autoComplete: "off", spellCheck: false, className: inp + ' font-mono' }),
+                    React.createElement("p", { className: "text-[10px] text-slate-500 mt-1" }, "Link disimpan terenkripsi & tampil disamarkan (\u2022\u2022\u2022\u2022abcd). Tempel link baru untuk mengganti. Prioritas: link toko \u2192 link bulan \u2192 link utama.")),
                 React.createElement("div", null,
                     React.createElement("label", { htmlFor: "sheetsGs_months", className: lbl }, "Spreadsheet per bulan (opsional, satu baris per bulan)"),
                     React.createElement("textarea", { id: "sheetsGs_months", rows: 3, value: gs.monthsText, onChange: (e) => setGs({ ...gs, monthsText: e.target.value }), placeholder: "2026-11 = https://docs.google.com/spreadsheets/d/...\n2026-12 = ...", className: inp + ' font-mono' }),

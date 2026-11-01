@@ -7565,14 +7565,22 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const [historyList, setHistoryList] = useState([]);
     const [sheetsStatus, setSheetsStatus] = useState({ configured: false, mode: 'manual' });
     const [sendingSheets, setSendingSheets] = useState(false);
+    const loadSheetsStatus = async () => {
+        try {
+            const r = await __apiFetch(`${WORKER_BASE}/api/sheets/status`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: '{}' });
+            const d = await r.json();
+            if (d && d.ok) {
+                const st = { configured: !!d.configured, mode: d.mode === 'auto' ? 'auto' : 'manual' };
+                setSheetsStatus(st);
+                return st;
+            }
+        }
+        catch (err) { }
+        return null;
+    };
     useEffect(() => {
-        if (!storeId)
-            return;
-        let off = false;
-        __apiFetch(`${WORKER_BASE}/api/sheets/status`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...__authHeaders() }, body: '{}' })
-            .then((r) => r.json()).then((d) => { if (!off && d && d.ok)
-            setSheetsStatus({ configured: !!d.configured, mode: d.mode === 'auto' ? 'auto' : 'manual' }); }).catch(() => { });
-        return () => { off = true; };
+        if (storeId)
+            loadSheetsStatus();
     }, [storeId]);
     const [customSalesFields, setCustomSalesFields] = useState([]);
     const salesPlacementOf = (f) => (f.category && (f.placement === 'food' || f.placement === 'beverage')) ? f.placement : 'bottom';
@@ -8138,7 +8146,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
         showToast('Konfigurasi disimpan! ⚙️');
         setShowConfig(false);
     };
-    const handleSaveToDevice = async () => {
+    const handleSaveToDevice = async (opts) => {
         const idEntry = salesData.tanggal;
         const payload = {
             id: Date.now().toString(),
@@ -8165,7 +8173,8 @@ function StoreApp({ storeId, storeName, onLogout }) {
             if (config.googleAppScriptUrl) {
                 syncToGoogleSheets(payload);
             }
-            syncToSheetsServer(idEntry, true);
+            if (!(opts && opts.skipSheets === true))
+                syncToSheetsServer(idEntry, true);
         }
         catch (error) {
             console.error(error);
@@ -8190,22 +8199,29 @@ function StoreApp({ storeId, storeName, onLogout }) {
             console.error(err);
         }
     };
-    // Tombol "Kirim ke Spreadsheet": hanya tampil bila admin sudah mengatur tab toko + Spreadsheet, dan mode = manual.
-    const renderSheetsButton = (className) => (sheetsStatus.configured && sheetsStatus.mode === 'manual')
-        ? React.createElement("button", { onClick: handleSendToSheets, disabled: sendingSheets, className, style: { opacity: sendingSheets ? 0.6 : 1 } }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet')
-        : null;
+    // Tombol "Simpan & Kirim ke Spreadsheet": SELALU tampil. "Simpan di Cloud" tetap hanya menyimpan ke Cloud (mode manual).
+    // Bila admin belum mengatur Spreadsheet toko ini, menekan tombol hanya menampilkan pesan penjelasan.
     const handleSendToSheets = async () => {
         if (sendingSheets)
             return;
+        let st = sheetsStatus;
+        if (!st.configured) {
+            st = (await loadSheetsStatus()) || st;
+            if (!st.configured) {
+                showToast('⚠️ Spreadsheet toko ini belum diatur admin (Nama Tab + Spreadsheet utama), atau server belum diperbarui.');
+                return;
+            }
+        }
         setSendingSheets(true);
         try {
-            await handleSaveToDevice();
+            await handleSaveToDevice({ skipSheets: true });
             await syncToSheetsServer(salesData.tanggal, false);
         }
         finally {
             setSendingSheets(false);
         }
     };
+    const renderSheetsButton = (className) => React.createElement("button", { onClick: handleSendToSheets, disabled: sendingSheets, className, style: { opacity: sendingSheets ? 0.6 : (sheetsStatus.configured ? 1 : 0.75) } }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet');
     const syncToGoogleSheets = async (dataPayload) => {
         try {
             await fetch(config.googleAppScriptUrl, {

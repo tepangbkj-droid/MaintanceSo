@@ -8190,6 +8190,10 @@ function StoreApp({ storeId, storeName, onLogout }) {
             console.error(err);
         }
     };
+    // Tombol "Kirim ke Spreadsheet": hanya tampil bila admin sudah mengatur tab toko + Spreadsheet, dan mode = manual.
+    const renderSheetsButton = (className) => (sheetsStatus.configured && sheetsStatus.mode === 'manual')
+        ? React.createElement("button", { onClick: handleSendToSheets, disabled: sendingSheets, className, style: { opacity: sendingSheets ? 0.6 : 1 } }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet')
+        : null;
     const handleSendToSheets = async () => {
         if (sendingSheets)
             return;
@@ -9995,7 +9999,7 @@ Daily inventory done✅
                                 emptyReportFieldsPreview.length,
                                 " field belum diisi."),
                             " Boleh disimpan dulu; wajib diisi (atau otomatis jadi 0) saat mau Kirim Telegram/WA."))),
-                    sheetsStatus.configured && sheetsStatus.mode === 'manual' && (React.createElement("button", { onClick: handleSendToSheets, disabled: sendingSheets, className: "w-full bg-emerald-500 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm hover:bg-emerald-400 transition-colors", style: { opacity: sendingSheets ? 0.6 : 1 } }, sendingSheets ? 'Mengirim ke Spreadsheet...' : '📤 Simpan & Kirim ke Spreadsheet')),
+                    renderSheetsButton("w-full bg-emerald-500 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm hover:bg-emerald-400 transition-colors"),
                     React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2" },
                         React.createElement("button", { onClick: handleSaveToDevice, className: "bg-white text-indigo-950 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center space-x-2 shadow-sm hover:bg-slate-100 transition-colors" },
                             React.createElement("i", { "data-lucide": "cloud", className: "w-4 h-4 text-indigo-800" }),
@@ -10160,7 +10164,8 @@ Daily inventory done✅
                 React.createElement("div", { className: "flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-100" },
                     React.createElement("button", { onClick: handleSaveToDevice, className: "flex-1 bg-purple-800 text-white font-bold py-3 rounded-xl hover:bg-purple-900 transition-colors" }, "Simpan di Cloud"),
                     React.createElement("button", { onClick: () => requestSendReport('telegram'), className: "flex-1 bg-sky-600 text-white font-bold py-3 rounded-xl hover:bg-sky-700 transition-colors" }, "Kirim Telegram"),
-                    React.createElement("button", { onClick: () => requestSendReport('wa'), className: "flex-1 bg-emerald-600 text-white font-bold py-3 rounded-xl hover:bg-emerald-700 transition-colors" }, "Kirim WA")))),
+                    React.createElement("button", { onClick: () => requestSendReport('wa'), className: "flex-1 bg-emerald-600 text-white font-bold py-3 rounded-xl hover:bg-emerald-700 transition-colors" }, "Kirim WA"),
+                    renderSheetsButton("flex-1 bg-emerald-500 text-white font-bold py-3 rounded-xl hover:bg-emerald-600 transition-colors")))),
             activeTab === 'inventory' && (React.createElement("div", { className: "bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm space-y-6" },
                 React.createElement("div", { className: "flex justify-between items-center" },
                     React.createElement("div", null,
@@ -10319,7 +10324,8 @@ Daily inventory done✅
                             emptyReportFieldsPreview.length > 12 ? `, +${emptyReportFieldsPreview.length - 12} lainnya` : ''),
                         React.createElement("p", { className: "text-[10px] mt-1 opacity-80" }, "Boleh disimpan dulu apa adanya. Wajib diisi (atau otomatis diisi 0) saat mengirim langsung ke Telegram/WA lewat tab Laporan Penjualan.")))),
                 React.createElement("div", { className: "pt-4 border-t border-slate-100" },
-                    React.createElement("button", { onClick: handleSaveToDevice, className: "w-full bg-indigo-700 hover:bg-indigo-800 text-white font-bold py-3 rounded-xl transition-all shadow-sm" }, "Simpan Data Cloud & Hitung")))),
+                    React.createElement("button", { onClick: handleSaveToDevice, className: "w-full bg-indigo-700 hover:bg-indigo-800 text-white font-bold py-3 rounded-xl transition-all shadow-sm" }, "Simpan Data Cloud & Hitung"),
+                    renderSheetsButton("w-full mt-3 bg-emerald-500 text-white font-bold py-3 rounded-xl hover:bg-emerald-600 transition-colors")))),
             activeTab === 'preorder' && (React.createElement("div", { className: "space-y-6" },
                 React.createElement("div", { className: "bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm space-y-5" },
                     React.createElement("div", null,

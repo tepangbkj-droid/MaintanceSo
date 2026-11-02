@@ -12500,8 +12500,8 @@ function JotformTab() {
                     React.createElement("i", { "data-lucide": "external-link", className: "w-3.5 h-3.5" }), "Buka di tab baru")))),
         safeUrl ? (React.createElement("div", { className: "relative bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden", style: { height: 'calc(100vh - 260px)', minHeight: '520px' } },
             !loaded && (React.createElement("div", { className: "absolute inset-0 flex items-center justify-center text-xs font-semibold text-slate-400" }, "Memuat form...")),
-            React.createElement("iframe", { key: formId + ':' + reloadKey, title: form.label, src: safeUrl, onLoad: () => setLoaded(true), className: "w-full h-full border-0", loading: "lazy", referrerPolicy: "no-referrer", sandbox: "allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads" }))) : (React.createElement("div", { className: "bg-rose-50 text-rose-700 text-xs rounded-xl p-3" }, "Alamat form tidak valid.")),
-        React.createElement("p", { className: "text-[11px] text-slate-500 px-1" }, "Data yang diisi tersimpan di Jotform (bukan di database Tarobun). Bila form tidak tampil, pakai tombol \"Buka di tab baru\".")));
+            React.createElement("iframe", { key: formId + ':' + reloadKey, title: form.label, src: safeUrl, onLoad: () => setLoaded(true), className: "w-full h-full border-0", loading: "lazy", referrerPolicy: "no-referrer", allow: "camera", sandbox: "allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads" }))) : (React.createElement("div", { className: "bg-rose-50 text-rose-700 text-xs rounded-xl p-3" }, "Alamat form tidak valid.")),
+        React.createElement("p", { className: "text-[11px] text-slate-500 px-1" }, "Data yang diisi tersimpan di Jotform (bukan di database Tarobun). Bila form tidak tampil atau kamera tidak bisa dibuka, pakai tombol \"Buka di tab baru\".")));
 }
 function DoughReportTab({ storeId, storeName, config, showToast }) {
     const DR = window.DoughReport;

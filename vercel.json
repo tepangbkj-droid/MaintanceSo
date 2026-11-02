@@ -32,7 +32,7 @@
         },
         {
           "key": "Permissions-Policy",
-          "value": "geolocation=(self), camera=(self), microphone=(), payment=(), usb=(), interest-cohort=()"
+          "value": "geolocation=(self), camera=(self \"https://form.jotform.com\"), microphone=(), payment=(), usb=(), interest-cohort=()"
         },
         {
           "key": "Cross-Origin-Opener-Policy",

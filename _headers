@@ -1,7 +1,7 @@
 # Dibuat dari vercel.json untuk Cloudflare Pages. Satu header per baris, spasi 2 di depan.
 
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://api.somandiritarobun.my.id; media-src 'self' blob: https://api.somandiritarobun.my.id; font-src 'self' data:; connect-src 'self' https://api.somandiritarobun.my.id wss://api.somandiritarobun.my.id https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://api.somandiritarobun.my.id; media-src 'self' blob: https://api.somandiritarobun.my.id; font-src 'self' data:; connect-src 'self' https://api.somandiritarobun.my.id wss://api.somandiritarobun.my.id https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src https://challenges.cloudflare.com https://form.jotform.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'; upgrade-insecure-requests
   Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY

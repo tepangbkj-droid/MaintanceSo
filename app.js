@@ -1488,6 +1488,7 @@ const STORE_MENU_GROUPS = [
             { tab: 'pengunjung', icon: 'users', label: 'Pengunjung', tour: 'menu-pengunjung' },
             { tab: 'infoRoti', icon: 'croissant', label: 'Informasi Roti', tour: 'menu-infoRoti' },
             { tab: 'doughReport', icon: 'timer', label: 'Laporan Dough', tour: 'menu-doughReport' },
+            { tab: 'jotform', icon: 'file-text', label: 'Form Jotform', tour: 'menu-jotform' },
             { tab: 'pettyCash', icon: 'wallet', label: 'Petty Cash', tour: 'menu-petty' },
             { tab: 'printing', icon: 'printer', label: 'Printing', tour: 'menu-printing' },
         ] },
@@ -11293,6 +11294,7 @@ Daily inventory done✅
             activeTab === 'infoRoti' && (React.createElement(InformasiRotiTab, { storeId: storeId, storeName: storeName, config: config, showToast: showToast, onOpenConfig: () => setShowConfig(true), historyList: historyList })),
             activeTab === 'psikotesOjt' && (React.createElement(StorePsikotesTab, null)),
             activeTab === 'pettyCash' && (React.createElement(StorePettyCashTab, { storeId: storeId, storeName: storeName, showToast: showToast })),
+            activeTab === 'jotform' && (React.createElement(JotformTab, null)),
             activeTab === 'doughReport' && (React.createElement(DoughReportTab, { storeId: storeId, storeName: storeName, config: config, showToast: showToast })),
             activeTab === 'investory' && (React.createElement(StoreInvestoryView, { storeId: storeId })))));
 }
@@ -12470,6 +12472,37 @@ const DOUGH_STAGES = [
     { id: 'bake', title: 'Baking', icon: '🔥', slots: ['bakeTimer', 'bakeTemp'] },
     { id: 'rest', title: 'Resting', icon: '⏱️', slots: ['restRoom', 'restStart', 'restEnd'], timer: { startKey: 'restStart', endKey: 'restEnd', std: 'rest', hint: 'Timer mulai setelah foto dough baru keluar oven. Standar resting 10 menit, lalu foto termo gun saat roti sudah suhu ruang.' } },
 ];
+// (2026-11) Menu Form Jotform: form Agrinesia tampil di dalam aplikasi (iframe). HANYA alamat https://form.jotform.com/ yang diizinkan
+// (daftar tetap di bawah, tidak bisa diisi dari luar). Untuk jaga-jaga, ada tombol buka di tab baru bila form tidak tampil.
+const JOTFORM_FORMS = [
+    { id: 'material', icon: 'package-check', label: 'Penerimaan & Penggunaan Material', url: 'https://form.jotform.com/Agrinesia/form-penerimaan-material-dan-penggu' },
+    { id: 'suhu', icon: 'thermometer', label: 'Suhu, RH & Waktu Proses', url: 'https://form.jotform.com/Agrinesia/form-pencatatan-suhu-rh-dan-waktu-p' },
+];
+function JotformTab() {
+    const [formId, setFormId] = React.useState(JOTFORM_FORMS[0].id);
+    const [loaded, setLoaded] = React.useState(false);
+    const [reloadKey, setReloadKey] = React.useState(0);
+    const form = JOTFORM_FORMS.find((f) => f.id === formId) || JOTFORM_FORMS[0];
+    const safeUrl = /^https:\/\/form\.jotform\.com\/[A-Za-z0-9_\-\/]+$/.test(form.url) ? form.url : '';
+    React.useEffect(() => { setLoaded(false); }, [formId, reloadKey]);
+    return (React.createElement("div", { className: "space-y-3 animate-fadeIn" },
+        React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-3 space-y-3" },
+            React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("i", { "data-lucide": "file-text", className: "w-5 h-5 text-indigo-600" }),
+                React.createElement("h2", { className: "text-base font-bold text-slate-800" }, "Form Jotform")),
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2" }, JOTFORM_FORMS.map((f) => (React.createElement("button", { key: f.id, type: "button", onClick: () => setFormId(f.id), className: `flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold border-2 text-left transition-all ${formId === f.id ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'}` },
+                React.createElement("i", { "data-lucide": f.icon, className: "w-4 h-4 shrink-0" }),
+                React.createElement("span", null, f.label))))),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("button", { type: "button", onClick: () => setReloadKey((k) => k + 1), className: "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200" },
+                    React.createElement("i", { "data-lucide": "refresh-cw", className: "w-3.5 h-3.5" }), "Muat ulang"),
+                safeUrl && (React.createElement("a", { href: safeUrl, target: "_blank", rel: "noopener noreferrer", className: "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200" },
+                    React.createElement("i", { "data-lucide": "external-link", className: "w-3.5 h-3.5" }), "Buka di tab baru")))),
+        safeUrl ? (React.createElement("div", { className: "relative bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden", style: { height: 'calc(100vh - 260px)', minHeight: '520px' } },
+            !loaded && (React.createElement("div", { className: "absolute inset-0 flex items-center justify-center text-xs font-semibold text-slate-400" }, "Memuat form...")),
+            React.createElement("iframe", { key: formId + ':' + reloadKey, title: form.label, src: safeUrl, onLoad: () => setLoaded(true), className: "w-full h-full border-0", loading: "lazy", referrerPolicy: "no-referrer", sandbox: "allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads" }))) : (React.createElement("div", { className: "bg-rose-50 text-rose-700 text-xs rounded-xl p-3" }, "Alamat form tidak valid.")),
+        React.createElement("p", { className: "text-[11px] text-slate-500 px-1" }, "Data yang diisi tersimpan di Jotform (bukan di database Tarobun). Bila form tidak tampil, pakai tombol \"Buka di tab baru\".")));
+}
 function DoughReportTab({ storeId, storeName, config, showToast }) {
     const DR = window.DoughReport;
     const e = React.createElement;

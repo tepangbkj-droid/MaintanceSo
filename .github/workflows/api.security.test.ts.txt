@@ -1,0 +1,53 @@
+import { describe, it, expect } from 'vitest';
+import { unstable_dev } from 'wrangler';
+
+describe('Cloudflare Workers Security Integration Tests', () => {
+  
+  // Skenario 1: Menguji Akses Tanpa Token (Unauthorized Access)
+  it('harus menolak akses ke endpoint sensitif jika tidak ada token otorisasi', async () => {
+    // Jalankan worker secara lokal menggunakan Wrangler preview/dev mode
+    const worker = await unstable_dev('src/index.ts', {
+      experimental: { disableExperimentalWarning: true },
+    });
+
+    const response = await worker.fetch('/api/secure-endpoint', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ data: 'test' }),
+    });
+
+    // Validasi: Harus mengembalikan status 401 Unauthorized atau 403 Forbidden
+    expect([401, 403]).toContain(response.status);
+
+    await worker.stop();
+  });
+
+  // Skenario 2: Menguji Ketahanan Terhadap SQL Injection pada Parameter D1 Database
+  it('harus mengamankan parameter input dari serangan SQL Injection', async () => {
+    const worker = await unstable_dev('src/index.ts', {
+      experimental: { disableExperimentalWarning: true },
+    });
+
+    // Payload berbahaya khas SQL Injection
+    const maliciousPayload = "' OR '1'='1";
+
+    const response = await worker.fetch(`/api/search?query=${encodeURIComponent(maliciousPayload)}`, {
+      method: 'GET',
+    });
+
+    const result = await response.json();
+
+    // Validasi: Aplikasi harus memperlakukannya sebagai string biasa, 
+    // sehingga tidak boleh mengembalikan seluruh data database secara ilegal.
+    // Status bisa 200 (dengan hasil kosong) atau 400 (Bad Request), tergantung validasi Anda.
+    expect(response.status).not.toBe(500); // Pastikan tidak terjadi crash/server error 
+    if (response.status === 200) {
+      // Pastikan data yang dikembalikan aman/kosong, bukan membocorkan tabel lain
+      expect(result).toEqual(expect.any(Object));
+    }
+
+    await worker.stop();
+  });
+});

@@ -300,14 +300,31 @@ const __tsSiteKey = async () => {
     }
     return __tsCfg;
 };
+const __tsEnsureScript = () => {
+    if (!__tsLoad)
+        __tsLoad = new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; sc.async = true; sc.onload = res; sc.onerror = () => { __tsLoad = null; rej(new Error('turnstile script')); }; document.head.appendChild(sc); });
+    return __tsLoad;
+};
+// PERFORMA LOGIN (2026-11): siapkan Turnstile (konfigurasi + script) di latar belakang begitu aplikasi dibuka,
+// jadi saat tombol Masuk ditekan hanya tinggal menjalankan tantangan, bukan mengunduh semuanya dulu.
+const __tsPrewarm = () => {
+    try {
+        __tsSiteKey().then((k) => { if (k)
+            __tsEnsureScript().catch(() => { }); }).catch(() => { });
+    }
+    catch (e) { }
+};
+try {
+    if (typeof window !== 'undefined')
+        setTimeout(__tsPrewarm, 0);
+}
+catch (e) { }
 const __tsToken = async () => {
     const key = await __tsSiteKey();
     if (!key)
         return null;
     try {
-        if (!__tsLoad)
-            __tsLoad = new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; sc.async = true; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
-        await __tsLoad;
+        await __tsEnsureScript();
         return await new Promise((resolve) => {
             const box = document.createElement('div');
             box.style.cssText = 'position:fixed;left:50%;top:40%;transform:translateX(-50%);z-index:100000';
@@ -1640,7 +1657,7 @@ function SplashScreen({ onFinish }) {
     const finishRef = React.useRef(onFinish);
     finishRef.current = onFinish;
     useEffect(() => {
-        const timer = setTimeout(() => finishRef.current && finishRef.current(), 1000);
+        const timer = setTimeout(() => finishRef.current && finishRef.current(), 300);
         return () => clearTimeout(timer);
     }, []);
     return (React.createElement("div", { className: "tarobun-splash fixed inset-0 z-[999] flex flex-col items-center justify-center bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900", style: { position: 'fixed', top: 0, right: 0, bottom: 0, left: 0, zIndex: 999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg,#581c87,#312e81,#0f172a)' }, onAnimationEnd: (e) => { if (e.target === e.currentTarget && e.animationName === 'tarobunSplashOut')
@@ -4201,14 +4218,19 @@ function AdminPanel({ onLogout }) {
     useEffect(() => {
         if (stores.length === 0)
             return;
-        if (!shouldRunPruneNow('admin_bulk'))
-            return;
-        stores.forEach((store) => {
-            const base = `stores/${store.id}`;
-            pruneOldEntries(db.ref(`${base}/history`), (item) => item.tanggal ? new Date(item.tanggal).getTime() : (item.createdAt || 0));
-            pruneOldEntries(db.ref(`${base}/wasteFotos`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => item.fotoKey ? [item.fotoKey] : []);
-            pruneOldEntries(db.ref(`${base}/kedatanganBarang`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
-        });
+        // PERFORMA LOGIN ADMIN (2026-11): dulu = (jumlah toko x 3) pembacaan koleksi penuh SEREMPAK saat admin masuk.
+        // Sekarang ditunda 90 detik dan berurutan per toko.
+        const t = setTimeout(async () => {
+            if (document.hidden || !shouldRunPruneNow('admin_bulk'))
+                return;
+            for (const store of stores) {
+                const base = `stores/${store.id}`;
+                await pruneOldEntries(db.ref(`${base}/history`), (item) => item.tanggal ? new Date(item.tanggal).getTime() : (item.createdAt || 0));
+                await pruneOldEntries(db.ref(`${base}/wasteFotos`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => item.fotoKey ? [item.fotoKey] : []);
+                await pruneOldEntries(db.ref(`${base}/kedatanganBarang`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
+            }
+        }, 90000);
+        return () => clearTimeout(t);
     }, [stores.length]);
     const activeChatStoreRef = React.useRef(null);
     useEffect(() => { activeChatStoreRef.current = activeChatStore; }, [activeChatStore]);
@@ -6412,15 +6434,27 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [notification, setNotification] = useState(null);
     const [showConfig, setShowConfig] = useState(false);
-    const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem(`tarobun_onboarding_store_${storeId}`));
+    // PERBAIKAN GULIR (2026-11): dulu tur langsung aktif di perangkat tanpa penanda lokal (HP baru / data dibersihkan /
+    // browser lain) SEBELUM server menjawab. Tur membuka menu samping dan memasang lapisan pelindung layar penuh
+    // (.tour-click-shield, z-99) sehingga menu/tab tidak bisa digulir atau disentuh selama data masih dimuat.
+    // Sekarang tur hanya tampil setelah server memastikan belum pernah dilihat; kalau gagal/lambat, tidak muncul.
+    const [showOnboarding, setShowOnboarding] = useState(false);
     const [showMandatoryChecklist, setShowMandatoryChecklist] = useState(false);
     useEffect(() => {
+        if (localStorage.getItem(`tarobun_onboarding_store_${storeId}`))
+            return;
+        let alive = true;
         restOnce(db.ref(`${storeBase}/info/onboardingSeen`)).then(snap => {
+            if (!alive)
+                return;
             if (snap.val() === true) {
                 localStorage.setItem(`tarobun_onboarding_store_${storeId}`, '1');
-                setShowOnboarding(false);
+            }
+            else {
+                setShowOnboarding(true);
             }
         }).catch(() => { });
+        return () => { alive = false; };
     }, []);
     const finishStoreOnboarding = () => {
         localStorage.setItem(`tarobun_onboarding_store_${storeId}`, '1');
@@ -8038,13 +8072,19 @@ function StoreApp({ storeId, storeName, onLogout }) {
         };
     }, []);
     useEffect(() => {
-        if (!shouldRunPruneNow(`store_${storeId}`))
-            return;
-        pruneOldEntries(db.ref(`${storeBase}/history`), (item) => item.tanggal ? new Date(item.tanggal).getTime() : (item.createdAt || 0));
-        pruneOldEntries(db.ref(`${storeBase}/wasteFotos`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => item.fotoKey ? [item.fotoKey] : []);
-        pruneOldEntries(db.ref(`${storeBase}/preOrders`), (item) => item.createdAt || item.pickupAt || 0, (item) => item.buktiKey ? [item.buktiKey] : []);
-        pruneOldEntries(db.ref(`${storeBase}/kedatanganBarang`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
-        pruneOldEntries(db.ref(`${storeBase}/bapReports`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
+        // PERFORMA LOGIN (2026-11): pembersihan data lama = 5 pembacaan SELURUH koleksi. Dulu jalan serentak
+        // tepat saat login (sekali/hari/perangkat) dan berebut jaringan dengan data layar utama.
+        // Sekarang ditunda 60 detik dan dijalankan satu per satu. Penanda 24 jam baru dipasang saat benar-benar jalan.
+        const t = setTimeout(async () => {
+            if (document.hidden || !shouldRunPruneNow(`store_${storeId}`))
+                return;
+            await pruneOldEntries(db.ref(`${storeBase}/history`), (item) => item.tanggal ? new Date(item.tanggal).getTime() : (item.createdAt || 0));
+            await pruneOldEntries(db.ref(`${storeBase}/wasteFotos`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0), (item) => item.fotoKey ? [item.fotoKey] : []);
+            await pruneOldEntries(db.ref(`${storeBase}/preOrders`), (item) => item.createdAt || item.pickupAt || 0, (item) => item.buktiKey ? [item.buktiKey] : []);
+            await pruneOldEntries(db.ref(`${storeBase}/kedatanganBarang`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
+            await pruneOldEntries(db.ref(`${storeBase}/bapReports`), (item) => item.createdAt || (item.tanggal ? new Date(item.tanggal).getTime() : 0));
+        }, 60000);
+        return () => clearTimeout(t);
     }, [storeId]);
     const activeTabRef = React.useRef(activeTab);
     useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
@@ -9825,7 +9865,7 @@ Daily inventory done✅
                             React.createElement("p", { className: "text-[10px] text-purple-200" }, "Menu Navigasi"))),
                     React.createElement("button", { onClick: () => setShowMenu(false), className: "p-1.5 hover:bg-white/10 rounded-lg" },
                         React.createElement("i", { "data-lucide": "x", className: "w-5 h-5" }))),
-                React.createElement("nav", { className: "flex-1 overflow-y-auto py-3 px-2 space-y-1.5" },
+                React.createElement("nav", { className: "flex-1 min-h-0 overflow-y-auto py-3 px-2 space-y-1.5", style: { overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' } },
                     STORE_MENU_GROUPS.map((g) => {
                         const open = showOnboarding || !!menuGroupsOpen[g.id];
                         const hasActive = g.items.some((i) => i.tab === activeTab);

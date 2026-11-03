@@ -8176,20 +8176,27 @@ function StoreApp({ storeId, storeName, onLogout }) {
         setShowConfig(false);
     };
     const handleSaveToDevice = async (opts) => {
-        const idEntry = salesData.tanggal;
+        const quiet = !!(opts && opts.quiet);
+        const sdSrc = (opts && opts.sales) || salesData;
+        const invSrc = (opts && opts.inv) || inventoryData;
+        const idEntry = sdSrc.tanggal;
         const payload = {
             id: Date.now().toString(),
-            tanggal: salesData.tanggal,
+            tanggal: sdSrc.tanggal,
             totalSales: totalBunsSold,
-            revenue: numVal(salesData.financials.value),
-            sales: { ...salesData },
-            inventory: { ...inventoryData }
+            revenue: numVal(sdSrc.financials.value),
+            sales: { ...sdSrc },
+            inventory: { ...invSrc }
         };
         try {
-            showToast('Menyimpan ke Cloud Firebase... ☁️');
+            if (!quiet)
+                showToast('Menyimpan ke Cloud Firebase... ☁️');
             await restSet(db.ref(`${storeBase}/history/` + idEntry), payload);
             const stillEmpty = getEmptyReportFields();
-            if (stillEmpty.length > 0) {
+            if (quiet) {
+                /* dipanggil otomatis dari tombol Kirim: tanpa toast sendiri */
+            }
+            else if (stillEmpty.length > 0) {
                 showToast(`Laporan tersimpan! ⚠️ Masih ada ${stillEmpty.length} field kosong (lihat catatan kuning di atas tombol simpan).`);
             }
             else {
@@ -8204,10 +8211,13 @@ function StoreApp({ storeId, storeName, onLogout }) {
             }
             if (!(opts && opts.skipSheets === true))
                 syncToSheetsServer(idEntry, true);
+            return true;
         }
         catch (error) {
             console.error(error);
-            showToast('Gagal menyimpan ke Firebase. Cek koneksi Internet / Aturan Rules.');
+            if (!quiet)
+                showToast('Gagal menyimpan ke Firebase. Cek koneksi Internet / Aturan Rules.');
+            return false;
         }
     };
     // Sinkron via Worker (server membaca ulang laporan dari database lalu menulis ke Spreadsheet toko ini).
@@ -8490,6 +8500,10 @@ Terima Kasih 🙏🏻`;
         const text = generateReportString(salesOverride || salesData, invOverride || inventoryData);
         const encodedText = encodeURIComponent(text);
         window.open(`https://api.whatsapp.com/send?text=${encodedText}`, '_blank', 'noopener,noreferrer');
+        // Otomatis simpan ke Cloud (dibuka dulu agar popup WA tidak diblokir browser)
+        handleSaveToDevice({ quiet: true, sales: salesOverride, inv: invOverride }).then((ok) => {
+            showToast(ok ? 'Laporan dibuka di WhatsApp & otomatis tersimpan di Cloud ☁️' : '⚠️ WA terbuka, tetapi laporan belum tersimpan di Cloud. Tekan Simpan.');
+        });
     };
     const handleSendToTelegram = async (salesOverride, invOverride) => {
         if (!config.telegramBotToken || !config.telegramChatId) {
@@ -8500,11 +8514,13 @@ Terima Kasih 🙏🏻`;
         const reportMessage = generateReportString(salesOverride || salesData, invOverride || inventoryData);
         showToast('Mengirim ke Telegram... ✈️');
         const res = await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, reportMessage);
+        // Otomatis simpan ke Cloud (juga bila Telegram gagal, supaya data tidak hilang)
+        const saved = await handleSaveToDevice({ quiet: true, sales: salesOverride, inv: invOverride });
         if (res.ok) {
-            showToast('Laporan berhasil dikirim ke Telegram! 🚀');
+            showToast(saved ? 'Laporan terkirim ke Telegram & tersimpan di Cloud! 🚀☁️' : 'Laporan terkirim ke Telegram, tetapi GAGAL tersimpan di Cloud. Tekan Simpan.');
         }
         else {
-            showToast(`Gagal mengirim laporan: ${res.error}`);
+            showToast(`Gagal mengirim laporan: ${res.error}` + (saved ? ' (data tetap tersimpan di Cloud)' : ''));
         }
     };
     const requestSendReport = (action) => {
@@ -8647,15 +8663,15 @@ Daily inventory done✅
         const hasTidakSesuai = kedatanganForm.tidakSesuai && kedatanganForm.tidakSesuai.length > 0;
         if (!hasKhusus && !hasUmum && !hasTidakSesuai) {
             showToast('⚠️ Isi minimal satu jumlah barang sebelum menyimpan.');
-            return;
+            return false;
         }
         if (hasKhusus && !kedatanganForm.noSuratJalan.trim()) {
             showToast('⚠️ No. Faktur/Surat Jalan wajib diisi untuk item Frozen Dough s.d. Filling (Kop Khusus).');
-            return;
+            return false;
         }
         if (!kedatanganForm.tanggal) {
             showToast('⚠️ Tanggal kedatangan wajib diisi.');
-            return;
+            return false;
         }
         setIsSavingKedatangan(true);
         try {
@@ -8680,7 +8696,7 @@ Daily inventory done✅
             if (Object.keys(safeItems).length === 0 && !hasTidakSesuai) {
                 showToast('⚠️ Jumlah barang tidak valid. Isi angka lebih dari 0.');
                 setIsSavingKedatangan(false);
-                return;
+                return false;
             }
             const payload = {
                 id: now.toString(),
@@ -8692,7 +8708,8 @@ Daily inventory done✅
                 createdAt: now
             };
             await restSet(db.ref(`${storeBase}/kedatanganBarang/` + now), payload);
-            showToast('Data kedatangan barang tersimpan ke Riwayat! 📦✨');
+            if (!(opts && opts.quiet))
+                showToast('Data kedatangan barang tersimpan ke Riwayat! 📦✨');
             setKedatanganHistoryList(prev => {
                 const withoutDup = prev.filter(it => it.firebaseKey !== now.toString());
                 return [...withoutDup, { ...payload, firebaseKey: now.toString() }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -8702,11 +8719,13 @@ Daily inventory done✅
                 await syncToSheetsServer(sheetsDate, false, ['kedatangan']);
             else
                 syncToSheetsServer(sheetsDate, true, ['kedatangan']);
+            return true;
         }
         catch (error) {
             console.error('Gagal menyimpan data kedatangan barang. Detail:', error);
             const reason = (error && error.message) ? error.message : 'periksa koneksi internet Anda';
             showToast(`Gagal menyimpan data: ${reason}. Data belum tersimpan, silakan coba lagi.`);
+            return false;
         }
         finally {
             setIsSavingKedatangan(false);
@@ -8730,10 +8749,14 @@ Daily inventory done✅
             return;
         }
         const text = generateKedatanganReportString(form);
+        // Form yang sedang diisi (bukan item riwayat) otomatis disimpan ke Cloud dulu; bila validasi gagal, tidak jadi kirim.
+        const isActiveForm = form === kedatanganForm;
+        if (isActiveForm && !(await handleSaveKedatangan({ quiet: true })))
+            return;
         showToast('Mengirim ke Telegram... ✈️');
         const res = await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, text);
         if (res.ok) {
-            showToast('Laporan kedatangan barang terkirim ke Telegram! 🚀');
+            showToast(isActiveForm ? 'Laporan kedatangan barang terkirim ke Telegram & tersimpan di Cloud! 🚀☁️' : 'Laporan kedatangan barang terkirim ke Telegram! 🚀');
         }
         else {
             showToast(`Gagal mengirim laporan: ${res.error}`);
@@ -8805,20 +8828,20 @@ Daily inventory done✅
         setBapForm(getEmptyBapForm());
         setBapKeteranganAuto(true);
     };
-    const handleSaveBap = async () => {
+    const handleSaveBap = async (opts) => {
         if (!bapForm.tanggal) {
             showToast('⚠️ Tanggal wajib diisi.');
-            return;
+            return false;
         }
         if (bapForm.jenis === 'paymentIssue') {
             if (numVal(bapForm.nominalSalahInput) <= 0) {
                 showToast('⚠️ Isi Nominal salah input sebelum menyimpan.');
-                return;
+                return false;
             }
         }
         else if (numVal(bapForm.nominalPos) <= 0 && numVal(bapForm.nominalChannel) <= 0) {
             showToast('⚠️ Isi minimal salah satu nominal (POS atau channel) sebelum menyimpan.');
-            return;
+            return false;
         }
         setIsSavingBap(true);
         try {
@@ -8845,17 +8868,20 @@ Daily inventory done✅
                 createdAt: now,
             };
             await restSet(db.ref(`${storeBase}/bapReports/` + now), payload);
-            showToast('Laporan BAP tersimpan ke Riwayat! 📋✨');
+            if (!(opts && opts.quiet))
+                showToast('Laporan BAP tersimpan ke Riwayat! 📋✨');
             setBapHistoryList(prev => {
                 const withoutDup = prev.filter(it => it.firebaseKey !== now.toString());
                 return [...withoutDup, { ...payload, firebaseKey: now.toString() }].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             });
             handleResetBapForm();
+            return true;
         }
         catch (error) {
             console.error('Gagal menyimpan laporan BAP. Detail:', error);
             const reason = (error && error.message) ? error.message : 'periksa koneksi internet Anda';
             showToast(`Gagal menyimpan data: ${reason}. Data belum tersimpan, silakan coba lagi.`);
+            return false;
         }
         finally {
             setIsSavingBap(false);
@@ -8879,10 +8905,13 @@ Daily inventory done✅
             return;
         }
         const text = generateBapReportString(form);
+        const isActiveForm = form === bapForm;
+        if (isActiveForm && !(await handleSaveBap({ quiet: true })))
+            return;
         showToast('Mengirim laporan BAP ke Telegram... ✈️');
         const res = await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, text);
         if (res.ok) {
-            showToast('Laporan BAP terkirim ke Telegram! 🚀');
+            showToast(isActiveForm ? 'Laporan BAP terkirim ke Telegram & tersimpan di Cloud! 🚀☁️' : 'Laporan BAP terkirim ke Telegram! 🚀');
         }
         else {
             showToast(`Gagal mengirim laporan: ${res.error}`);

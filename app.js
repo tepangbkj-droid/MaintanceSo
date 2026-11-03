@@ -1505,6 +1505,7 @@ const STORE_MENU_GROUPS = [
             { tab: 'pengunjung', icon: 'users', label: 'Pengunjung', tour: 'menu-pengunjung' },
             { tab: 'infoRoti', icon: 'croissant', label: 'Informasi Roti', tour: 'menu-infoRoti' },
             { tab: 'doughReport', icon: 'timer', label: 'Laporan Dough', tour: 'menu-doughReport' },
+            { tab: 'doughRnd', icon: 'flask-conical', label: 'Laporan Dough RnD', tour: 'menu-doughRnd' },
             { tab: 'jotform', icon: 'file-text', label: 'Form Jotform', tour: 'menu-jotform' },
             { tab: 'pettyCash', icon: 'wallet', label: 'Petty Cash', tour: 'menu-petty' },
             { tab: 'printing', icon: 'printer', label: 'Printing', tour: 'menu-printing' },
@@ -1526,6 +1527,7 @@ const STORE_ONBOARDING_STEPS = [
     { icon: 'users', title: 'Pengunjung', desc: 'Ketuk +1 setiap ada pengunjung masuk. Data per jam dipakai AI untuk menentukan jam ramai dan apa yang perlu disiapkan.', target: '[data-tour="menu-pengunjung"]' },
     { icon: 'croissant', title: 'Informasi Roti', desc: 'Isi jumlah roti matang & roti yang masih proses baking, total dihitung otomatis lalu dikirim ke grup Telegram. Status juga dibagikan ke outlet lain untuk saran kasih/minta roti.', target: '[data-tour="menu-infoRoti"]' },
     { icon: 'timer', title: 'Laporan Dough', desc: 'Laporkan lama ngembang dough (thawing, proofing, baking, resting) lengkap dengan foto berstempel jam & timer pengingat. Hasilnya jadi PDF dan otomatis dikirim ke Telegram dengan CC Store Leader.', target: '[data-tour="menu-doughReport"]' },
+    { icon: 'flask-conical', title: 'Laporan Dough RnD', desc: 'Isi hasil pengamatan trial frozen dough (thawing, proofing, baking) dan foto TRIAL vs EXISTING sesuai protokol RnD. Hasilnya jadi pesan hasil pengamatan + PDF dan otomatis dikirim ke Telegram.', target: '[data-tour="menu-doughRnd"]' },
     { icon: 'camera', title: 'Foto Rijek', desc: 'Unggah foto bun rijek, barang rijek, atau waste sebagai bukti dan dikirim ke Telegram.', target: '[data-tour="menu-wasteFoto"]' },
     { icon: 'wallet', title: 'Petty Cash', desc: 'Laporkan pemakaian uang kas kecil lengkap dengan foto struk. Pengajuan masuk ke Store Leader untuk di-ACC, dan statusnya bisa kamu pantau di sini.', target: '[data-tour="menu-petty"]' },
     { icon: 'printer', title: 'Printing', desc: 'Cetak label Premix, kartu Customer Request (dengan QR Saluran WhatsApp), dan Catatan Stok ke printer thermal 58/80mm.', target: '[data-tour="menu-printing"]' },
@@ -11365,6 +11367,7 @@ Daily inventory done✅
             activeTab === 'pettyCash' && (React.createElement(StorePettyCashTab, { storeId: storeId, storeName: storeName, showToast: showToast })),
             activeTab === 'jotform' && (React.createElement(JotformTab, null)),
             activeTab === 'doughReport' && (React.createElement(DoughReportTab, { storeId: storeId, storeName: storeName, config: config, showToast: showToast })),
+            activeTab === 'doughRnd' && (React.createElement(DoughRndTab, { storeId: storeId, storeName: storeName, config: config, showToast: showToast })),
             activeTab === 'investory' && (React.createElement(StoreInvestoryView, { storeId: storeId })))));
 }
 const TRAFFIC_LOCATION_TYPES = ['Mall', 'Ruko / Jalan Raya', 'Kampus / Sekolah', 'Perkantoran', 'Wisata / Pasar', 'Lainnya'];
@@ -12871,6 +12874,264 @@ function DoughReportTab({ storeId, storeName, config, showToast }) {
         e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4' },
             e('h2', { className: 'font-bold text-slate-800 text-base' }, '🥖 Laporan Dough'),
             e('p', { className: 'text-xs text-slate-500 mt-1' }, 'Laporkan lama proses ngembang dough yang tidak sesuai standar. Setiap foto otomatis berstempel tanggal & jam.'),
+            e('p', { className: 'text-[11px] text-emerald-700 mt-1' }, '🔒 Foto hanya disimpan di HP ini sampai laporan terkirim. Tidak diunggah ke server aplikasi.'),
+            e('div', { className: 'flex gap-2 mt-3' },
+                e('button', { onClick: () => setView('form'), className: `flex-1 py-2 rounded-xl text-xs font-bold ${view === 'form' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600'}` }, 'Buat Laporan'),
+                e('button', { onClick: () => setView('history'), className: `flex-1 py-2 rounded-xl text-xs font-bold ${view === 'history' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600'}` }, 'Riwayat'))),
+        view === 'form' ? formView : historyView);
+}
+
+// ===== LAPORAN DOUGH RND (2026-11): protokol Trial In Store Frozen Dough (Yeast 200%) =====
+// Logika, teks hasil pengamatan & PDF (meniru layout Work Instruction) ada di dough-rnd.js (window.DoughRnd).
+// Foto hanya disimpan di perangkat (IndexedDB, kunci diawali "rnd_"), lalu dikirim: pesan HASIL PENGAMATAN + PDF ke Telegram toko.
+function DoughRndTab({ storeId, storeName, config, showToast }) {
+    const DR = window.DoughRnd;
+    const e = React.createElement;
+    if (!DR) {
+        return e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-5 text-xs text-slate-500' }, 'Modul Laporan Dough RnD belum termuat. Muat ulang halaman.');
+    }
+    const storeBase = `stores/${storeId}`;
+    const blank3 = () => [['', ''], ['', ''], ['', '']];
+    const blankForm = () => ({ pelapor: '', kategori: '', thawTempTrial: '', thawTempExist: '', roomTemp: '', roomRH: '', thawStart: '', thawEnd: '', placeTrial: '', placeExist: '', proofTempSet: '', proofTempAct: '', proofRHSet: '', proofRHAct: '', proofStart: '', proofEnd: '', proofTrial: blank3(), proofExist: blank3(), ovenPreheat: '', ovenSetting: '', ovenActual: '', bakeMin: '', placeBakeTrial: '', placeBakeExist: '', bakeTrial: blank3(), bakeExist: blank3(), notes: '', photos: {} });
+    const [form, setForm] = useDraftState(storeId, 'dough_rnd', blankForm, { maxAgeHours: 20 });
+    const [imgs, setImgs] = useState({});
+    const [busy, setBusy] = useState('');
+    const [sending, setSending] = useState(false);
+    const [view, setView] = useState('form');
+    const [history, setHistory] = useState([]);
+    const [histLoading, setHistLoading] = useState(false);
+    const fileRef = React.useRef(null);
+    const pendingSlot = React.useRef('');
+    useEffect(() => { scheduleLucideIcons(); });
+    const LK = (k) => 'rnd_' + k; // kunci penyimpanan lokal (dipisah dari Laporan Dough biasa)
+    useEffect(() => {
+        let dead = false;
+        (async () => {
+            const have = (form && form.photos) || {};
+            const loaded = {}, lost = [];
+            for (const s of DR.SLOTS) {
+                if (!have[s.k]) continue;
+                try { const r = await DoughLocal.get(storeId, LK(s.k)); if (r && r.dataUrl) loaded[s.k] = r.dataUrl; else lost.push(s.k); }
+                catch (err) { lost.push(s.k); }
+            }
+            if (dead) return;
+            setImgs(loaded);
+            if (lost.length) {
+                setForm((prev) => { const p = { ...(prev.photos || {}) }; lost.forEach((k) => { delete p[k]; }); return { ...prev, photos: p }; });
+                showToast(`⚠️ ${lost.length} foto tidak ditemukan di perangkat ini. Mohon ambil ulang.`);
+            }
+            if (!Object.keys(have).length) { try { await DoughLocal.clearSlots(storeId, DR.SLOTS.map((s) => LK(s.k))); } catch (err) { } }
+        })();
+        return () => { dead = true; };
+    }, []);
+    const photos = (form && form.photos) || {};
+    const ev = DR.evaluate(form || {});
+    const doneCount = DR.SLOTS.filter((s) => photos[s.k]).length;
+    const reqCount = DR.SLOTS.filter((s) => s.req).length;
+    const reqDone = DR.SLOTS.filter((s) => s.req && photos[s.k]).length;
+    const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
+    const setMeasure = (key, i, j, v) => setForm((prev) => {
+        const rows = (prev[key] || blank3()).map((r) => [...r]);
+        rows[i][j] = String(v).replace(/[^0-9.,]/g, '').slice(0, 6);
+        return { ...prev, [key]: rows };
+    });
+    // ---- ambil foto ----
+    const askPhoto = (slotKey) => {
+        if (busy || sending) return;
+        if (!form.kategori) { showToast('⚠️ Pilih Kategori Store (Panas / Dingin / Suhu Ruang) dulu sebelum mengambil foto.'); return; }
+        pendingSlot.current = slotKey;
+        if (fileRef.current) { fileRef.current.value = ''; fileRef.current.click(); }
+    };
+    const onFile = async (evt) => {
+        const file = evt.target.files && evt.target.files[0];
+        const slotKey = pendingSlot.current;
+        if (!file || !slotKey) return;
+        if (file.lastModified > 0 && Date.now() - file.lastModified > 5 * 60 * 1000) {
+            showToast('⚠️ Foto harus diambil langsung dari kamera (bukan dari galeri) agar jamnya valid.');
+            return;
+        }
+        const slot = DR.SLOTS.find((s) => s.k === slotKey);
+        setBusy(slotKey);
+        try {
+            const ts = Date.now();
+            const dataUrl = await stampDoughPhoto(file, [`${slot.stage} - ${slot.label}`, `${storeName || ''} | ${form.kategori}`, `${DR.fmtDT(ts)} WIB`]);
+            try { await DoughLocal.put(storeId, LK(slotKey), dataUrl); }
+            catch (err) { showToast('⚠️ Penyimpanan perangkat tidak tersedia. Jangan tutup aplikasi sebelum laporan terkirim.'); }
+            setImgs((prev) => ({ ...prev, [slotKey]: dataUrl }));
+            setForm((prev) => ({ ...prev, photos: { ...(prev.photos || {}), [slotKey]: { ts } } }));
+        }
+        catch (err) { showToast('⚠️ ' + ((err && err.message) || 'Gagal memproses foto. Coba lagi.')); }
+        finally { setBusy(''); }
+    };
+    const removePhoto = (slotKey) => {
+        if (!window.confirm('Hapus foto ini dan ambil ulang?')) return;
+        DoughLocal.del(storeId, LK(slotKey)).catch(() => { });
+        setImgs((prev) => { const n = { ...prev }; delete n[slotKey]; return n; });
+        setForm((prev) => { const p = { ...(prev.photos || {}) }; delete p[slotKey]; return { ...prev, photos: p }; });
+    };
+    const collectImages = async () => {
+        const images = {};
+        for (const s of DR.SLOTS) {
+            let du = imgs[s.k];
+            if (!du) { try { const r = await DoughLocal.get(storeId, LK(s.k)); du = r && r.dataUrl; } catch (err) { du = null; } }
+            if (du) images[s.k] = doughDataUrlToU8(du);
+        }
+        return images;
+    };
+    const safeName = (s) => String(s || 'toko').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30) || 'toko';
+    // ---- kirim: pesan HASIL PENGAMATAN + PDF ke Telegram ----
+    const handleSend = async () => {
+        if (sending || busy) return;
+        const err0 = DR.validate(form, photos);
+        if (err0) { showToast('⚠️ ' + err0); return; }
+        setSending(true);
+        try {
+            const nowMs = Date.now();
+            const clean = { ...form, pelapor: String(form.pelapor).trim(), notes: String(form.notes || '').trim() };
+            const rep = { storeName: storeName || storeId, createdAt: nowMs, form: clean };
+            const images = await collectImages();
+            const pdf = DR.buildPdf(rep, images);
+            const cc = parseCcUsernames(config && config.telegramCc);
+            const ctl = new AbortController();
+            const timer = setTimeout(() => ctl.abort(), 120000);
+            try {
+                const r1 = await tgRelayFetch('sendMessage', { text: DR.buildText(rep) }, { signal: ctl.signal });
+                const d1 = await r1.json().catch(() => ({}));
+                if (!d1.ok) throw new Error(d1.description || d1.error || 'Telegram menolak pesan hasil pengamatan.');
+                const fd = new FormData();
+                fd.append('caption', DR.buildCaption(rep, cc));
+                fd.append('document', new Blob([pdf], { type: 'application/pdf' }), `Laporan-Dough-RnD-${safeName(rep.storeName)}-${todayWIB(nowMs)}.pdf`);
+                const r2 = await tgRelayFetch('sendDocument', fd, { signal: ctl.signal });
+                const d2 = await r2.json().catch(() => ({}));
+                if (!d2.ok) throw new Error(d2.description || d2.error || 'Telegram menolak file PDF.');
+            }
+            finally { clearTimeout(timer); }
+            // Server hanya menerima RINGKASAN (tanpa foto) untuk riwayat.
+            try {
+                const ev2 = DR.evaluate(clean);
+                await restSet(db.ref(`${storeBase}/doughRndReports/${nowMs}`), { id: String(nowMs), createdAt: nowMs, storeName: rep.storeName, pelapor: clean.pelapor, kategori: clean.kategori, thawMin: ev2.thaw, proofMin: ev2.proof, bakeMin: ev2.bake, proofStatus: ev2.proofStatus, notes: clean.notes });
+            }
+            catch (err) { console.error('Riwayat Laporan Dough RnD gagal disimpan:', err); }
+            DoughLocal.clearSlots(storeId, DR.SLOTS.map((s) => LK(s.k))).catch(() => { });
+            setImgs({});
+            setForm(blankForm());
+            showToast('✅ Laporan Dough RnD (hasil pengamatan + PDF) terkirim ke Telegram.');
+            loadHistory();
+        }
+        catch (err) {
+            showToast('⚠️ ' + ((err && err.name === 'AbortError') ? 'Waktu habis saat mengirim. Periksa sinyal lalu coba lagi.' : ((err && err.message) || 'Gagal mengirim laporan.')));
+        }
+        finally { setSending(false); }
+    };
+    const loadHistory = async () => {
+        setHistLoading(true);
+        try {
+            const snap = await restOnce(db.ref(`${storeBase}/doughRndReports`).limitToLast(20));
+            const v = snap.val() || {};
+            setHistory(Object.keys(v).map((k) => ({ ...v[k], id: v[k].id || k })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+        }
+        catch (err) { showToast('⚠️ Gagal memuat riwayat Laporan Dough RnD.'); }
+        finally { setHistLoading(false); }
+    };
+    useEffect(() => { if (view === 'history') loadHistory(); }, [view]);
+    const resetAll = () => {
+        if (!window.confirm('Mulai laporan baru? Semua isian & foto yang belum dikirim akan dihapus dari layar ini.')) return;
+        DoughLocal.clearSlots(storeId, DR.SLOTS.map((s) => LK(s.k))).catch(() => { });
+        setImgs({}); setForm(blankForm());
+    };
+    // ---- komponen tampilan ----
+    const inputCls = 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm';
+    const lbl = (t) => e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, t);
+    const numField = (label, key, unit) => e('div', { key }, lbl(label + (unit ? ` (${unit})` : '')),
+        e('input', { value: form[key] || '', inputMode: 'decimal', onChange: (x) => setField(key, x.target.value.replace(/[^0-9.,]/g, '').slice(0, 6)), className: inputCls }));
+    const textField = (label, key, ph) => e('div', { key }, lbl(label),
+        e('input', { value: form[key] || '', onChange: (x) => setField(key, x.target.value.slice(0, 120)), placeholder: ph || '', className: inputCls }));
+    const timeField = (label, key) => e('div', { key }, lbl(label),
+        e('div', { className: 'flex gap-2' },
+            e('input', { type: 'time', value: form[key] || '', onChange: (x) => setField(key, x.target.value), className: inputCls }),
+            e('button', { type: 'button', onClick: () => setField(key, DR.fmtHM(Date.now())), className: 'shrink-0 text-[11px] font-bold px-3 rounded-xl bg-purple-100 text-purple-700' }, 'Sekarang')));
+    const measureGrid = (title, key) => e('div', { key, className: 'rounded-xl border border-slate-200 p-3 bg-slate-50' },
+        e('p', { className: 'text-xs font-bold text-slate-700 mb-2' }, title),
+        e('div', { className: 'grid grid-cols-[auto_1fr_1fr] gap-2 items-center' },
+            e('span', null), e('span', { className: 'text-[10px] font-semibold text-slate-500' }, 'Diameter (cm)'), e('span', { className: 'text-[10px] font-semibold text-slate-500' }, 'Tinggi (cm)'),
+            [0, 1, 2].map((i) => [
+                e('span', { key: 'l' + i, className: 'text-[11px] text-slate-500' }, `Pcs ${i + 1}`),
+                e('input', { key: 'd' + i, value: ((form[key] || [])[i] || [])[0] || '', inputMode: 'decimal', onChange: (x) => setMeasure(key, i, 0, x.target.value), className: 'w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm bg-white' }),
+                e('input', { key: 't' + i, value: ((form[key] || [])[i] || [])[1] || '', inputMode: 'decimal', onChange: (x) => setMeasure(key, i, 1, x.target.value), className: 'w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm bg-white' })
+            ])));
+    const slotRow = (s) => {
+        const p = photos[s.k], thumb = imgs[s.k];
+        return e('div', { key: s.k, className: 'flex items-center gap-3 py-2 border-t border-slate-100' },
+            thumb ? e('img', { src: thumb, alt: s.label, className: 'w-14 h-14 rounded-lg object-cover border border-slate-200 flex-shrink-0' }) : e('div', { className: 'w-14 h-14 rounded-lg bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-lg flex-shrink-0' }, busy === s.k ? '⏳' : '📷'),
+            e('div', { className: 'flex-1 min-w-0' },
+                e('p', { className: 'text-xs font-semibold text-slate-800' }, s.label, s.req ? null : e('span', { className: 'text-[10px] font-normal text-slate-400' }, ' (opsional)')),
+                e('p', { className: 'text-[10px] text-slate-500' }, p ? `${DR.fmtDT(p.ts)} WIB` : 'Belum diambil')),
+            e('div', { className: 'flex flex-col gap-1' },
+                e('button', { onClick: () => askPhoto(s.k), disabled: !!busy || sending, className: `text-[11px] font-bold px-3 py-1.5 rounded-lg ${p ? 'bg-slate-100 text-slate-700' : 'bg-purple-600 text-white'} disabled:opacity-50` }, busy === s.k ? 'Menyimpan...' : (p ? 'Ulang' : 'Ambil foto')),
+                p ? e('button', { onClick: () => removePhoto(s.k), disabled: !!busy || sending, className: 'text-[10px] text-red-700 font-semibold' }, 'Hapus') : null));
+    };
+    const slotsOf = (stage) => DR.SLOTS.filter((s) => s.stage === stage).map(slotRow);
+    const card = (title, children) => e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-3' }, e('h3', { className: 'font-bold text-slate-800 text-sm' }, title), children);
+    const two = (a, b) => e('div', { className: 'grid grid-cols-2 gap-3' }, a, b);
+    const evBox = (name, min, extra) => e('div', { className: `rounded-xl px-3 py-2 text-xs font-semibold ${extra === 'long' ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-700'} border border-slate-200` }, `${name}: ${DR.fmtDur(min)}${extra === 'long' ? ` - MELEBIHI maks ${DR.PROOF_MAX} menit!` : ''}`);
+    const kategoriHint = form.kategori ? `Cek proofing saat menit ke-${ev.checkpoint}. Maksimum ${DR.PROOF_MAX} menit. Bila target dimensi sudah tercapai lebih cepat, hentikan proofing.` : 'Pilih kategori store dulu.';
+
+    const formView = e('div', { className: 'space-y-4' },
+        card('📋 Informasi Trial', e('div', { className: 'space-y-3' },
+            e('div', { className: 'text-[11px] text-slate-600 bg-purple-50 rounded-xl px-3 py-2' }, `${DR.PRODUCT} - 70 pcs dough trial. Letakkan 1 tray TRIAL dan 1 tray EXISTING, lakukan thawing sesuai kondisi aktual di store.`),
+            e('div', null, lbl('Store'), e('div', { className: 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700' }, storeName || storeId)),
+            textField('Nama pelapor', 'pelapor', 'Nama lengkap'),
+            e('div', null, lbl('Kategori Store'),
+                e('div', { className: 'grid grid-cols-3 gap-2' }, DR.KATEGORI.map((k) => e('button', { key: k, type: 'button', onClick: () => setField('kategori', k), 'aria-pressed': form.kategori === k, className: `py-2 rounded-xl text-[11px] font-bold border ${form.kategori === k ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-slate-700 border-slate-300'}` }, k))))
+        )),
+        card('🧊 Setelah Thawing', e('div', { className: 'space-y-3' },
+            two(numField('Suhu permukaan dough TRIAL', 'thawTempTrial', '°C'), numField('Suhu permukaan dough EXISTING', 'thawTempExist', '°C')),
+            two(numField('Suhu ruangan (jika ada)', 'roomTemp', '°C'), numField('RH ruangan (jika ada)', 'roomRH', '%')),
+            two(timeField('Jam mulai thawing', 'thawStart'), timeField('Jam selesai thawing', 'thawEnd')),
+            evBox('Waktu total thawing', ev.thaw),
+            textField('Penempatan dough TRIAL pada tray (opsional)', 'placeTrial', 'mis. 2 baris x 5, rata'),
+            textField('Penempatan dough EXISTING pada tray (opsional)', 'placeExist', 'mis. 2 baris x 5, rata'),
+            e('div', null, slotsOf('Thawing')))),
+        card('🌡️ Saat Proofing di Proofer', e('div', { className: 'space-y-3' },
+            e('p', { className: 'text-[11px] text-amber-800 bg-amber-50 rounded-xl px-3 py-2' }, kategoriHint),
+            two(numField('Suhu proofer - setting', 'proofTempSet', '°C'), numField('Suhu proofer - aktual', 'proofTempAct', '°C')),
+            two(numField('RH proofer - setting', 'proofRHSet', '%'), numField('RH proofer - aktual', 'proofRHAct', '%')),
+            two(timeField('Jam mulai proofing', 'proofStart'), timeField('Jam selesai proofing', 'proofEnd')),
+            evBox('Waktu total proofing', ev.proof, ev.proofStatus),
+            e('div', null, slotsOf('Proofing')),
+            measureGrid('Dimensi dough TRIAL setelah proofing (3 pcs)', 'proofTrial'),
+            measureGrid('Dimensi dough EXISTING setelah proofing (3 pcs)', 'proofExist'))),
+        card('🔥 Saat Baking (setting existing)', e('div', { className: 'space-y-3' },
+            two(numField('Suhu oven preheat', 'ovenPreheat', '°C'), numField('Suhu oven setting', 'ovenSetting', '°C')),
+            two(numField('Suhu oven aktual (1 menit terakhir)', 'ovenActual', '°C'), numField('Waktu baking', 'bakeMin', 'menit')),
+            e('div', null, slotsOf('Baking')))),
+        card('🥐 Setelah Baking', e('div', { className: 'space-y-3' },
+            textField('Penempatan roti TRIAL pada tray (opsional)', 'placeBakeTrial', 'mis. 2 baris x 5'),
+            textField('Penempatan roti EXISTING pada tray (opsional)', 'placeBakeExist', 'mis. 2 baris x 5'),
+            e('div', null, slotsOf('Setelah baking')),
+            measureGrid('Dimensi roti TRIAL setelah baking (3 pcs)', 'bakeTrial'),
+            measureGrid('Dimensi roti EXISTING setelah baking (3 pcs)', 'bakeExist'))),
+        e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4' },
+            lbl('Keterangan (opsional)'),
+            e('textarea', { value: form.notes || '', onChange: (x) => setField('notes', x.target.value.slice(0, 300)), rows: 3, placeholder: 'Catatan tambahan selama trial', className: inputCls }),
+            e('p', { className: 'text-[10px] text-slate-400 text-right mt-1' }, `${(form.notes || '').length}/300`)),
+        e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-3' },
+            e('p', { className: 'text-xs text-slate-600' }, `Foto wajib terisi ${reqDone} dari ${reqCount} (total foto ${doneCount}/${DR.SLOTS.length}). Setelah dikirim, pesan HASIL PENGAMATAN dan PDF laporan (lengkap dengan foto TRIAL vs EXISTING) otomatis masuk ke grup Telegram toko.`),
+            e('button', { onClick: handleSend, disabled: sending || !!busy, className: 'w-full py-3 rounded-xl bg-purple-600 text-white font-bold text-sm disabled:opacity-50' }, sending ? 'Membuat PDF & mengirim...' : '📤 Kirim Laporan ke Telegram'),
+            e('button', { onClick: resetAll, disabled: sending, className: 'w-full py-2 rounded-xl bg-slate-100 text-slate-600 font-semibold text-xs' }, 'Mulai laporan baru / kosongkan')));
+    const historyView = e('div', { className: 'space-y-3' },
+        histLoading ? e('p', { className: 'text-xs text-slate-500 text-center py-6' }, 'Memuat riwayat...') : null,
+        (!histLoading && !history.length) ? e('p', { className: 'text-xs text-slate-500 text-center py-6' }, 'Belum ada Laporan Dough RnD yang terkirim.') : null,
+        history.map((r) => e('div', { key: r.id, className: 'bg-white rounded-2xl border border-slate-200 p-4' },
+            e('p', { className: 'text-sm font-bold text-slate-800' }, `${r.kategori || '-'} - ${r.pelapor || '-'}`),
+            e('p', { className: 'text-[11px] text-slate-500' }, `${DR.fmtDT(r.createdAt)} WIB`),
+            e('p', { className: 'text-[11px] text-slate-600 mt-2' }, `Thawing ${DR.fmtDur(r.thawMin)} | Proofing ${DR.fmtDur(r.proofMin)}${r.proofStatus === 'long' ? ' (melebihi batas)' : ''} | Baking ${r.bakeMin === null || r.bakeMin === undefined ? '-' : r.bakeMin + ' menit'}`),
+            e('p', { className: 'text-[10px] text-slate-400 mt-2' }, 'PDF lengkap beserta foto ada di grup Telegram toko.'))));
+    return e('div', { className: 'space-y-4' },
+        e('input', { ref: fileRef, type: 'file', accept: 'image/*', capture: 'environment', onChange: onFile, className: 'hidden' }),
+        e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4' },
+            e('h2', { className: 'font-bold text-slate-800 text-base' }, '🧪 Laporan Dough RnD'),
+            e('p', { className: 'text-xs text-slate-500 mt-1' }, DR.TITLE + '. Isi hasil pengamatan & ambil foto TRIAL dan EXISTING sesuai protokol.'),
             e('p', { className: 'text-[11px] text-emerald-700 mt-1' }, '🔒 Foto hanya disimpan di HP ini sampai laporan terkirim. Tidak diunggah ke server aplikasi.'),
             e('div', { className: 'flex gap-2 mt-3' },
                 e('button', { onClick: () => setView('form'), className: `flex-1 py-2 rounded-xl text-xs font-bold ${view === 'form' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600'}` }, 'Buat Laporan'),

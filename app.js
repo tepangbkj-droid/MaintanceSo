@@ -6484,19 +6484,26 @@ function StoreApp({ storeId, storeName, onLogout }) {
         { id: 'blueberry_konsentrat', nama: 'Blueberry Konsentrat', hari: 14, bahan: [
                 { label: 'Blueberry Konsentrat', opsi: ['PT Sonton Food Indonesia'] },
             ] },
-        { id: 'whipping_cream', nama: 'Whipping Cream (Original)', hari: 5, bahan: [
+        { id: 'whipping_cream', nama: 'Whipping Cream (Kebuka)', hari: 7, bahan: [
                 { label: 'Susu', opsi: SUSU_OPSI },
                 { label: 'Whipping Cream', opsi: ['PT Rich Products Manufacturing'] },
             ] },
-        { id: 'stroberi_foam', nama: 'Stroberi Foam', hari: 5, bahan: [
+        { id: 'whipping_cream_foam', nama: 'Whipping Cream Foam', hari: 1, bahan: [
+                { label: 'Susu', opsi: SUSU_OPSI },
+                { label: 'Whipping Cream', opsi: ['PT Rich Products Manufacturing'] },
+            ] },
+        { id: 'stroberi_foam', nama: 'Stroberi Foam', hari: 3, bahan: [
                 { label: 'Susu', opsi: SUSU_OPSI },
                 { label: 'Whipping Cream', opsi: ['PT Rich Products Manufacturing'] },
                 { label: 'Sirup Stroberi', opsi: ['PT Tirta Djaya Globalindo'] },
             ] },
-        { id: 'cheese_foam', nama: 'Cheese Foam', hari: 5, bahan: [
+        { id: 'cheese_foam', nama: 'Cheese Foam', hari: 3, bahan: [
                 { label: 'Susu', opsi: SUSU_OPSI },
                 { label: 'Whipping Cream', opsi: ['PT Rich Products Manufacturing'] },
                 { label: 'Cheese Powder', opsi: ['PT Delifry Utama Indonesia'] },
+            ] },
+        { id: 'taro_powder', nama: 'Taro Powder', bulan: 3, bahan: [
+                { label: 'Taro Powder', opsi: ['PT Agrinesia'] },
             ] },
         { id: 'susu', nama: 'Susu', hari: 1, bahan: [
                 { label: 'Susu', opsi: SUSU_OPSI },
@@ -6634,12 +6641,14 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const fmtDateTimeLabel = (d) => `${pad2(d.getDate())} ${BULAN_SINGKAT[d.getMonth()]} ${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
     const toLocalInput = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
     const addDays = (d, n) => { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; };
+    const addShelf = (d, it) => { if (it && it.bulan) { const x = new Date(d.getTime()); x.setMonth(x.getMonth() + it.bulan); return x; } return addDays(d, (it && it.hari) || 0); };
+    const shelfLabel = (it) => (it && it.bulan ? `${it.bulan} bulan` : `${it ? it.hari : 0} hari`);
     const premixItem = PREMIX_CATALOG.find(i => i.id === premixForm.itemId) || null;
     const getPremixTimes = (nowDate) => {
         if (!premixItem)
             return { kp: null, ed: null };
         if (premixForm.timeMode === 'auto') {
-            return { kp: nowDate, ed: addDays(nowDate, premixItem.hari) };
+            return { kp: nowDate, ed: addShelf(nowDate, premixItem) };
         }
         const kp = premixForm.kpManual ? new Date(premixForm.kpManual) : null;
         const ed = premixForm.edManual ? new Date(premixForm.edManual) : null;
@@ -6657,14 +6666,14 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const setPremixTimeMode = (mode) => setPremixForm(prev => {
         if (mode === 'manual' && premixItem) {
             const kp = new Date();
-            return { ...prev, timeMode: 'manual', kpManual: toLocalInput(kp), edManual: toLocalInput(addDays(kp, premixItem.hari)) };
+            return { ...prev, timeMode: 'manual', kpManual: toLocalInput(kp), edManual: toLocalInput(addShelf(kp, premixItem)) };
         }
         return { ...prev, timeMode: 'auto' };
     });
     const setPremixKpManual = (val) => setPremixForm(prev => {
         const it = PREMIX_CATALOG.find(i => i.id === prev.itemId);
         const kp = val ? new Date(val) : null;
-        const ed = kp && !isNaN(kp) && it ? toLocalInput(addDays(kp, it.hari)) : prev.edManual;
+        const ed = kp && !isNaN(kp) && it ? toLocalInput(addShelf(kp, it)) : prev.edManual;
         return { ...prev, kpManual: val, edManual: ed };
     });
     const premixFoodSafetyText = () => (premixForm.foodSafety === undefined ? PREMIX_FOOD_SAFETY_DEFAULT : String(premixForm.foodSafety)).trim();
@@ -11038,8 +11047,8 @@ Daily inventory done✅
                             React.createElement("div", { className: "flex flex-wrap gap-2" }, PREMIX_CATALOG.map(it => (React.createElement("button", { key: it.id, type: "button", onClick: () => selectPremixItem(it.id), className: chip(premixForm.itemId === it.id) }, it.nama)))),
                             premixItem && React.createElement("p", { className: "text-[11px] text-slate-500 mt-1.5" },
                                 "Tahan ",
-                                premixItem.hari,
-                                " hari."))),
+                                shelfLabel(premixItem),
+                                "."))),
                         !isManual && premixItem && (React.createElement(React.Fragment, null,
                             React.createElement("div", null,
                                 React.createElement("div", { className: "flex items-center justify-between mb-1" },
@@ -11063,8 +11072,8 @@ Daily inventory done✅
                                     React.createElement("div", null,
                                         React.createElement("label", { className: "block text-[11px] text-slate-500 mb-0.5" },
                                             "ED (tanggal & jam) \u00B7 otomatis terisi +",
-                                            premixItem.hari,
-                                            " hari, boleh diubah"),
+                                            shelfLabel(premixItem),
+                                            ", boleh diubah"),
                                         React.createElement("input", { type: "datetime-local", value: premixForm.edManual, onChange: (e) => handlePremixFormChange('edManual', e.target.value), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }))))),
                             React.createElement("div", null,
                                 React.createElement("label", { className: "block text-xs font-semibold text-slate-600 mb-1" }, "Bahan yang Digunakan"),
@@ -12906,10 +12915,10 @@ function DoughRndTab({ storeId, storeName, config, showToast }) {
         let dead = false;
         (async () => {
             const have = (form && form.photos) || {}, loaded = {}, lost = [];
-            for (const r of R.ROWS) {
-                if (!have[r.id]) continue;
-                try { const x = await DoughLocal.get(storeId, 'rnd_' + r.id); if (x && x.dataUrl) loaded[r.id] = x.dataUrl; else lost.push(r.id); }
-                catch (err) { lost.push(r.id); }
+            for (const k of R.allPhotoKeys()) {
+                if (!have[k]) continue;
+                try { const x = await DoughLocal.get(storeId, 'rnd_' + k); if (x && x.dataUrl) loaded[k] = x.dataUrl; else lost.push(k); }
+                catch (err) { lost.push(k); }
             }
             if (dead) return;
             setImgs(loaded);
@@ -12952,8 +12961,9 @@ function DoughRndTab({ storeId, storeName, config, showToast }) {
             showToast('⚠️ Foto harus diambil langsung dari kamera (bukan dari galeri) agar jamnya valid.');
             return;
         }
-        const row = R.ROWS.find((r) => r.id === id);
+        const row = R.rowByKey(id);
         if (!row) return;
+        const pks = R.photoKeys(row), pcsLabel = pks.length > 1 ? ` - Pcs ${pks.indexOf(id) + 1}` : '';
         setBusy(id);
         try {
             let ts = Date.now(), sig = '';
@@ -12964,7 +12974,7 @@ function DoughRndTab({ storeId, storeName, config, showToast }) {
                 if (sr.ok && sd.ok && sd.ts && sd.sig) { ts = sd.ts; sig = sd.sig; } else warnStamp();
             }
             catch (err) { warnStamp(); }
-            const dataUrl = await stampDoughPhoto(file, [`${R.STAGES[row.stage]} - ${row.label}`.slice(0, 80), `${storeName || ''} | ${R.typeLabel(form.tipe)}`, `${DR.fmtDT(ts)} WIB`]);
+            const dataUrl = await stampDoughPhoto(file, [`${R.STAGES[row.stage]} - ${row.label}${pcsLabel}`.slice(0, 80), `${storeName || ''} | ${R.typeLabel(form.tipe)}`, `${DR.fmtDT(ts)} WIB`]);
             try { await DoughLocal.put(storeId, 'rnd_' + id, dataUrl); }
             catch (err) { if (!warnedRef.current) { warnedRef.current = true; showToast('⚠️ Penyimpanan perangkat tidak tersedia. Jangan tutup aplikasi sebelum PDF dibuat.'); } }
             setImgs((prev) => ({ ...prev, [id]: dataUrl }));
@@ -12984,14 +12994,13 @@ function DoughRndTab({ storeId, storeName, config, showToast }) {
     const makePdf = async () => {
         if (miss.length) { showToast(`⚠️ Masih ${miss.length} bagian belum lengkap. Berikutnya: ${miss[0]}`); return null; }
         const images = {};
-        for (const r of R.ROWS) {
-            if (!r.photo) continue;
-            let du = imgs[r.id];
-            if (!du) { try { const x = await DoughLocal.get(storeId, 'rnd_' + r.id); du = x && x.dataUrl; } catch (err) { du = null; } }
-            if (du) images[r.id] = doughDataUrlToU8(du);
+        for (const k of R.allPhotoKeys()) {
+            let du = imgs[k];
+            if (!du) { try { const x = await DoughLocal.get(storeId, 'rnd_' + k); du = x && x.dataUrl; } catch (err) { du = null; } }
+            if (du) images[k] = doughDataUrlToU8(du);
         }
-        const lost = R.ROWS.filter((r) => r.photo === 1 && !images[r.id]);
-        if (lost.length) { showToast(`⚠️ Foto "${lost[0].label}" tidak ada di perangkat. Ambil ulang dulu.`); return null; }
+        const lost = R.allPhotoKeys().filter((k) => { const rw = R.rowByKey(k); return rw && rw.photo === 1 && !images[k]; });
+        if (lost.length) { const rw = R.rowByKey(lost[0]); showToast(`⚠️ Foto "${rw.label}" tidak ada di perangkat. Ambil ulang dulu.`); return null; }
         const nowMs = Date.now();
         const pdf = R.buildPdf({ ...rep, createdAt: nowMs }, images);
         return { pdf, name: `Laporan-Dough-RnD-${safeName(rep.storeName)}-${todayWIB(nowMs)}.pdf`, nowMs };
@@ -13043,7 +13052,7 @@ function DoughRndTab({ storeId, storeName, config, showToast }) {
     };
     const resetAll = () => {
         if (!window.confirm('Mulai laporan baru? Semua isian & foto di layar ini akan dihapus dari perangkat.')) return;
-        DoughLocal.clearSlots(storeId, R.ROWS.map((r) => 'rnd_' + r.id)).catch(() => { });
+        DoughLocal.clearSlots(storeId, R.allPhotoKeys().map((k) => 'rnd_' + k)).catch(() => { });
         try { if (urlRef.current) URL.revokeObjectURL(urlRef.current); } catch (err) { }
         urlRef.current = '';
         setImgs({}); setPdfInfo(null); setSentAt(0);
@@ -13051,28 +13060,40 @@ function DoughRndTab({ storeId, storeName, config, showToast }) {
     };
     const inputCls = 'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm';
     const proofHint = form.tipe === 'panas' ? 'Store panas: perhatikan proofing saat menit ke-50. Maksimum 70 menit.' : form.tipe ? 'Store dingin / suhu ruang: perhatikan proofing saat menit ke-60. Maksimum 70 menit.' : 'Pilih Tipe store untuk melihat menit pengamatan proofing. Maksimum 70 menit.';
+    const photoBlock = (row, key, idx, total) => {
+        const p = photos[key], thumb = imgs[key];
+        const head = total > 1 ? `Pcs ${idx + 1}` : (row.photo === 1 ? 'Foto wajib' : 'Foto (jika ada)');
+        return e('div', { key, className: 'flex items-center gap-3' },
+            thumb ? e('img', { src: thumb, alt: `${row.label} ${head}`, className: 'w-14 h-14 rounded-lg object-cover border border-slate-200 flex-shrink-0' }) : e('div', { className: 'w-14 h-14 rounded-lg bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-lg flex-shrink-0' }, busy === key ? '⏳' : '📷'),
+            e('div', { className: 'flex-1 min-w-0' }, e('p', { className: 'text-[11px] font-semibold text-slate-700' }, total > 1 ? `${head} · foto wajib` : head), e('p', { className: 'text-[10px] text-slate-500' }, p ? `${DR.fmtDT(p.ts)} WIB` : 'Belum diambil')),
+            e('div', { className: 'flex flex-col gap-1' },
+                e('button', { onClick: () => askPhoto(key), disabled: !!busy || !!working, className: `text-[11px] font-bold px-3 py-1.5 rounded-lg ${p ? 'bg-slate-100 text-slate-700' : 'bg-purple-600 text-white'} disabled:opacity-50` }, busy === key ? 'Menyimpan...' : (p ? 'Ulang' : 'Ambil foto')),
+                p ? e('button', { onClick: () => removePhoto(key), disabled: !!busy || !!working, className: 'text-[10px] text-red-700 font-semibold' }, 'Hapus') : null));
+    };
     const renderRow = (row) => {
-        const p = photos[row.id], thumb = imgs[row.id], vals = (form.vals || {})[row.id] || {};
+        const vals = (form.vals || {})[row.id] || {};
+        const pks = R.photoKeys(row);
+        const auto = row.auto ? R.autoMin(rep, row.id) : null;
         return e('div', { key: row.id, className: 'py-3 border-t border-slate-100 space-y-2' },
             e('p', { className: 'text-xs font-semibold text-slate-800' }, row.label),
             row.extra ? e('p', { className: 'text-[11px] text-slate-500' }, proofHint) : null,
-            row.fields ? e('div', { className: 'grid grid-cols-2 gap-3' }, row.fields.map((f) => e('div', { key: f.k },
+            row.auto ? e('div', { className: 'rounded-xl bg-slate-50 border border-slate-200 px-3 py-2' },
+                e('p', { className: 'text-sm font-bold text-slate-800' }, auto === null ? 'Waktu total: belum terhitung' : `Waktu total: ${auto} menit`),
+                e('p', { className: 'text-[10px] text-slate-500 mt-0.5' }, R.AUTO[row.id].note),
+                (row.maxMin && auto !== null && auto > row.maxMin) ? e('p', { className: 'text-[11px] font-semibold text-red-700 mt-1' }, `Melebihi maksimum ${row.maxMin} menit`) : null) : null,
+            (!row.auto && row.fields) ? e('div', { className: 'grid grid-cols-2 gap-3' }, row.fields.map((f) => e('div', { key: f.k },
                 e('label', { className: 'block text-[11px] font-semibold text-slate-600 mb-1' }, `${f.l} (${f.u})`),
                 e('input', { value: vals[f.k] || '', onChange: (x) => setVal(row.id, f.k, x.target.value), inputMode: 'decimal', placeholder: row.optional ? 'jika ada' : '0', className: inputCls })))) : null,
-            row.measure ? e('div', { className: 'space-y-2' },
-                e('p', { className: 'text-[11px] text-slate-500' }, `Ukur dengan penggaris gawang, isi diameter & tinggi (cm) ${row.mlabel}. Minimal 3 pcs.`),
-                Array.from({ length: R.MEAS_ROWS }).map((_, i) => {
+            row.measure ? e('div', { className: 'space-y-3' },
+                e('p', { className: 'text-[11px] text-slate-500' }, `Ukur dengan penggaris gawang. Foto tiap pcs lalu isi diameter & tinggi (cm) ${row.mlabel}. Wajib ${R.PCS} pcs = ${R.PCS} foto.`),
+                pks.map((k, i) => {
                     const m = ((((form.meas || {})[row.measure]) || [])[i]) || { d: '', t: '' };
-                    return e('div', { key: i, className: 'grid grid-cols-2 gap-3' },
-                        e('input', { value: m.d || '', onChange: (x) => setMeas(row.measure, i, 'd', x.target.value), inputMode: 'decimal', placeholder: `Diameter ${i + 1}`, className: inputCls }),
-                        e('input', { value: m.t || '', onChange: (x) => setMeas(row.measure, i, 't', x.target.value), inputMode: 'decimal', placeholder: `Tinggi ${i + 1}`, className: inputCls }));
-                })) : null,
-            row.photo ? e('div', { className: 'flex items-center gap-3' },
-                thumb ? e('img', { src: thumb, alt: row.label, className: 'w-14 h-14 rounded-lg object-cover border border-slate-200 flex-shrink-0' }) : e('div', { className: 'w-14 h-14 rounded-lg bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-lg flex-shrink-0' }, busy === row.id ? '⏳' : '📷'),
-                e('div', { className: 'flex-1 min-w-0' }, e('p', { className: 'text-[11px] font-semibold text-slate-700' }, row.photo === 1 ? 'Foto wajib' : 'Foto (jika ada)'), e('p', { className: 'text-[10px] text-slate-500' }, p ? `${DR.fmtDT(p.ts)} WIB` : 'Belum diambil')),
-                e('div', { className: 'flex flex-col gap-1' },
-                    e('button', { onClick: () => askPhoto(row.id), disabled: !!busy || !!working, className: `text-[11px] font-bold px-3 py-1.5 rounded-lg ${p ? 'bg-slate-100 text-slate-700' : 'bg-purple-600 text-white'} disabled:opacity-50` }, busy === row.id ? 'Menyimpan...' : (p ? 'Ulang' : 'Ambil foto')),
-                    p ? e('button', { onClick: () => removePhoto(row.id), disabled: !!busy || !!working, className: 'text-[10px] text-red-700 font-semibold' }, 'Hapus') : null)) : null,
+                    return e('div', { key: k, className: 'space-y-2 rounded-xl border border-slate-100 p-2' },
+                        photoBlock(row, k, i, pks.length),
+                        e('div', { className: 'grid grid-cols-2 gap-3' },
+                            e('input', { value: m.d || '', onChange: (x) => setMeas(row.measure, i, 'd', x.target.value), inputMode: 'decimal', placeholder: `Diameter pcs ${i + 1}`, className: inputCls }),
+                            e('input', { value: m.t || '', onChange: (x) => setMeas(row.measure, i, 't', x.target.value), inputMode: 'decimal', placeholder: `Tinggi pcs ${i + 1}`, className: inputCls })));
+                })) : (pks.length ? photoBlock(row, pks[0], 0, 1) : null),
             e('input', { value: (form.notes || {})[row.id] || '', onChange: (x) => setNote(row.id, x.target.value), placeholder: 'Catatan (opsional)', className: inputCls }));
     };
     const stageCard = (name, si) => e('div', { key: si, className: 'bg-white rounded-2xl border border-slate-200 p-4' },
@@ -13082,7 +13103,7 @@ function DoughRndTab({ storeId, storeName, config, showToast }) {
         e('input', { ref: fileRef, type: 'file', accept: 'image/*', capture: 'environment', onChange: onFile, className: 'hidden' }),
         e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4' },
             e('h2', { className: 'font-bold text-slate-800 text-base' }, '🧪 Laporan Dough RnD'),
-            e('p', { className: 'text-xs text-slate-500 mt-1' }, 'Trial In Store Frozen Dough (Yeast 200%): isi hasil pengamatan trial dan existing sesuai protokol R&D. Hasilnya PDF berformat sama dengan dokumen protokol, lengkap dengan foto.'),
+            e('p', { className: 'text-xs text-slate-500 mt-1' }, 'Trial In Store Frozen Dough (Yeast 200%): isi hasil pengamatan trial dan existing sesuai protokol R&D. Setiap item wajib difoto (item ukur: 3 pcs = 3 foto). Waktu thawing, proofing, dan baking terhitung otomatis dari jam foto. Hasilnya PDF berisi halaman 6-10 protokol, lengkap dengan foto.'),
             e('p', { className: 'text-[11px] text-emerald-700 mt-1' }, '🔒 Foto hanya disimpan di HP ini sampai laporan dibuat. Tidak diunggah ke server aplikasi.')),
         e('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-3' },
             e('div', null, e('label', { className: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Store'), e('div', { className: 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700' }, storeName || storeId)),

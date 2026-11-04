@@ -397,5 +397,5 @@
     return d.build({ title: 'Laporan Lama Proses Ngembang Dough - ' + (rep.storeName || '') });
   }
 
-  root.DoughReport = { PRODUCTS: PRODUCTS, normalizeNopol: normalizeNopol, validNopol: validNopol, suggestNote: suggestNote, conclusion: conclusion, recommendations: recommendations, STD: STD, SLOTS: SLOTS, evaluate: evaluate, fmtDur: fmtDur, fmtDT: fmtDT, fmtHM: fmtHM, greeting: greeting, buildCaption: buildCaption, buildPdf: buildPdf, statusWord: statusWord };
+  root.DoughReport = { _pdf: { Doc: Doc, tw: tw, wrap: wrap, jpegInfo: jpegInfo, enc: enc, pdfStr: pdfStr, fmt: fmt, col: col, PW: PW, PH: PH }, PRODUCTS: PRODUCTS, normalizeNopol: normalizeNopol, validNopol: validNopol, suggestNote: suggestNote, conclusion: conclusion, recommendations: recommendations, STD: STD, SLOTS: SLOTS, evaluate: evaluate, fmtDur: fmtDur, fmtDT: fmtDT, fmtHM: fmtHM, greeting: greeting, buildCaption: buildCaption, buildPdf: buildPdf, statusWord: statusWord };
 })(typeof window !== 'undefined' ? window : this);

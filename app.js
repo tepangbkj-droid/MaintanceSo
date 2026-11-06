@@ -1509,6 +1509,7 @@ const STORE_MENU_GROUPS = [
             { tab: 'jotform', icon: 'file-text', label: 'Form Jotform', tour: 'menu-jotform' },
             { tab: 'pettyCash', icon: 'wallet', label: 'Petty Cash', tour: 'menu-petty' },
             { tab: 'printing', icon: 'printer', label: 'Printing', tour: 'menu-printing' },
+            { tab: 'accurate', icon: 'calculator', label: 'Accurate' },
         ] },
     { id: 'belajar', title: 'Belajar & Bantuan', icon: 'life-buoy', chip: 'bg-sky-100 text-sky-700', items: [
             { tab: 'sop', icon: 'book-open', label: 'Panduan SOP', tour: 'menu-sop' },
@@ -6557,7 +6558,12 @@ function StoreApp({ storeId, storeName, onLogout }) {
     const bleRef = React.useRef({ device: null, char: null });
     const [stockNoteStore, setStockNoteStore] = useDraftState(storeId, 'stock_store', storeName || '');
     const [stockNoteItems, setStockNoteItems] = useDraftState(storeId, 'stock_items', []);
-    const [stockItemDraft, setStockItemDraft] = useState({ nama: PRINTING_ITEM_OPTIONS[0], jumlah: '', satuan: 'Bag', tempat: INV_LOCATIONS[0], ed: '' });
+    const [stockItemDraft, setStockItemDraft] = useState({ nama: PRINTING_ITEM_OPTIONS[0], jumlah: '', satuan: 'Bag', tempat: 'Freezer 1', ed: '', aksi: 'masuk', dari: 'Freezer 1', ke: 'Chiller Bawah' });
+    // (2026-11) Catatan Stok mengikuti alur FEFO: barang datang -> Freezer; pindah/ambil -> lot dengan ED terdekat dulu.
+    const [fefoLots, setFefoLots] = useState([]);
+    const reloadFefoLots = () => apiFetch(`/api/invlots?storeId=${encodeURIComponent(storeId)}`).then(d => setFefoLots(d.lots || [])).catch(() => { });
+    useEffect(() => { if (printingSubTab === 'stock')
+        reloadFefoLots(); }, [printingSubTab, storeId]);
     const [stockPrintData, setStockPrintData] = useState(null);
     const [qrCfg, setQrCfg] = useState({ printerUrl: '', inventoryUrl: '' });
     const [qrPrefs, setQrPrefs] = useState({ enablePrinter: true, enableInventory: false });
@@ -7368,38 +7374,87 @@ function StoreApp({ storeId, storeName, onLogout }) {
             return () => clearTimeout(t);
         }
     }, [premixPrintData]);
+    const stockLotOpts = (d) => fefoLots.filter(l => l.lokasi === d.dari && l.namaBarang === (STOCK_NAME_ALIAS[d.nama] || d.nama)).sort((a, b) => (a.ed || '9999').localeCompare(b.ed || '9999'));
     const addStockNoteItem = () => {
-        const jumlahNum = Number(stockItemDraft.jumlah);
-        if (!stockItemDraft.jumlah || isNaN(jumlahNum) || jumlahNum <= 0) {
+        const d = stockItemDraft;
+        const jumlahNum = Number(d.jumlah);
+        if (!d.jumlah || isNaN(jumlahNum) || jumlahNum <= 0) {
             showToast('Isi jumlah yang valid (lebih dari 0) sebelum menambahkan item.');
             return;
         }
-        if (!stockItemDraft.tempat) {
-            showToast('Pilih Tempat penyimpanan dulu.');
-            return;
+        const base = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, nama: d.nama, jumlah: jumlahNum, satuan: d.satuan };
+        if (d.aksi === 'masuk') {
+            if (!['Freezer 1', 'Freezer 2'].includes(d.tempat)) {
+                showToast('Barang datang harus masuk ke Freezer 1 atau Freezer 2.');
+                return;
+            }
+            if (!d.ed) {
+                showToast('Isi Tanggal ED supaya FEFO bisa berjalan.');
+                return;
+            }
+            setStockNoteItems(prev => [...prev, { ...base, aksi: 'masuk', tempat: d.tempat, ed: d.ed }]);
         }
-        setStockNoteItems(prev => [...prev, { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, nama: stockItemDraft.nama, jumlah: jumlahNum, satuan: stockItemDraft.satuan, tempat: stockItemDraft.tempat, ed: stockItemDraft.ed || '' }]);
+        else {
+            if (!(INV_MOVE_TARGETS[d.dari] || []).includes(d.ke)) {
+                showToast('Jalur pindah tidak diizinkan.');
+                return;
+            }
+            const opts = stockLotOpts(d);
+            const lot = opts.find(l => (l.ed || '') === (d.ed || '')) || opts[0];
+            if (!lot) {
+                showToast(`Tidak ada stok ${d.nama} di ${d.dari}. Catat barang datang dulu.`);
+                return;
+            }
+            if (jumlahNum > Number(lot.jumlah)) {
+                showToast(`Stok lot itu hanya ${lot.jumlah} ${lot.satuan}.`);
+                return;
+            }
+            setStockNoteItems(prev => [...prev, { ...base, aksi: 'pindah', dari: d.dari, ke: d.ke, tempat: `${d.dari} \u2192 ${d.ke === 'KELUAR' ? 'Pakai/Buang' : d.ke}`, ed: lot.ed || '' }]);
+        }
         setStockItemDraft(prev => ({ ...prev, jumlah: '', ed: '' }));
     };
     const STOCK_NAME_ALIAS = { 'FD': 'Frozen Dough', 'Vanila': 'Vanilla' };
     const syncStockNoteToInvestory = async (items) => {
-        const noPlace = items.find(it => !it.tempat);
-        if (noPlace) {
-            showToast(`"${noPlace.nama}" belum punya Tempat. Hapus lalu tambahkan lagi dengan memilih Tempat.`);
-            return false;
-        }
-        const entries = items.map(it => ({ namaBarang: STOCK_NAME_ALIAS[it.nama] || it.nama, lokasi: it.tempat, jumlah: it.jumlah, satuan: String(it.satuan || '').toLowerCase(), ed: it.ed || '' }));
-        try {
-            await apiFetch('/api/investory/batch', { method: 'POST', body: JSON.stringify({ storeId, entries }) });
-            return true;
-        }
-        catch (err) {
-            if (err && err.isNetworkError) {
-                return window.confirm('Tidak bisa terhubung ke server, jadi stok BELUM tersimpan ke Investory. Tetap cetak saja?');
+        for (const it of items) {
+            const nama = STOCK_NAME_ALIAS[it.nama] || it.nama;
+            const satuan = String(it.satuan || '').toLowerCase();
+            const isMove = it.aksi === 'pindah';
+            if (!isMove && !it.tempat) {
+                showToast(`"${it.nama}" belum punya Tempat. Hapus lalu tambahkan lagi.`);
+                return false;
             }
-            showToast('Gagal menyimpan ke Investory: ' + ((err && err.message) || 'coba lagi.'));
-            return false;
+            const url = isMove ? '/api/invlots/move' : '/api/invlots/receive';
+            const body = isMove
+                ? { storeId, namaBarang: nama, dari: it.dari, ke: it.ke, ed: it.ed || '', jumlah: it.jumlah, satuan, by: storeName }
+                : { storeId, namaBarang: nama, lokasi: it.tempat, jumlah: it.jumlah, satuan, ed: it.ed || '', by: storeName, awal: !it.aksi }; // draft lama tanpa aksi = stok awal
+            try {
+                try {
+                    await apiFetch(url, { method: 'POST', body: JSON.stringify(body) });
+                }
+                catch (err) {
+                    if (err && err.status === 409 && err.data && err.data.fefoWarning) {
+                        const lines = (err.data.earlier || []).map(e => `\u2022 ${e.lokasi} \u2014 ED ${e.ed || '-'} (${e.jumlah} ${e.satuan})`).join('\n');
+                        if (!window.confirm(`\u26A0\uFE0F MELANGGAR FEFO!\n${nama} (ED ${it.ed || '-'}) diambil, padahal masih ada ED lebih dekat:\n${lines}\n\nTetap ambil? Kejadian ini dilaporkan ke Telegram.`)) {
+                            showToast('Dibatalkan. Ambil barang ber-ED terdekat dulu.');
+                            return false;
+                        }
+                        await apiFetch(url, { method: 'POST', body: JSON.stringify({ ...body, confirmSkip: true }) });
+                    }
+                    else
+                        throw err;
+                }
+            }
+            catch (err) {
+                if (err && err.isNetworkError) {
+                    return window.confirm('Tidak bisa terhubung ke server, jadi stok BELUM tersimpan ke Investory. Tetap cetak saja?');
+                }
+                showToast('Gagal menyimpan ke Investory: ' + ((err && err.message) || 'coba lagi.'));
+                return false;
+            }
+            setStockNoteItems(prev => prev.filter(x => x.id !== it.id)); // sudah tercatat: jangan terkirim dua kali
         }
+        reloadFefoLots();
+        return true;
     };
     const removeStockNoteItem = (id) => setStockNoteItems(prev => prev.filter(it => it.id !== id));
     const handleStockNotePrint = async () => {
@@ -11154,17 +11209,25 @@ Daily inventory done✅
                     React.createElement("div", { className: "border border-slate-200 rounded-xl p-3 space-y-3" },
                         React.createElement("p", { className: "text-xs font-semibold text-slate-600" }, "Tambah Item"),
                         React.createElement("div", { className: "grid grid-cols-2 gap-2" },
-                            React.createElement("select", { value: stockItemDraft.tempat, onChange: (e) => setStockItemDraft(prev => ({ ...prev, tempat: e.target.value })), className: "col-span-2 w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white", "aria-label": "Tempat" }, INV_LOCATIONS.map(loc => React.createElement("option", { key: loc, value: loc },
-                                "\uD83D\uDCCD ",
-                                loc))),
+                            React.createElement("select", { value: stockItemDraft.aksi, onChange: (e) => setStockItemDraft(prev => ({ ...prev, aksi: e.target.value, ed: '' })), className: "col-span-2 w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white", "aria-label": "Aksi" },
+                                React.createElement("option", { value: "masuk" }, "\uD83D\uDCE5 Barang datang (DB) \u2192 Freezer"),
+                                React.createElement("option", { value: "pindah" }, "\uD83D\uDD04 Pindah / ambil stok (FEFO)")),
+                            stockItemDraft.aksi === 'masuk' && React.createElement("select", { value: stockItemDraft.tempat, onChange: (e) => setStockItemDraft(prev => ({ ...prev, tempat: e.target.value })), className: "col-span-2 w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white", "aria-label": "Tempat" }, ['Freezer 1', 'Freezer 2'].map(loc => React.createElement("option", { key: loc, value: loc }, "\uD83D\uDCCD ", loc))),
+                            stockItemDraft.aksi === 'pindah' && React.createElement("select", { value: stockItemDraft.dari, onChange: (e) => setStockItemDraft(prev => ({ ...prev, dari: e.target.value, ke: (INV_MOVE_TARGETS[e.target.value] || [])[0] || '', ed: '' })), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white", "aria-label": "Ambil dari" }, Object.keys(INV_MOVE_TARGETS).map(loc => React.createElement("option", { key: loc, value: loc }, "Dari: ", loc))),
+                            stockItemDraft.aksi === 'pindah' && React.createElement("select", { value: stockItemDraft.ke, onChange: (e) => setStockItemDraft(prev => ({ ...prev, ke: e.target.value })), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white", "aria-label": "Ke" }, (INV_MOVE_TARGETS[stockItemDraft.dari] || []).map(loc => React.createElement("option", { key: loc, value: loc }, "Ke: ", loc === 'KELUAR' ? 'Pakai / Buang' : loc))),
                             React.createElement("select", { value: stockItemDraft.nama, onChange: (e) => setStockItemDraft(prev => ({ ...prev, nama: e.target.value })), className: "col-span-2 w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white" }, PRINTING_ITEM_OPTIONS.map(opt => React.createElement("option", { key: opt, value: opt }, opt))),
                             React.createElement("input", { type: "number", min: "1", value: stockItemDraft.jumlah, onChange: (e) => setStockItemDraft(prev => ({ ...prev, jumlah: e.target.value })), placeholder: "Jumlah", className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }),
                             React.createElement("select", { value: stockItemDraft.satuan, onChange: (e) => setStockItemDraft(prev => ({ ...prev, satuan: e.target.value })), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white" },
                                 React.createElement("option", { value: "Bag" }, "Bag"),
                                 React.createElement("option", { value: "Pcs" }, "Pcs")),
-                            React.createElement("div", { className: "col-span-2" },
-                                React.createElement("label", { className: "block text-[11px] font-semibold text-slate-500 mb-1" }, "Tanggal ED (opsional)"),
-                                React.createElement("input", { type: "date", value: stockItemDraft.ed, onChange: (e) => setStockItemDraft(prev => ({ ...prev, ed: e.target.value })), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }))),
+                            stockItemDraft.aksi === 'masuk' ? React.createElement("div", { className: "col-span-2" },
+                                React.createElement("label", { className: "block text-[11px] font-semibold text-slate-500 mb-1" }, "Tanggal ED (wajib)"),
+                                React.createElement("input", { type: "date", value: stockItemDraft.ed, onChange: (e) => setStockItemDraft(prev => ({ ...prev, ed: e.target.value })), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" }))
+                                : React.createElement("div", { className: "col-span-2" },
+                                    React.createElement("label", { className: "block text-[11px] font-semibold text-slate-500 mb-1" }, "Ambil dari lot ED (yang terdekat paling atas)"),
+                                    stockLotOpts(stockItemDraft).length === 0
+                                        ? React.createElement("p", { className: "text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2" }, `Tidak ada stok ${stockItemDraft.nama} di ${stockItemDraft.dari}.`)
+                                        : React.createElement("select", { value: stockItemDraft.ed, onChange: (e) => setStockItemDraft(prev => ({ ...prev, ed: e.target.value })), className: "w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white" }, stockLotOpts(stockItemDraft).map((l, ix) => React.createElement("option", { key: l.id, value: l.ed || '' }, `${ix === 0 ? '\u2B50 ' : ''}ED ${l.ed ? l.ed.split('-').reverse().join('/') : 'tanpa ED'} \u2014 stok ${l.jumlah} ${l.satuan}`))))),
                         React.createElement("button", { type: "button", onClick: addStockNoteItem, className: "w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-100 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5" },
                             React.createElement("i", { "data-lucide": "plus", className: "w-3.5 h-3.5" }),
                             React.createElement("span", null, "Tambah Item"))),
@@ -11187,7 +11250,7 @@ Daily inventory done✅
                     React.createElement("button", { onClick: handleStockNotePrint, disabled: stockNoteItems.length === 0, className: "w-full bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2" },
                         React.createElement("i", { "data-lucide": "printer", className: "w-4 h-4" }),
                         React.createElement("span", null, "Cetak & Simpan ke Investory")),
-                    React.createElement("p", { className: "text-[11px] text-slate-400 text-center -mt-1" }, "Saat dicetak, stok otomatis tersimpan ke Investory (tempat & ED ikut tercatat)."),
+                    React.createElement("p", { className: "text-[11px] text-slate-400 text-center -mt-1" }, "Alur FEFO: barang datang masuk Freezer; Chiller Bawah dari Freezer; Chiller Atas dari Freezer/Chiller Bawah. Ambil ED terdekat dulu. ED sama otomatis ditambah."),
                     React.createElement("button", { type: "button", onClick: handleStockNotePrintDialog, disabled: stockNoteItems.length === 0, className: "w-full bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-600 border border-slate-300 font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2" },
                         React.createElement("i", { "data-lucide": "monitor", className: "w-3.5 h-3.5" }),
                         React.createElement("span", null, "Cetak via Dialog Browser (PDF/printer lain)")))),
@@ -11384,6 +11447,7 @@ Daily inventory done✅
             activeTab === 'jotform' && (React.createElement(JotformTab, null)),
             activeTab === 'doughReport' && (React.createElement(DoughReportTab, { storeId: storeId, storeName: storeName, config: config, showToast: showToast })),
             activeTab === 'doughRnd' && (React.createElement(DoughRndTab, { storeId: storeId, storeName: storeName, config: config, showToast: showToast })),
+            activeTab === 'accurate' && (React.createElement(AdminAccurateTab, null)),
             activeTab === 'investory' && (React.createElement(StoreInvestoryView, { storeId: storeId })))));
 }
 const TRAFFIC_LOCATION_TYPES = ['Mall', 'Ruko / Jalan Raya', 'Kampus / Sekolah', 'Perkantoran', 'Wisata / Pasar', 'Lainnya'];
@@ -14517,6 +14581,20 @@ function AdminSecurityTab() {
         React.createElement("div", { className: "bg-gradient-to-br from-slate-800 to-purple-900 text-white rounded-2xl p-5" },
             React.createElement("h2", { className: "font-extrabold text-lg" }, "Keamanan"),
             React.createElement("p", { className: "text-xs text-purple-200 mt-0.5" }, "Atur siapa yang bisa membuka aplikasi dan amankan token yang tersimpan di server.")),
+        React.createElement("div", { className: "bg-white rounded-2xl border border-rose-200 p-4 space-y-2" },
+            React.createElement("h3", { className: "font-bold text-rose-700 text-sm" }, "Cabut Semua Sesi Login"),
+            React.createElement("p", { className: "text-[11px] text-slate-500" }, "Pakai bila token/HP dicuri atau ada aktivitas mencurigakan. Semua akun (toko, leader, admin) langsung keluar dan harus login ulang."),
+            React.createElement("button", { onClick: async () => {
+                    if (!window.confirm('Keluarkan SEMUA akun sekarang? Semua orang harus login ulang.'))
+                        return;
+                    try {
+                        await apiFetch('/api/security/revoke-sessions', { method: 'POST', body: '{}' });
+                        window.location.reload();
+                    }
+                    catch (e) {
+                        flash(e.message);
+                    }
+                }, className: "w-full bg-rose-600 text-white font-bold py-2.5 rounded-xl text-sm" }, "Cabut Semua Sesi Sekarang")),
         React.createElement(AdminAccountSecurityCard, null),
         React.createElement(LegacyWebCard, null),
         React.createElement(SecCard, null,
@@ -16893,6 +16971,7 @@ function AdminAccurateTab() {
     return h('div', { className: 'p-4 space-y-3' },
         h('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-1' },
             h('h3', { className: 'font-bold text-slate-800 text-sm' }, 'Accurate Online'),
+            h('a', { href: 'https://account.accurate.id/manage', target: '_blank', rel: 'noopener noreferrer', className: 'inline-block text-xs font-bold text-purple-700 underline' }, 'Buka web Accurate (account.accurate.id/manage) \u2197'),
             !st && !err && h('p', { className: 'text-xs text-slate-400' }, 'Memeriksa koneksi...'),
             st && !st.configured && h('p', { className: 'text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2' }, 'Belum terhubung. Buka Accurate \u2192 Accurate Store \u2192 API Token, lalu simpan di Worker: ', h('b', null, 'ACCURATE_API_TOKEN'), ' dan ', h('b', null, 'ACCURATE_SIGNATURE_KEY'), ' (wrangler secret put).'),
             st && st.configured && !st.connected && h('p', { className: 'text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2' }, st.error || 'Gagal terhubung.'),

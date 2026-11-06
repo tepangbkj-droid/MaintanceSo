@@ -4796,6 +4796,9 @@ function AdminPanel({ onLogout }) {
                     React.createElement("button", { onClick: () => { setTab('investory'); setShowMenu(false); }, className: `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'investory' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}` },
                         React.createElement("i", { "data-lucide": "thermometer-snowflake", className: "w-4 h-4" }),
                         React.createElement("span", null, "Link Investory")),
+                    React.createElement("button", { onClick: () => { setTab('accurate'); setShowMenu(false); }, className: `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'accurate' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}` },
+                        React.createElement("i", { "data-lucide": "calculator", className: "w-4 h-4" }),
+                        React.createElement("span", null, "Accurate")),
                     React.createElement("button", { onClick: () => { setTab('security'); setShowMenu(false); }, className: `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === 'security' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}` },
                         React.createElement("i", { "data-lucide": "shield-check", className: "w-4 h-4" }),
                         React.createElement("span", null, "Keamanan")),
@@ -5147,6 +5150,7 @@ function AdminPanel({ onLogout }) {
                 }),
                 stores.length === 0 && (React.createElement("div", { className: "bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center text-slate-500 text-xs" }, "Belum ada toko.")))),
             tab === 'investory' && (React.createElement(AdminInvestoryLinks, { stores: stores })),
+            tab === 'accurate' && (React.createElement(AdminAccurateTab, null)),
             tab === 'rotiNotif' && (React.createElement(AdminBreadNotifTab, null)),
             tab === 'security' && (React.createElement(AdminSecurityTab, null))),
         showAdd && (React.createElement("div", { className: "fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4 animate-fadeIn" },
@@ -6502,7 +6506,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
                 { label: 'Whipping Cream', opsi: ['PT Rich Products Manufacturing'] },
                 { label: 'Cheese Powder', opsi: ['PT Delifry Utama Indonesia'] },
             ] },
-        { id: 'taro_powder', nama: 'Taro Powder', bulan: 3, bahan: [
+        { id: 'taro_powder', nama: 'Taro Powder (Repack)', bulan: 1, bahan: [
                 { label: 'Taro Powder', opsi: ['PT Agrinesia'] },
             ] },
         { id: 'susu', nama: 'Susu', hari: 1, bahan: [
@@ -6612,6 +6616,11 @@ function StoreApp({ storeId, storeName, onLogout }) {
         }
     };
     const saveToPrintHistory = (type, data) => {
+        // (2026-11) Premix: catat ED ke server -> bot Telegram toko mengingatkan 30 menit sebelum ED.
+        if (type === 'premix' && data && Number.isFinite(data.edMs)) {
+            apiFetch('/api/premix/log', { method: 'POST', body: JSON.stringify({ storeId, namaBarang: data.namaBarang, edMs: data.edMs, copies: data.copies }) })
+                .catch(err => console.error('Gagal mencatat ED premix untuk pengingat Telegram:', err));
+        }
         setPrintHistory(prev => {
             const entry = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, type, data, savedAt: new Date().toISOString() };
             const next = [entry, ...prev].slice(0, 200);
@@ -6691,7 +6700,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
                 return { error: 'Isi KP dan ED (tanggal & jam) terlebih dahulu.' };
             if (edM.getTime() <= kpM.getTime())
                 return { error: 'ED harus setelah KP.' };
-            return { data: { namaToko: outletName, namaBarang: nama, kp: fmtDateTimeLabel(kpM), ed: fmtDateTimeLabel(edM), bahan: [], diproduksi: (premixForm.manualAsal || '').trim(), foodSafety: premixFoodSafetyText(), copies: Math.min(10, Math.max(1, Number(premixForm.copies) || 1)) } };
+            return { data: { namaToko: outletName, namaBarang: nama, kp: fmtDateTimeLabel(kpM), ed: fmtDateTimeLabel(edM), edMs: edM.getTime(), bahan: [], diproduksi: (premixForm.manualAsal || '').trim(), foodSafety: premixFoodSafetyText(), copies: Math.min(10, Math.max(1, Number(premixForm.copies) || 1)) } };
         }
         if (!premixItem)
             return { error: 'Pilih Nama Barang terlebih dahulu.' };
@@ -6713,7 +6722,7 @@ function StoreApp({ storeId, storeName, onLogout }) {
             return { error: 'Isi KP dan ED (tanggal & jam) terlebih dahulu.' };
         if (ed.getTime() <= kp.getTime())
             return { error: 'ED harus setelah KP.' };
-        return { data: { namaToko: outletName, namaBarang: premixItem.nama, kp: fmtDateTimeLabel(kp), ed: fmtDateTimeLabel(ed), bahan, foodSafety: premixFoodSafetyText(), copies: Math.min(10, Math.max(1, Number(premixForm.copies) || 1)) } };
+        return { data: { namaToko: outletName, namaBarang: premixItem.nama, kp: fmtDateTimeLabel(kp), ed: fmtDateTimeLabel(ed), edMs: ed.getTime(), bahan, foodSafety: premixFoodSafetyText(), copies: Math.min(10, Math.max(1, Number(premixForm.copies) || 1)) } };
     };
     const RECEIPT_WIDTH = printerCfg.paper === '80' ? 48 : 32;
     const wrapText = (str, width, first = '', rest = '') => {
@@ -8256,9 +8265,8 @@ function StoreApp({ storeId, storeName, onLogout }) {
                 const withoutOld = prev.filter(item => item.firebaseKey !== idEntry);
                 return [...withoutOld, { ...payload, firebaseKey: idEntry }].sort((a, b) => b.tanggal.localeCompare(a.tanggal));
             });
-            if (config.googleAppScriptUrl) {
-                syncToGoogleSheets(payload);
-            }
+            // (2026-11) Jalur lama Google Apps Script DIMATIKAN: ia mengirim seluruh laporan ke skrip luar yang bisa menimpa rumus/setingan.
+            // Pengiriman ke Spreadsheet sekarang hanya lewat server (syncToSheetsServer) yang hanya menulis ANGKA ke sel non-rumus.
             if (!(opts && opts.skipSheets === true))
                 syncToSheetsServer(idEntry, true);
             return true;
@@ -16567,6 +16575,115 @@ function InvestoryPublicPage({ storeId, token }) {
                 React.createElement("span", { className: "text-purple-700 font-semibold" }, "Tarobun"),
                 " \u00B7 Data diperbarui otomatis tiap 60 detik"))));
 }
+// (2026-11) FEFO per-lot. Barang datang (DB) -> Freezer 1/2. Chiller Bawah <- Freezer. Chiller Atas <- Freezer / Chiller Bawah.
+// ED sama di tempat sama = jumlah ditambah; ED beda = lot terpisah. Mengambil ED yang lebih jauh lebih dulu -> peringatan.
+const INV_MOVE_TARGETS = { 'Freezer 1': ['Chiller Bawah', 'Chiller Atas'], 'Freezer 2': ['Chiller Bawah', 'Chiller Atas'], 'Chiller Bawah': ['Chiller Atas', 'KELUAR'], 'Chiller Atas': ['KELUAR'] };
+function InvFefoPanel({ storeId, canEdit }) {
+    const h = React.createElement;
+    const [lots, setLots] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState('');
+    const [msg, setMsg] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [tick, setTick] = useState(0);
+    const [showIn, setShowIn] = useState(false);
+    const [inForm, setInForm] = useState({ namaBarang: INV_ITEMS[0].label, lokasi: 'Freezer 1', jumlah: '', ed: '', awal: false });
+    const [by, setBy] = useState(() => { try { return localStorage.getItem('tarobun_inv_by') || ''; } catch (e) { return ''; } });
+    const [mv, setMv] = useState(null); // { lot, ke, jumlah }
+    const [warn, setWarn] = useState(null); // { payload, earlier }
+    useEffect(() => {
+        setLoading(true);
+        apiFetch(`/api/invlots?storeId=${encodeURIComponent(storeId)}`).then(d => { setLots(d.lots || []); setErr(''); setLoading(false); })
+            .catch(ex => { setErr(ex.message); setLoading(false); });
+    }, [storeId, tick]);
+    const flash = (text, type = 'ok') => { setMsg({ text, type }); setTimeout(() => setMsg(null), 3500); };
+    const rememberBy = (v) => { setBy(v); try { localStorage.setItem('tarobun_inv_by', v); } catch (e) { /* abaikan */ } };
+    const unitOf = (nama) => { const it = INV_ITEMS.find(i => i.label === nama); return it ? it.unit : 'pcs'; };
+    const byItem = React.useMemo(() => {
+        const m = {};
+        lots.forEach(l => { (m[l.namaBarang] = m[l.namaBarang] || []).push(l); });
+        Object.values(m).forEach(arr => arr.sort((a, b) => (a.ed || '9999').localeCompare(b.ed || '9999')));
+        return m;
+    }, [lots]);
+    async function submitIn() {
+        if (busy) return;
+        if (!inForm.ed && !inForm.awal) { flash('Isi tanggal ED supaya FEFO bisa berjalan.', 'error'); return; }
+        setBusy(true);
+        try {
+            await apiFetch('/api/invlots/receive', { method: 'POST', body: JSON.stringify({ storeId, namaBarang: inForm.namaBarang, lokasi: inForm.lokasi, jumlah: inForm.jumlah, satuan: unitOf(inForm.namaBarang), ed: inForm.ed, awal: inForm.awal, by }) });
+            flash(`Tercatat masuk ke ${inForm.lokasi}.`);
+            setInForm(f => ({ ...f, jumlah: '' }));
+            setShowIn(false);
+            setTick(x => x + 1);
+        }
+        catch (ex) { flash(ex.message, 'error'); }
+        finally { setBusy(false); }
+    }
+    async function submitMove(payload) {
+        if (busy) return;
+        setBusy(true);
+        try {
+            const d = await apiFetch('/api/invlots/move', { method: 'POST', body: JSON.stringify(payload) });
+            flash(d.skippedFefo ? 'Dicatat (melanggar FEFO, peringatan dikirim ke Telegram).' : (payload.ke === 'KELUAR' ? 'Tercatat dipakai/dibuang.' : `Dipindah ke ${payload.ke}.`), d.skippedFefo ? 'warn' : 'ok');
+            setMv(null); setWarn(null);
+            setTick(x => x + 1);
+        }
+        catch (ex) {
+            if (ex.status === 409 && ex.data && ex.data.fefoWarning) { setWarn({ payload, earlier: ex.data.earlier || [] }); }
+            else flash(ex.message, 'error');
+        }
+        finally { setBusy(false); }
+    }
+    const inputCls = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white';
+    const lblCls = 'block text-[11px] font-semibold text-slate-600 mb-1';
+    const edTxt = (ed) => ed ? invFmtDateShort(ed) : 'tanpa ED';
+    return h(React.Fragment, null,
+        h('p', { className: 'text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2' },
+            'Alur FEFO: ', h('b', null, 'Barang datang \u2192 Freezer'), '. Chiller Bawah ambil dari Freezer. Chiller Atas ambil dari Freezer atau Chiller Bawah. Ambil yang ED-nya paling dekat dulu. ED sama otomatis ditambah, ED beda jadi lot terpisah.'),
+        canEdit && h('button', { onClick: () => setShowIn(s => !s), className: 'w-full bg-purple-800 text-white font-bold py-2.5 rounded-xl text-sm' }, showIn ? 'Tutup Form' : '\uD83D\uDCE5 Terima Barang Datang (DB) ke Freezer'),
+        canEdit && showIn && h('div', { className: 'bg-white rounded-2xl border border-slate-200 p-3 space-y-2' },
+            h('div', null, h('label', { className: lblCls }, 'Barang'), h('select', { className: inputCls, value: inForm.namaBarang, onChange: e => setInForm(f => ({ ...f, namaBarang: e.target.value })) }, INV_ITEMS.map(i => h('option', { key: i.key, value: i.label }, i.label)))),
+            h('div', { className: 'grid grid-cols-2 gap-2' },
+                h('div', null, h('label', { className: lblCls }, inForm.awal ? 'Tempat' : 'Masuk ke'), h('select', { className: inputCls, value: inForm.lokasi, onChange: e => setInForm(f => ({ ...f, lokasi: e.target.value })) }, (inForm.awal ? INV_LOCATIONS : ['Freezer 1', 'Freezer 2']).map(l => h('option', { key: l, value: l }, l)))),
+                h('div', null, h('label', { className: lblCls }, `Jumlah (${unitOf(inForm.namaBarang)})`), h('input', { type: 'number', min: '0', step: '0.01', inputMode: 'decimal', className: inputCls, value: inForm.jumlah, onChange: e => setInForm(f => ({ ...f, jumlah: e.target.value })) }))),
+            h('div', null, h('label', { className: lblCls }, 'Tanggal ED'), h('input', { type: 'date', className: inputCls, value: inForm.ed, onChange: e => setInForm(f => ({ ...f, ed: e.target.value })) })),
+            h('div', null, h('label', { className: lblCls }, 'Nama pencatat'), h('input', { type: 'text', maxLength: 60, className: inputCls, value: by, onChange: e => rememberBy(e.target.value) })),
+            h('label', { className: 'flex items-center gap-2 text-[11px] text-slate-600' }, h('input', { type: 'checkbox', checked: inForm.awal, onChange: e => setInForm(f => ({ ...f, awal: e.target.checked, lokasi: e.target.checked ? f.lokasi : (['Freezer 1', 'Freezer 2'].includes(f.lokasi) ? f.lokasi : 'Freezer 1') })) }), 'Stok awal / koreksi (boleh di tempat mana pun, ED boleh kosong)'),
+            h('button', { onClick: submitIn, disabled: busy || !inForm.jumlah, className: 'w-full bg-emerald-600 text-white font-bold py-2.5 rounded-xl text-sm disabled:opacity-50' }, busy ? 'Menyimpan...' : 'Simpan')),
+        loading && h('p', { className: 'text-sm text-slate-400 text-center py-8' }, 'Memuat lot...'),
+        !loading && err && h('p', { className: 'text-sm text-rose-500 text-center py-6' }, err),
+        !loading && !err && Object.keys(byItem).length === 0 && h('p', { className: 'text-sm text-slate-400 text-center py-10' }, 'Belum ada lot FEFO. Catat barang datang ke Freezer dulu.'),
+        !loading && !err && Object.keys(byItem).sort().map(nama => h('div', { key: nama, className: 'bg-white rounded-2xl border border-slate-200 p-3 space-y-2' },
+            h('p', { className: 'font-bold text-slate-800 text-sm' }, nama),
+            byItem[nama].map((l, idx) => h('div', { key: l.id, className: `rounded-xl border p-2.5 space-y-1.5 ${idx === 0 ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}` },
+                h('div', { className: 'flex items-center justify-between gap-2' },
+                    h('span', { className: 'text-xs font-semibold text-slate-700' }, l.lokasi),
+                    idx === 0 && h('span', { className: 'text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full' }, 'AMBIL DULUAN')),
+                h('div', { className: 'flex items-center gap-3 text-xs' },
+                    h('span', { className: 'font-semibold text-base text-slate-800' }, l.jumlah),
+                    h('span', { className: 'text-slate-400' }, l.satuan),
+                    h('span', { className: `ml-auto ${invIsExpired(l.ed) ? 'text-rose-600 font-bold' : invIsExpiringSoon(l.ed) ? 'text-amber-600 font-semibold' : 'text-slate-500'}` }, 'ED: ', edTxt(l.ed))),
+                canEdit && h('div', { className: 'flex flex-wrap gap-1.5' }, (INV_MOVE_TARGETS[l.lokasi] || []).map(ke => h('button', { key: ke, onClick: () => setMv({ lot: l, ke, jumlah: String(l.jumlah) }), className: 'text-[11px] font-bold bg-purple-100 text-purple-700 px-2.5 py-1 rounded-lg' }, ke === 'KELUAR' ? 'Pakai / Buang' : `\u2192 ${ke}`))))))),
+        h('button', { onClick: () => setTick(x => x + 1), className: 'text-xs text-purple-700 ml-auto block' }, 'Refresh'),
+        mv && h('div', { className: 'fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-5' },
+            h('div', { className: 'bg-white rounded-2xl p-5 w-full max-w-xs space-y-3' },
+                h('h3', { className: 'font-bold text-slate-800' }, mv.ke === 'KELUAR' ? 'Pakai / Buang' : `Pindah ke ${mv.ke}`),
+                h('p', { className: 'text-sm text-slate-500' }, h('b', null, mv.lot.namaBarang), ` dari ${mv.lot.lokasi} \u00B7 ED ${edTxt(mv.lot.ed)} \u00B7 stok ${mv.lot.jumlah} ${mv.lot.satuan}`),
+                h('div', null, h('label', { className: lblCls }, `Jumlah (${mv.lot.satuan})`), h('input', { type: 'number', min: '0', step: '0.01', inputMode: 'decimal', className: inputCls, value: mv.jumlah, onChange: e => setMv(m => ({ ...m, jumlah: e.target.value })) })),
+                h('div', { className: 'flex gap-2' },
+                    h('button', { onClick: () => setMv(null), className: 'flex-1 bg-slate-100 text-slate-600 font-bold py-2.5 rounded-xl text-sm' }, 'Batal'),
+                    h('button', { disabled: busy || !mv.jumlah, onClick: () => submitMove({ storeId, namaBarang: mv.lot.namaBarang, dari: mv.lot.lokasi, ke: mv.ke, ed: mv.lot.ed || '', jumlah: mv.jumlah, by }), className: 'flex-1 bg-purple-800 text-white font-bold py-2.5 rounded-xl text-sm disabled:opacity-50' }, busy ? '...' : 'Lanjut')))),
+        warn && h('div', { className: 'fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-5' },
+            h('div', { className: 'bg-white rounded-2xl p-5 w-full max-w-xs space-y-3' },
+                h('h3', { className: 'font-bold text-rose-700' }, '\u26A0\uFE0F Melanggar FEFO!'),
+                h('p', { className: 'text-sm text-slate-600' }, 'Masih ada barang dengan ED lebih dekat. Ambil ini dulu:'),
+                h('div', { className: 'bg-rose-50 border border-rose-200 rounded-xl p-2 space-y-1' }, warn.earlier.map((e, i) => h('p', { key: i, className: 'text-xs text-rose-700' }, `\u2022 ${e.lokasi} \u2014 ED ${edTxt(e.ed)} \u2014 ${e.jumlah} ${e.satuan}`))),
+                h('p', { className: 'text-[11px] text-slate-500' }, 'Bila tetap diambil, kejadian ini tercatat dan dikirim ke grup Telegram toko.'),
+                h('div', { className: 'flex gap-2' },
+                    h('button', { onClick: () => setWarn(null), className: 'flex-1 bg-emerald-600 text-white font-bold py-2.5 rounded-xl text-sm' }, 'Batal, ambil yang ED dekat'),
+                    h('button', { disabled: busy, onClick: () => submitMove({ ...warn.payload, confirmSkip: true }), className: 'flex-1 bg-rose-600 text-white font-bold py-2.5 rounded-xl text-sm' }, 'Tetap ambil')))),
+        msg && h('div', { className: `fixed bottom-20 left-1/2 -translate-x-1/2 z-[70] ${msg.type === 'error' ? 'bg-rose-600' : msg.type === 'warn' ? 'bg-amber-500' : 'bg-emerald-600'} text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg` }, msg.text));
+}
 function StoreInvestoryView({ storeId }) {
     const [entries, setEntries] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -16588,12 +16705,13 @@ function StoreInvestoryView({ storeId }) {
     }, [entries, filterLoc]);
     const history = React.useMemo(() => [...entries].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)), [entries]);
     return (React.createElement("div", null,
-        React.createElement("div", { className: "bg-white border-b border-slate-200 flex sticky top-0 z-10" }, [['list', 'Stok Sekarang'], ['history', 'Riwayat']].map(([t, lbl]) => (React.createElement("button", { key: t, onClick: () => setTab(t), className: `flex-1 py-2.5 text-xs font-bold border-b-2 transition-all ${tab === t ? 'border-purple-700 text-purple-800' : 'border-transparent text-slate-500'}` }, lbl)))),
+        React.createElement("div", { className: "bg-white border-b border-slate-200 flex sticky top-0 z-10" }, [['list', 'Stok Sekarang'], ['fefo', 'FEFO'], ['history', 'Riwayat']].map(([t, lbl]) => (React.createElement("button", { key: t, onClick: () => setTab(t), className: `flex-1 py-2.5 text-xs font-bold border-b-2 transition-all ${tab === t ? 'border-purple-700 text-purple-800' : 'border-transparent text-slate-500'}` }, lbl)))),
         React.createElement("div", { className: "bg-white px-3 py-2 border-b border-slate-100 overflow-x-auto" },
             React.createElement("div", { className: "flex gap-1.5 min-w-max" }, ['Semua', ...INV_LOCATIONS].map(l => (React.createElement("button", { key: l, onClick: () => setFilterLoc(l), className: `text-[10px] font-bold px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${filterLoc === l ? 'bg-purple-800 text-white' : 'bg-slate-100 text-slate-600'}` }, l))))),
         React.createElement("div", { className: "p-4 space-y-3" },
             loading && React.createElement("p", { className: "text-sm text-slate-400 text-center py-8" }, "Memuat data..."),
             !loading && err && React.createElement("p", { className: "text-sm text-rose-500 text-center py-6" }, err),
+            tab === 'fefo' && React.createElement(InvFefoPanel, { storeId: storeId, canEdit: true }),
             !loading && !err && tab === 'list' && (React.createElement(React.Fragment, null,
                 React.createElement(InvAlertPanel, { entries: filtered }),
                 filtered.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "Belum ada catatan stok.")) : filtered.map(e => (React.createElement("div", { key: e.id, className: `bg-white rounded-2xl border ${invIsExpired(e.ed) || invIsExpiringSoon(e.ed) ? 'border-amber-300' : invIsLow(e) ? 'border-orange-300' : 'border-slate-200'} p-3.5 space-y-1.5` },
@@ -16667,7 +16785,7 @@ function LeaderInvestoryTab({ storeId, storeName }) {
         }
     }
     return (React.createElement(React.Fragment, null,
-        React.createElement("div", { className: "bg-white border-b border-slate-200 flex sticky top-0 z-10" }, [['list', 'Stok Sekarang'], ['history', 'Riwayat']].map(([t, lbl]) => (React.createElement("button", { key: t, onClick: () => setTab(t), className: `flex-1 py-2.5 text-xs font-bold border-b-2 transition-all ${tab === t ? 'border-purple-700 text-purple-800' : 'border-transparent text-slate-500'}` }, lbl)))),
+        React.createElement("div", { className: "bg-white border-b border-slate-200 flex sticky top-0 z-10" }, [['list', 'Stok Sekarang'], ['fefo', 'FEFO'], ['history', 'Riwayat']].map(([t, lbl]) => (React.createElement("button", { key: t, onClick: () => setTab(t), className: `flex-1 py-2.5 text-xs font-bold border-b-2 transition-all ${tab === t ? 'border-purple-700 text-purple-800' : 'border-transparent text-slate-500'}` }, lbl)))),
         React.createElement("div", { className: "bg-white px-3 py-2 border-b border-slate-100 overflow-x-auto" },
             React.createElement("div", { className: "flex gap-1.5 min-w-max" }, ['Semua', ...INV_LOCATIONS].map(l => (React.createElement("button", { key: l, onClick: () => setFilterLoc(l), className: `text-[10px] font-bold px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${filterLoc === l ? 'bg-purple-800 text-white' : 'bg-slate-100 text-slate-600'}` }, l))))),
         React.createElement("div", { className: "p-4 space-y-3 pb-24" },
@@ -16677,6 +16795,7 @@ function LeaderInvestoryTab({ storeId, storeName }) {
                 "."),
             loading && React.createElement("p", { className: "text-sm text-slate-400 text-center py-8" }, "Memuat data..."),
             !loading && err && React.createElement("p", { className: "text-sm text-rose-500 text-center py-6" }, err),
+            tab === 'fefo' && React.createElement(InvFefoPanel, { storeId: storeId, canEdit: false }),
             !loading && !err && tab === 'list' && (React.createElement(React.Fragment, null,
                 React.createElement(InvAlertPanel, { entries: filtered }),
                 filtered.length === 0 ? (React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "Belum ada catatan stok. Stok diisi lewat menu Printing \u2192 Catatan Stok.")) : filtered.map(e => (React.createElement("div", { key: e.id, className: `bg-white rounded-2xl border ${invIsExpired(e.ed) || invIsExpiringSoon(e.ed) ? 'border-amber-300' : invIsLow(e) ? 'border-orange-300' : 'border-slate-200'} p-3.5 space-y-1.5` },
@@ -16755,6 +16874,42 @@ function DiagBox({ filter }) {
         " (",
         e.ms,
         "ms)")))));
+}
+function AdminAccurateTab() {
+    const h = React.createElement;
+    const [st, setSt] = useState(null);
+    const [q, setQ] = useState('');
+    const [page, setPage] = useState(1);
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [err, setErr] = useState('');
+    useEffect(() => { apiFetch('/api/accurate/status').then(setSt).catch(e => setErr(e.message)); }, []);
+    const load = (pg, query) => {
+        setLoading(true); setErr('');
+        apiFetch(`/api/accurate/items?page=${pg}&q=${encodeURIComponent(query || '')}`).then(d => { setData(d); setPage(pg); setLoading(false); })
+            .catch(e => { setErr(e.message); setLoading(false); });
+    };
+    useEffect(() => { if (st && st.connected) load(1, ''); }, [st && st.connected]);
+    return h('div', { className: 'p-4 space-y-3' },
+        h('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-1' },
+            h('h3', { className: 'font-bold text-slate-800 text-sm' }, 'Accurate Online'),
+            !st && !err && h('p', { className: 'text-xs text-slate-400' }, 'Memeriksa koneksi...'),
+            st && !st.configured && h('p', { className: 'text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2' }, 'Belum terhubung. Buka Accurate \u2192 Accurate Store \u2192 API Token, lalu simpan di Worker: ', h('b', null, 'ACCURATE_API_TOKEN'), ' dan ', h('b', null, 'ACCURATE_SIGNATURE_KEY'), ' (wrangler secret put).'),
+            st && st.configured && !st.connected && h('p', { className: 'text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2' }, st.error || 'Gagal terhubung.'),
+            st && st.connected && h('p', { className: 'text-xs text-emerald-700' }, '\u2713 Terhubung ke database: ', h('b', null, st.database || '-'), ' (baca-saja)')),
+        st && st.connected && h('div', { className: 'bg-white rounded-2xl border border-slate-200 p-4 space-y-2' },
+            h('div', { className: 'flex gap-2' },
+                h('input', { type: 'text', value: q, onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === 'Enter')
+                        load(1, q); }, placeholder: 'Cari kode / nama barang', className: 'flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm' }),
+                h('button', { onClick: () => load(1, q), className: 'bg-purple-800 text-white font-bold px-4 rounded-lg text-sm' }, 'Cari')),
+            loading && h('p', { className: 'text-xs text-slate-400 text-center py-4' }, 'Memuat...'),
+            err && h('p', { className: 'text-xs text-rose-600' }, err),
+            data && !loading && (data.items.length === 0 ? h('p', { className: 'text-xs text-slate-400 text-center py-4' }, 'Tidak ada barang.') : data.items.map(it => h('div', { key: it.id, className: 'flex items-center justify-between gap-2 border-b border-slate-100 py-2 text-xs' }, h('span', { className: 'font-semibold text-slate-700' }, it.name), h('span', { className: 'text-slate-400' }, it.no)))),
+            data && h('div', { className: 'flex items-center justify-between pt-1' },
+                h('button', { disabled: page <= 1 || loading, onClick: () => load(page - 1, q), className: 'text-xs font-bold text-purple-700 disabled:opacity-40' }, '\u2190 Sebelumnya'),
+                h('span', { className: 'text-[11px] text-slate-400' }, `Hal ${page} / ${data.pageCount} \u00B7 ${data.rowCount} barang`),
+                h('button', { disabled: page >= data.pageCount || loading, onClick: () => load(page + 1, q), className: 'text-xs font-bold text-purple-700 disabled:opacity-40' }, 'Berikutnya \u2192'))),
+        !st && err && h('p', { className: 'text-xs text-rose-600' }, err));
 }
 function AdminInvestoryLinks({ stores }) {
     const [tokens, setTokens] = useState({});
